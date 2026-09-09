@@ -1,0 +1,9 @@
+activation_id,location_id,start_date,end_date,name,type,cost,owner,notes,_mock_lift
+A001,solon,2026-06-13,2026-06-13,Summer Kickoff Party,Event,2500,Marketing,Live music + food trucks,0.6
+A002,iowa-city,2026-07-04,2026-07-05,4th of July Block Party,Event,4000,Marketing,Patio expansion,0.5
+A003,cedar-rapids,2026-07-18,2026-07-18,Tigerhawk Launch Night,Launch,1200,Sales,New pack launch,0.4
+A004,des-moines,2026-08-01,2026-08-03,Iowa Cup Watch Weekend,Promo,800,GM,$5 pints during matches,0.3
+A005,coralville,2026-08-15,2026-08-15,Brewer's Dinner,Event,1800,Culinary,5-course pairing,0.35
+A006,davenport,2026-08-22,2026-08-23,Riverfront Fest Booth,Offsite,1500,Marketing,Off-premise sampling,0.2
+A007,iowa-city,2026-08-29,2026-08-29,Hawkeye Home Opener,Promo,600,GM,Game-day specials,0.55
+A008,solon,2026-09-05,2026-09-06,Labor Day Weekend Bash,Event,2200,Marketing,Kids zone + band,0.45

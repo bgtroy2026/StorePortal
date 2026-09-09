@@ -1,0 +1,81 @@
+name: Nightly refresh
+
+on:
+  schedule:
+    - cron: "15 10 * * *"        # 10:15 UTC = 5:15 AM Central (CDT) — after Toast's 4 AM closeout
+  workflow_dispatch:
+    inputs:
+      backfill:
+        description: "Force full backfill window"
+        type: boolean
+        default: false
+      mock:
+        description: "Use mock data instead of the APIs (demo/testing)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write     # release asset (warehouse state)
+  pages: write
+  id-token: write
+
+concurrency:
+  group: refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PORTAL_SECRET: ${{ secrets.PORTAL_SECRET }}
+      MARGINEDGE_API_KEY: ${{ secrets.MARGINEDGE_API_KEY }}
+      TOAST_CLIENT_ID: ${{ secrets.TOAST_CLIENT_ID }}
+      TOAST_CLIENT_SECRET: ${{ secrets.TOAST_CLIENT_SECRET }}
+      TOAST_HOST: ${{ vars.TOAST_HOST }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Restore warehouse state
+        if: ${{ !inputs.mock }}
+        run: python -m sdp restore
+
+      - name: Pull from MarginEdge + Toast
+        if: ${{ !inputs.mock }}
+        run: python -m sdp pull ${{ inputs.backfill && '--backfill' || '' }}
+
+      - name: Pull (mock data)
+        if: ${{ inputs.mock }}
+        run: python -m sdp pull --mock
+
+      - name: Transform into warehouse
+        run: python -m sdp transform
+
+      - name: Build site + encrypted bundles
+        run: python -m sdp build
+
+      - name: Persist warehouse state
+        if: ${{ !inputs.mock }}
+        run: python -m sdp persist
+
+      - name: Sanity check (no plaintext data in the artifact)
+        run: |
+          test ! -f _site/data/dev.json
+          ls -la _site _site/data
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4

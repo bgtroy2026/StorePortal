@@ -1,0 +1,221 @@
+"""Mock mode: writes raw/ files in the *same shapes the real APIs return*, so transform/build run unchanged.
+
+Deterministic (seeded) so re-runs produce identical output. Volumes are scaled to keep local runs fast;
+the shapes follow the Toast Orders/Labor/Menus APIs and the MarginEdge Orders/Products/Categories/Vendors APIs.
+"""
+from __future__ import annotations
+
+import hashlib
+import math
+import random
+import uuid
+from datetime import date, datetime, timedelta
+
+from .util import iso, log, today_local, write_raw
+
+BUCKETS = ["Food", "Beer", "Liquor", "Wine", "NA Bev", "Retail"]
+
+MENU = [  # (name, menu group, sales category, price, bucket)
+    ("Easy Eddy IPA", "Draft", "Draft Beer", 7.0, "Beer"), ("Boomtown Pale Ale", "Draft", "Draft Beer", 6.5, "Beer"),
+    ("Citrus Surfer", "Draft", "Draft Beer", 7.0, "Beer"), ("Tigerhawk IPA", "Draft", "Draft Beer", 7.5, "Beer"),
+    ("A Real Nice Surprise", "Draft", "Draft Beer", 7.5, "Beer"), ("Tigerhawk 4pk 16oz", "Packaged", "Packaged Beer", 14.0, "Beer"),
+    ("Easy Eddy 6pk", "Packaged", "Packaged Beer", 12.0, "Beer"), ("Flight (4)", "Draft", "Draft Beer", 12.0, "Beer"),
+    ("Smash Burger", "Entrees", "Food", 15.0, "Food"), ("Margherita Pizza", "Pizza", "Food", 16.0, "Food"),
+    ("Pepperoni Pizza", "Pizza", "Food", 17.0, "Food"), ("Wings (10)", "Apps", "Food", 15.0, "Food"),
+    ("Pretzel & Beer Cheese", "Apps", "Food", 11.0, "Food"), ("Caesar Salad", "Entrees", "Food", 12.0, "Food"),
+    ("Fish Tacos", "Entrees", "Food", 15.0, "Food"), ("Kids Cheese Pizza", "Kids", "Food", 8.0, "Food"),
+    ("Brownie Sundae", "Desserts", "Food", 8.0, "Food"), ("Fries", "Apps", "Food", 5.0, "Food"),
+    ("Old Fashioned", "Cocktails", "Liquor", 12.0, "Liquor"), ("Margarita", "Cocktails", "Liquor", 11.0, "Liquor"),
+    ("Vodka Soda", "Cocktails", "Liquor", 9.0, "Liquor"), ("Espresso Martini", "Cocktails", "Liquor", 13.0, "Liquor"),
+    ("House Red", "Wine", "Wine", 9.0, "Wine"), ("House White", "Wine", "Wine", 9.0, "Wine"), ("Prosecco", "Wine", "Wine", 10.0, "Wine"),
+    ("Fountain Soda", "NA", "NA Bev", 3.0, "NA Bev"), ("Sparkling Water", "NA", "NA Bev", 3.5, "NA Bev"), ("Root Beer", "NA", "NA Bev", 4.0, "NA Bev"),
+    ("Logo Tee", "Merch", "Retail", 28.0, "Retail"), ("Trucker Hat", "Merch", "Retail", 30.0, "Retail"), ("Pint Glass", "Merch", "Retail", 8.0, "Retail"),
+]
+JOBS = [("Server", 7.25), ("Bartender", 8.0), ("Line Cook", 17.0), ("Prep Cook", 15.5), ("Host", 12.0), ("Manager", 26.0), ("Dish", 14.5)]
+VENDORS = [("Sysco", "Food"), ("US Foods", "Food"), ("Capital City Fruit", "Food"), ("Big Grove Production", "Beer"),
+           ("Johnson Brothers", "Liquor"), ("Southern Glazer's", "Wine"), ("Coca-Cola Bottling", "NA Bev"), ("Ecolab", "Other"), ("Big Grove Merch", "Retail")]
+DINING = ["DINE_IN", "TAKE_OUT", "DINE_IN", "DINE_IN", "ONLINE", "DINE_IN", "BAR"]
+
+
+def _g(seed: str) -> str:
+    """Stable pseudo-GUID from a seed string."""
+    h = hashlib.md5(seed.encode()).hexdigest()
+    return str(uuid.UUID(h))
+
+
+def _ts(d: date, hour: float) -> str:
+    base = datetime(d.year, d.month, d.day) + timedelta(hours=hour)
+    return base.strftime("%Y-%m-%dT%H:%M:%S.000-0500")
+
+
+def _daily_volume(loc_idx: int, d: date, rnd: random.Random) -> int:
+    base = [140, 190, 120, 160, 110, 95][loc_idx % 6]
+    dow = [0.75, 0.7, 0.8, 0.95, 1.35, 1.55, 1.2][d.weekday()]           # Mon..Sun
+    season = 1 + 0.22 * math.sin((d.timetuple().tm_yday - 100) / 365 * 2 * math.pi)  # summer peak
+    growth = 1 + 0.06 * ((d - date(2025, 1, 1)).days / 365)
+    return max(15, int(base * dow * season * growth * rnd.uniform(0.85, 1.15)))
+
+
+def gen_toast(loc: dict, loc_idx: int, start: date, end: date, events: dict[str, float]):
+    slug = loc["slug"]
+    guid = loc.get("toast_guid") or _g(f"toast:{slug}")
+    rnd = random.Random(f"toast:{slug}")
+    info = {"guid": guid, "general": {"name": f"Big Grove Brewery {loc['name']}", "locationName": loc["name"], "timeZone": loc.get("timezone", "America/Chicago"), "closeoutHour": 4, "firstBusinessDate": 20130901},
+            "location": {"city": loc["name"], "stateCode": loc.get("state", "IA")}}
+    write_raw("toast", slug, "restaurant", "info", info)
+    jobs = [{"guid": _g(f"job:{slug}:{t}"), "title": t, "wageFrequency": "HOURLY", "defaultWage": w, "deleted": False} for t, w in JOBS]
+    write_raw("toast", slug, "jobs", "all", {"jobs": jobs})
+    items = [{"guid": _g(f"item:{slug}:{n}"), "name": n, "price": p, "menuGroup": g, "salesCategory": {"name": sc}} for n, g, sc, p, b in MENU]
+    menus = {"restaurantGuid": guid, "menus": [{"name": "Main", "menuGroups": [
+        {"name": g, "menuItems": [{"guid": it["guid"], "name": it["name"], "price": it["price"], "salesCategory": it["salesCategory"]} for it in items if it["menuGroup"] == g]}
+        for g in sorted({m[1] for m in MENU})]}]}
+    write_raw("toast", slug, "menus", "all", menus)
+    servers = [_g(f"emp:{slug}:{i}") for i in range(14)]
+    n_orders_total = 0
+    d = start
+    while d <= end:
+        n = _daily_volume(loc_idx, d, rnd)
+        lift = events.get(f"{slug}:{iso(d)}", 1.0)
+        n = int(n * lift)
+        orders = []
+        for i in range(n):
+            hour = rnd.choice([11.5, 12, 12.5, 13, 14, 16, 17, 17.5, 18, 18.5, 19, 19.5, 20, 21, 22]) + rnd.uniform(0, 0.9)
+            guests = rnd.choice([1, 1, 2, 2, 2, 3, 4, 4, 5, 6])
+            og = _g(f"order:{slug}:{iso(d)}:{i}")
+            cg = _g(f"check:{slug}:{iso(d)}:{i}")
+            voided = rnd.random() < 0.012
+            sels, amount, tax = [], 0.0, 0.0
+            k = max(1, int(guests * rnd.uniform(1.0, 2.2)))
+            for j in range(k):
+                name, grp, sc, price, b = rnd.choices(MENU, weights=[9, 6, 5, 8, 4, 3, 3, 4, 7, 6, 5, 5, 5, 3, 4, 2, 2, 4, 3, 3, 3, 2, 2, 2, 1, 4, 2, 2, 0.6, 0.5, 0.8])[0]
+                q = 1 if b != "Beer" else rnd.choice([1, 1, 1, 2])
+                pre = round(price * q, 2)
+                disc = round(pre * 0.5, 2) if (rnd.random() < 0.04) else 0.0
+                line = round(pre - disc, 2)
+                t = round(line * 0.07, 2)
+                amount += line; tax += t
+                sels.append({"guid": _g(f"sel:{og}:{j}"), "entityType": "MenuItemSelection", "item": {"guid": _g(f"item:{slug}:{name}")}, "itemGroup": {"guid": _g(f"grp:{slug}:{grp}")},
+                             "salesCategory": {"guid": _g(f"sc:{slug}:{sc}"), "name": sc}, "displayName": name, "quantity": q, "preDiscountPrice": pre, "price": line, "tax": t,
+                             "voided": False, "createdDate": _ts(d, hour + 0.1 * j), "appliedDiscounts": ([{"discountAmount": disc, "name": "Happy Hour"}] if disc else [])})
+            amount, tax = round(amount, 2), round(tax, 2)
+            total = round(amount + tax, 2)
+            tip = round(total * rnd.choice([0, 0.15, 0.18, 0.2, 0.2, 0.22, 0.25]), 2)
+            ptype = rnd.choices(["CREDIT", "CASH", "GIFTCARD", "OTHER"], weights=[82, 12, 4, 2])[0]
+            refund = round(total, 2) if (not voided and rnd.random() < 0.004) else 0.0
+            pay = {"guid": _g(f"pay:{og}"), "type": ptype, "cardType": ("VISA" if ptype == "CREDIT" else None), "amount": total, "tipAmount": tip, "paidDate": _ts(d, hour + 0.8),
+                   "refundStatus": ("FULL" if refund else "NONE"), "refund": ({"refundAmount": refund, "tipRefundAmount": 0, "refundDate": _ts(d + timedelta(days=1), 10)} if refund else None)}
+            orders.append({"guid": og, "entityType": "Order", "businessDate": int(d.strftime("%Y%m%d")), "openedDate": _ts(d, hour), "closedDate": _ts(d, hour + 0.9), "modifiedDate": _ts(d, hour + 1),
+                           "diningOption": {"guid": _g("do:" + rnd.choice(DINING)), "behavior": rnd.choice(DINING)}, "revenueCenter": {"guid": _g(f"rc:{slug}:{'Bar' if hour > 20 else 'Dining'}")},
+                           "server": {"guid": rnd.choice(servers)}, "numberOfGuests": guests, "voided": voided, "voidDate": (_ts(d, hour + 0.5) if voided else None),
+                           "checks": [{"guid": cg, "entityType": "Check", "amount": amount, "taxAmount": tax, "totalAmount": total, "voided": voided, "paymentStatus": "CLOSED",
+                                       "selections": sels, "payments": [pay], "appliedDiscounts": [], "appliedServiceCharges": ([{"chargeAmount": round(amount * 0.18, 2), "gratuity": True, "name": "Auto grat"}] if guests >= 6 else [])}]})
+        write_raw("toast", slug, "orders", iso(d), {"businessDate": iso(d), "orders": orders})
+        n_orders_total += n
+        d += timedelta(days=1)
+    # time entries in 30-day windows, ~sales-scaled
+    tes = []
+    d = start
+    while d <= end:
+        vol = _daily_volume(loc_idx, d, rnd)
+        shifts = max(6, int(vol / 5.2))
+        for i in range(shifts):
+            title, wage = rnd.choices(JOBS, weights=[8, 5, 5, 3, 2, 1.5, 3])[0]
+            hrs = rnd.choice([4, 5, 6, 6.5, 7, 8, 8.5])
+            ot = 0.5 if hrs > 8 else 0
+            start_h = rnd.choice([9, 10, 11, 14, 15, 16, 17])
+            tes.append({"guid": _g(f"te:{slug}:{iso(d)}:{i}"), "employeeReference": {"guid": rnd.choice(servers)}, "jobReference": {"guid": _g(f"job:{slug}:{title}")},
+                        "inDate": _ts(d, start_h), "outDate": _ts(d, start_h + hrs), "businessDate": d.strftime("%Y%m%d"),
+                        "regularHours": hrs - ot, "overtimeHours": ot, "hourlyWage": wage, "declaredCashTips": (round(rnd.uniform(0, 40), 2) if title in ("Server", "Bartender") else 0),
+                        "nonCashTips": (round(rnd.uniform(40, 220), 2) if title in ("Server", "Bartender") else 0), "deleted": False})
+        d += timedelta(days=1)
+    write_raw("toast", slug, "timeEntries", f"{iso(start)}_{iso(end)}", {"timeEntries": tes, "window": [iso(start), iso(end)]})
+    return n_orders_total, len(tes)
+
+
+def gen_marginedge(loc: dict, loc_idx: int, start: date, end: date):
+    slug = loc["slug"]
+    uid = loc.get("marginedge_unit_id") or str(1000 + loc_idx)
+    rnd = random.Random(f"me:{slug}")
+    cats = [{"categoryId": f"c{loc_idx}{i}", "categoryName": n, "categoryType": t, "accountingCode": 5000 + i * 10} for i, (n, t) in enumerate([
+        ("Food - Protein", "Food"), ("Food - Produce", "Food"), ("Food - Dry Goods", "Food"), ("Food - Dairy", "Food"),
+        ("Beer - Big Grove", "Beer"), ("Beer - Guest", "Beer"), ("Liquor", "Liquor"), ("Wine", "Wine"), ("N/A Bev", "N/A Bev"),
+        ("Paper & Supplies", "Supplies"), ("Chemicals", "Supplies"), ("Retail", "Retail")])]
+    write_raw("marginedge", slug, "categories", "all", {"categories": cats})
+    vendors = [{"vendorId": f"v{loc_idx}{i}", "vendorName": n, "centralVendorId": f"cv{i}", "vendorAccounts": [{"vendorAccountNumber": f"BG-{loc_idx}{i:02d}"}]} for i, (n, b) in enumerate(VENDORS)]
+    write_raw("marginedge", slug, "vendors", "all", {"vendors": vendors})
+    cat_by_bucket = {}
+    for c in cats:
+        cat_by_bucket.setdefault({"N/A Bev": "NA Bev", "Supplies": "Other"}.get(c["categoryType"], c["categoryType"]), []).append(c["categoryId"])
+    prods = []
+    names = {"Food": ["Ground Beef 80/20", "Chicken Wings", "Mozzarella", "Romaine", "Tomatoes", "Pizza Flour", "Fry Oil", "Buns", "Pepperoni", "Butter"],
+             "Beer": ["Easy Eddy 1/2 bbl", "Tigerhawk 1/2 bbl", "Citrus Surfer 1/6 bbl", "Tigerhawk 4pk", "Guest Lager 1/2 bbl"],
+             "Liquor": ["Bourbon 1L", "Vodka 1L", "Tequila 1L", "Espresso Liqueur"], "Wine": ["House Red 750ml", "House White 750ml", "Prosecco 750ml"],
+             "NA Bev": ["Bag-in-box Cola", "Sparkling Water cs", "Root Beer keg"], "Other": ["To-go boxes", "Napkins", "Sanitizer"], "Retail": ["Logo Tee", "Trucker Hat"]}
+    for b, ns in names.items():
+        for n in ns:
+            cid = rnd.choice(cat_by_bucket.get(b, cat_by_bucket["Other"]))
+            prods.append({"companyConceptProductId": f"p{loc_idx}-{abs(hash(n)) % 10000}", "centralProductId": f"cp-{abs(hash(n)) % 10000}", "productName": n,
+                          "latestPrice": round(rnd.uniform(4, 180), 2), "reportByUnit": rnd.choice(["EACH", "POUND", "CASE", "KEG"]), "taxExempt": False, "itemCount": rnd.randint(1, 3),
+                          "categories": [{"categoryId": cid, "percentAllocation": 100}]})
+    write_raw("marginedge", slug, "products", "all", {"products": prods})
+    prods_by_bucket = {}
+    for p in prods:
+        b = next((bb for bb, ids in cat_by_bucket.items() if p["categories"][0]["categoryId"] in ids), "Other")
+        prods_by_bucket.setdefault(b, []).append(p)
+    base_sales = [140, 190, 120, 160, 110, 95][loc_idx % 6] * 112  # ≈ weekly purchases scale (~30% of sales)
+    orders, details = [], []
+    d = start
+    oid_n = 0
+    while d <= end:
+        for vname, vb in VENDORS:
+            freq = {"Food": 0.42, "Beer": 0.28, "Liquor": 0.14, "Wine": 0.1, "NA Bev": 0.14, "Other": 0.08, "Retail": 0.04}[vb]
+            if rnd.random() > freq:
+                continue
+            oid_n += 1
+            oid = f"o{loc_idx}-{oid_n}"
+            vid = next(v["vendorId"] for v in vendors if v["vendorName"] == vname)
+            target = base_sales * {"Food": 0.19, "Beer": 0.22, "Liquor": 0.06, "Wine": 0.03, "NA Bev": 0.02, "Other": 0.03, "Retail": 0.03}[vb] / 7 / max(freq, 0.05)
+            lines, total = [], 0.0
+            pool = prods_by_bucket.get(vb) or prods_by_bucket["Other"]
+            for j in range(rnd.randint(2, 7)):
+                p = rnd.choice(pool)
+                q = rnd.randint(1, 6)
+                up = round(p["latestPrice"] * rnd.uniform(0.9, 1.1), 2)
+                lp = round(q * up, 2)
+                total += lp
+                lines.append({"vendorItemCode": f"{vid}-{abs(hash(p['productName'])) % 999}", "vendorItemName": p["productName"], "companyConceptProductId": p["companyConceptProductId"],
+                              "categoryId": p["categories"][0]["categoryId"], "packagingId": "pk1", "quantity": q, "unitPrice": up, "linePrice": lp})
+            scale = target / max(total, 1)
+            for l in lines:
+                l["unitPrice"] = round(l["unitPrice"] * scale, 2); l["linePrice"] = round(l["linePrice"] * scale, 2)
+            total = round(sum(l["linePrice"] for l in lines), 2)
+            is_credit = rnd.random() < 0.03
+            if is_credit:
+                total = -round(total * 0.2, 2)
+                for l in lines: l["linePrice"] = -abs(round(l["linePrice"] * 0.2, 2))
+            hdr = {"orderId": oid, "invoiceNumber": f"INV{rnd.randint(100000, 999999)}", "vendorId": vid, "vendorName": vname, "customerNumber": f"BG-{loc_idx}",
+                   "invoiceDate": iso(d), "createdDate": iso(d + timedelta(days=rnd.randint(0, 3))), "paymentAccount": "Operating", "orderTotal": total, "status": rnd.choice(["CLOSED", "CLOSED", "CLOSED", "APPROVED"])}
+            orders.append(hdr)
+            details.append(dict(hdr, tax=0.0, deliveryCharges=0.0, otherCharges=0.0, creditAmount=(abs(total) if is_credit else 0.0), isCredit=is_credit, inputTaxCredits=0.0, attachments=[], lineItems=lines))
+        d += timedelta(days=1)
+    write_raw("marginedge", slug, "orders", f"{iso(start)}_{iso(end)}", {"orders": orders, "window": [iso(start), iso(end)]})
+    for det in details:
+        write_raw("marginedge", slug, "orderDetail", det["orderId"], det)
+    return len(orders)
+
+
+def generate(locations: list[dict], days: int = 120) -> None:
+    end = today_local() - timedelta(days=1)
+    start = end - timedelta(days=days)
+    write_raw("marginedge", "_all", "restaurantUnits", "units", {"restaurants": [{"id": int(l.get("marginedge_unit_id") or 1000 + i), "name": f"Big Grove {l['name']}"} for i, l in enumerate(locations)]})
+    # sales lift on activation days so the overlay has something to show (mirrors inputs/activations.csv sample)
+    events = {}
+    from .inputs import read_activations
+    for a in read_activations():
+        s = date.fromisoformat(a["start_date"]); e = date.fromisoformat(a.get("end_date") or a["start_date"])
+        for dd in (s + timedelta(n) for n in range((e - s).days + 1)):
+            events[f"{a['location_id']}:{iso(dd)}"] = 1.0 + float(a.get("_mock_lift") or 0.25)
+    for i, loc in enumerate(locations):
+        no, nt = gen_toast(loc, i, start, end, events)
+        ni = gen_marginedge(loc, i, start, end)
+        log.info("mock %-13s toast orders=%d time entries=%d | marginedge invoices=%d", loc["slug"], no, nt, ni)

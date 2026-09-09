@@ -1,0 +1,325 @@
+location_id,count_date,bucket,value,source
+solon,2026-05-19,Food,8524.35,csv
+solon,2026-05-19,Beer,5819.16,csv
+solon,2026-05-19,Liquor,5435.46,csv
+solon,2026-05-19,Wine,1830.63,csv
+solon,2026-05-19,NA Bev,909.69,csv
+solon,2026-05-19,Retail,4030.77,csv
+iowa-city,2026-05-19,Food,10594.67,csv
+iowa-city,2026-05-19,Beer,8841.11,csv
+iowa-city,2026-05-19,Liquor,6077.96,csv
+iowa-city,2026-05-19,Wine,2793.27,csv
+iowa-city,2026-05-19,NA Bev,1063.81,csv
+iowa-city,2026-05-19,Retail,5000.12,csv
+cedar-rapids,2026-05-19,Food,7539.6,csv
+cedar-rapids,2026-05-19,Beer,6117.74,csv
+cedar-rapids,2026-05-19,Liquor,3954.11,csv
+cedar-rapids,2026-05-19,Wine,1650.55,csv
+cedar-rapids,2026-05-19,NA Bev,800.92,csv
+cedar-rapids,2026-05-19,Retail,4083.53,csv
+des-moines,2026-05-19,Food,10523.63,csv
+des-moines,2026-05-19,Beer,7198.32,csv
+des-moines,2026-05-19,Liquor,6791.95,csv
+des-moines,2026-05-19,Wine,2073.54,csv
+des-moines,2026-05-19,NA Bev,1139.18,csv
+des-moines,2026-05-19,Retail,4497.04,csv
+coralville,2026-05-19,Food,6316.74,csv
+coralville,2026-05-19,Beer,4521.55,csv
+coralville,2026-05-19,Liquor,3850.97,csv
+coralville,2026-05-19,Wine,1806.48,csv
+coralville,2026-05-19,NA Bev,639.41,csv
+coralville,2026-05-19,Retail,3380.78,csv
+davenport,2026-05-19,Food,6361.65,csv
+davenport,2026-05-19,Beer,4241.87,csv
+davenport,2026-05-19,Liquor,3579.11,csv
+davenport,2026-05-19,Wine,1238.09,csv
+davenport,2026-05-19,NA Bev,530.03,csv
+davenport,2026-05-19,Retail,2598.59,csv
+solon,2026-06-02,Food,9487.08,csv
+solon,2026-06-02,Beer,6358.8,csv
+solon,2026-06-02,Liquor,4910.07,csv
+solon,2026-06-02,Wine,2153.9,csv
+solon,2026-06-02,NA Bev,887.36,csv
+solon,2026-06-02,Retail,3947.71,csv
+iowa-city,2026-06-02,Food,13292.98,csv
+iowa-city,2026-06-02,Beer,9348.05,csv
+iowa-city,2026-06-02,Liquor,6515.36,csv
+iowa-city,2026-06-02,Wine,2913.63,csv
+iowa-city,2026-06-02,NA Bev,1230.66,csv
+iowa-city,2026-06-02,Retail,6341.49,csv
+cedar-rapids,2026-06-02,Food,8245.29,csv
+cedar-rapids,2026-06-02,Beer,5216.98,csv
+cedar-rapids,2026-06-02,Liquor,5099.21,csv
+cedar-rapids,2026-06-02,Wine,1593.76,csv
+cedar-rapids,2026-06-02,NA Bev,752.48,csv
+cedar-rapids,2026-06-02,Retail,3877.71,csv
+des-moines,2026-06-02,Food,9211.84,csv
+des-moines,2026-06-02,Beer,7403.97,csv
+des-moines,2026-06-02,Liquor,5121.33,csv
+des-moines,2026-06-02,Wine,2521.12,csv
+des-moines,2026-06-02,NA Bev,1110.21,csv
+des-moines,2026-06-02,Retail,4905.16,csv
+coralville,2026-06-02,Food,7867.98,csv
+coralville,2026-06-02,Beer,4821.78,csv
+coralville,2026-06-02,Liquor,4325.09,csv
+coralville,2026-06-02,Wine,1696.71,csv
+coralville,2026-06-02,NA Bev,724.09,csv
+coralville,2026-06-02,Retail,3256.64,csv
+davenport,2026-06-02,Food,6730.01,csv
+davenport,2026-06-02,Beer,4999.12,csv
+davenport,2026-06-02,Liquor,3501.15,csv
+davenport,2026-06-02,Wine,1495.18,csv
+davenport,2026-06-02,NA Bev,530.22,csv
+davenport,2026-06-02,Retail,3022.28,csv
+solon,2026-06-16,Food,9397.25,csv
+solon,2026-06-16,Beer,7461.54,csv
+solon,2026-06-16,Liquor,5702.2,csv
+solon,2026-06-16,Wine,1964.3,csv
+solon,2026-06-16,NA Bev,869.16,csv
+solon,2026-06-16,Retail,4412.5,csv
+iowa-city,2026-06-16,Food,10464.82,csv
+iowa-city,2026-06-16,Beer,8720.06,csv
+iowa-city,2026-06-16,Liquor,6354.35,csv
+iowa-city,2026-06-16,Wine,2522.62,csv
+iowa-city,2026-06-16,NA Bev,1059.82,csv
+iowa-city,2026-06-16,Retail,6158.68,csv
+cedar-rapids,2026-06-16,Food,6856.47,csv
+cedar-rapids,2026-06-16,Beer,5149.58,csv
+cedar-rapids,2026-06-16,Liquor,4311.33,csv
+cedar-rapids,2026-06-16,Wine,2000.57,csv
+cedar-rapids,2026-06-16,NA Bev,674.36,csv
+cedar-rapids,2026-06-16,Retail,3545.12,csv
+des-moines,2026-06-16,Food,10438.27,csv
+des-moines,2026-06-16,Beer,8282.97,csv
+des-moines,2026-06-16,Liquor,6512.09,csv
+des-moines,2026-06-16,Wine,2662.07,csv
+des-moines,2026-06-16,NA Bev,960.2,csv
+des-moines,2026-06-16,Retail,4678.03,csv
+coralville,2026-06-16,Food,6771.82,csv
+coralville,2026-06-16,Beer,5695.78,csv
+coralville,2026-06-16,Liquor,4646.76,csv
+coralville,2026-06-16,Wine,1477.21,csv
+coralville,2026-06-16,NA Bev,638.45,csv
+coralville,2026-06-16,Retail,3034.64,csv
+davenport,2026-06-16,Food,5618.58,csv
+davenport,2026-06-16,Beer,4390.82,csv
+davenport,2026-06-16,Liquor,3622.92,csv
+davenport,2026-06-16,Wine,1323.57,csv
+davenport,2026-06-16,NA Bev,519.86,csv
+davenport,2026-06-16,Retail,2780.7,csv
+solon,2026-06-30,Food,8646.98,csv
+solon,2026-06-30,Beer,6629.37,csv
+solon,2026-06-30,Liquor,5906.83,csv
+solon,2026-06-30,Wine,2220.01,csv
+solon,2026-06-30,NA Bev,904.18,csv
+solon,2026-06-30,Retail,4348.17,csv
+iowa-city,2026-06-30,Food,12859.93,csv
+iowa-city,2026-06-30,Beer,7641.1,csv
+iowa-city,2026-06-30,Liquor,7903.01,csv
+iowa-city,2026-06-30,Wine,3089.37,csv
+iowa-city,2026-06-30,NA Bev,1358.66,csv
+iowa-city,2026-06-30,Retail,6209.36,csv
+cedar-rapids,2026-06-30,Food,7465.22,csv
+cedar-rapids,2026-06-30,Beer,5402.58,csv
+cedar-rapids,2026-06-30,Liquor,3927.02,csv
+cedar-rapids,2026-06-30,Wine,1872.52,csv
+cedar-rapids,2026-06-30,NA Bev,670.12,csv
+cedar-rapids,2026-06-30,Retail,3132.74,csv
+des-moines,2026-06-30,Food,9387.04,csv
+des-moines,2026-06-30,Beer,6675.99,csv
+des-moines,2026-06-30,Liquor,5657.7,csv
+des-moines,2026-06-30,Wine,2077.85,csv
+des-moines,2026-06-30,NA Bev,874.36,csv
+des-moines,2026-06-30,Retail,4297.82,csv
+coralville,2026-06-30,Food,6225.96,csv
+coralville,2026-06-30,Beer,4898.17,csv
+coralville,2026-06-30,Liquor,3504.11,csv
+coralville,2026-06-30,Wine,1835.29,csv
+coralville,2026-06-30,NA Bev,731.34,csv
+coralville,2026-06-30,Retail,2952.06,csv
+davenport,2026-06-30,Food,5653.24,csv
+davenport,2026-06-30,Beer,4208.78,csv
+davenport,2026-06-30,Liquor,3384.78,csv
+davenport,2026-06-30,Wine,1263.77,csv
+davenport,2026-06-30,NA Bev,674.64,csv
+davenport,2026-06-30,Retail,3271.6,csv
+solon,2026-07-14,Food,8908.17,csv
+solon,2026-07-14,Beer,6468.48,csv
+solon,2026-07-14,Liquor,4553.98,csv
+solon,2026-07-14,Wine,1849.38,csv
+solon,2026-07-14,NA Bev,857.51,csv
+solon,2026-07-14,Retail,3903.59,csv
+iowa-city,2026-07-14,Food,13419.31,csv
+iowa-city,2026-07-14,Beer,7925.45,csv
+iowa-city,2026-07-14,Liquor,6047.47,csv
+iowa-city,2026-07-14,Wine,3235.59,csv
+iowa-city,2026-07-14,NA Bev,1231.78,csv
+iowa-city,2026-07-14,Retail,5095.69,csv
+cedar-rapids,2026-07-14,Food,7814.2,csv
+cedar-rapids,2026-07-14,Beer,4780.91,csv
+cedar-rapids,2026-07-14,Liquor,4494.73,csv
+cedar-rapids,2026-07-14,Wine,2058.39,csv
+cedar-rapids,2026-07-14,NA Bev,855.51,csv
+cedar-rapids,2026-07-14,Retail,3811.89,csv
+des-moines,2026-07-14,Food,9548.58,csv
+des-moines,2026-07-14,Beer,7131.5,csv
+des-moines,2026-07-14,Liquor,5349.24,csv
+des-moines,2026-07-14,Wine,2595.8,csv
+des-moines,2026-07-14,NA Bev,1038.63,csv
+des-moines,2026-07-14,Retail,5201.84,csv
+coralville,2026-07-14,Food,6710.08,csv
+coralville,2026-07-14,Beer,4682.8,csv
+coralville,2026-07-14,Liquor,4467.54,csv
+coralville,2026-07-14,Wine,1890.04,csv
+coralville,2026-07-14,NA Bev,781.95,csv
+coralville,2026-07-14,Retail,3603.02,csv
+davenport,2026-07-14,Food,6690.37,csv
+davenport,2026-07-14,Beer,4728.12,csv
+davenport,2026-07-14,Liquor,3239.31,csv
+davenport,2026-07-14,Wine,1432.54,csv
+davenport,2026-07-14,NA Bev,584.25,csv
+davenport,2026-07-14,Retail,2447.28,csv
+solon,2026-07-28,Food,7725.43,csv
+solon,2026-07-28,Beer,6069.87,csv
+solon,2026-07-28,Liquor,4824.31,csv
+solon,2026-07-28,Wine,2221.29,csv
+solon,2026-07-28,NA Bev,1023.26,csv
+solon,2026-07-28,Retail,4133.51,csv
+iowa-city,2026-07-28,Food,13815.66,csv
+iowa-city,2026-07-28,Beer,10112.99,csv
+iowa-city,2026-07-28,Liquor,8020.44,csv
+iowa-city,2026-07-28,Wine,2734.26,csv
+iowa-city,2026-07-28,NA Bev,1119.0,csv
+iowa-city,2026-07-28,Retail,5232.91,csv
+cedar-rapids,2026-07-28,Food,7012.38,csv
+cedar-rapids,2026-07-28,Beer,5077.31,csv
+cedar-rapids,2026-07-28,Liquor,4623.04,csv
+cedar-rapids,2026-07-28,Wine,2016.17,csv
+cedar-rapids,2026-07-28,NA Bev,850.22,csv
+cedar-rapids,2026-07-28,Retail,3577.83,csv
+des-moines,2026-07-28,Food,10757.76,csv
+des-moines,2026-07-28,Beer,8096.35,csv
+des-moines,2026-07-28,Liquor,5202.58,csv
+des-moines,2026-07-28,Wine,2515.62,csv
+des-moines,2026-07-28,NA Bev,1155.02,csv
+des-moines,2026-07-28,Retail,5206.52,csv
+coralville,2026-07-28,Food,7602.08,csv
+coralville,2026-07-28,Beer,5073.49,csv
+coralville,2026-07-28,Liquor,3691.67,csv
+coralville,2026-07-28,Wine,1793.12,csv
+coralville,2026-07-28,NA Bev,671.61,csv
+coralville,2026-07-28,Retail,3597.82,csv
+davenport,2026-07-28,Food,6971.29,csv
+davenport,2026-07-28,Beer,4272.89,csv
+davenport,2026-07-28,Liquor,3424.18,csv
+davenport,2026-07-28,Wine,1616.01,csv
+davenport,2026-07-28,NA Bev,651.9,csv
+davenport,2026-07-28,Retail,2567.85,csv
+solon,2026-08-11,Food,7993.0,csv
+solon,2026-08-11,Beer,5819.74,csv
+solon,2026-08-11,Liquor,5831.57,csv
+solon,2026-08-11,Wine,2293.1,csv
+solon,2026-08-11,NA Bev,804.47,csv
+solon,2026-08-11,Retail,4611.4,csv
+iowa-city,2026-08-11,Food,13974.26,csv
+iowa-city,2026-08-11,Beer,9237.63,csv
+iowa-city,2026-08-11,Liquor,6740.43,csv
+iowa-city,2026-08-11,Wine,2891.6,csv
+iowa-city,2026-08-11,NA Bev,1086.21,csv
+iowa-city,2026-08-11,Retail,4869.36,csv
+cedar-rapids,2026-08-11,Food,8804.06,csv
+cedar-rapids,2026-08-11,Beer,5821.6,csv
+cedar-rapids,2026-08-11,Liquor,4492.69,csv
+cedar-rapids,2026-08-11,Wine,2034.16,csv
+cedar-rapids,2026-08-11,NA Bev,756.11,csv
+cedar-rapids,2026-08-11,Retail,4001.48,csv
+des-moines,2026-08-11,Food,11292.14,csv
+des-moines,2026-08-11,Beer,6784.61,csv
+des-moines,2026-08-11,Liquor,5500.41,csv
+des-moines,2026-08-11,Wine,2250.94,csv
+des-moines,2026-08-11,NA Bev,948.51,csv
+des-moines,2026-08-11,Retail,4924.47,csv
+coralville,2026-08-11,Food,6560.94,csv
+coralville,2026-08-11,Beer,4983.06,csv
+coralville,2026-08-11,Liquor,3633.52,csv
+coralville,2026-08-11,Wine,1852.96,csv
+coralville,2026-08-11,NA Bev,676.12,csv
+coralville,2026-08-11,Retail,3258.58,csv
+davenport,2026-08-11,Food,6259.85,csv
+davenport,2026-08-11,Beer,4945.69,csv
+davenport,2026-08-11,Liquor,3444.55,csv
+davenport,2026-08-11,Wine,1603.58,csv
+davenport,2026-08-11,NA Bev,611.02,csv
+davenport,2026-08-11,Retail,2877.21,csv
+solon,2026-08-25,Food,9063.47,csv
+solon,2026-08-25,Beer,5561.47,csv
+solon,2026-08-25,Liquor,5106.59,csv
+solon,2026-08-25,Wine,1900.36,csv
+solon,2026-08-25,NA Bev,766.06,csv
+solon,2026-08-25,Retail,4576.95,csv
+iowa-city,2026-08-25,Food,11013.67,csv
+iowa-city,2026-08-25,Beer,8751.28,csv
+iowa-city,2026-08-25,Liquor,7533.91,csv
+iowa-city,2026-08-25,Wine,2898.29,csv
+iowa-city,2026-08-25,NA Bev,1157.66,csv
+iowa-city,2026-08-25,Retail,5731.38,csv
+cedar-rapids,2026-08-25,Food,7842.59,csv
+cedar-rapids,2026-08-25,Beer,6046.57,csv
+cedar-rapids,2026-08-25,Liquor,3930.45,csv
+cedar-rapids,2026-08-25,Wine,1832.56,csv
+cedar-rapids,2026-08-25,NA Bev,713.22,csv
+cedar-rapids,2026-08-25,Retail,3359.07,csv
+des-moines,2026-08-25,Food,11125.83,csv
+des-moines,2026-08-25,Beer,7445.76,csv
+des-moines,2026-08-25,Liquor,6052.91,csv
+des-moines,2026-08-25,Wine,2587.2,csv
+des-moines,2026-08-25,NA Bev,1155.85,csv
+des-moines,2026-08-25,Retail,4718.28,csv
+coralville,2026-08-25,Food,7310.15,csv
+coralville,2026-08-25,Beer,5115.65,csv
+coralville,2026-08-25,Liquor,4100.62,csv
+coralville,2026-08-25,Wine,1745.4,csv
+coralville,2026-08-25,NA Bev,697.03,csv
+coralville,2026-08-25,Retail,3332.95,csv
+davenport,2026-08-25,Food,6066.9,csv
+davenport,2026-08-25,Beer,4994.91,csv
+davenport,2026-08-25,Liquor,3739.46,csv
+davenport,2026-08-25,Wine,1585.97,csv
+davenport,2026-08-25,NA Bev,691.73,csv
+davenport,2026-08-25,Retail,2644.45,csv
+solon,2026-09-08,Food,9160.69,csv
+solon,2026-09-08,Beer,7364.37,csv
+solon,2026-09-08,Liquor,5730.4,csv
+solon,2026-09-08,Wine,1871.39,csv
+solon,2026-09-08,NA Bev,797.84,csv
+solon,2026-09-08,Retail,4127.07,csv
+iowa-city,2026-09-08,Food,10647.97,csv
+iowa-city,2026-09-08,Beer,8135.05,csv
+iowa-city,2026-09-08,Liquor,6153.38,csv
+iowa-city,2026-09-08,Wine,2994.9,csv
+iowa-city,2026-09-08,NA Bev,1325.47,csv
+iowa-city,2026-09-08,Retail,6378.92,csv
+cedar-rapids,2026-09-08,Food,6914.58,csv
+cedar-rapids,2026-09-08,Beer,5932.66,csv
+cedar-rapids,2026-09-08,Liquor,4671.43,csv
+cedar-rapids,2026-09-08,Wine,1607.21,csv
+cedar-rapids,2026-09-08,NA Bev,860.03,csv
+cedar-rapids,2026-09-08,Retail,4104.95,csv
+des-moines,2026-09-08,Food,9420.44,csv
+des-moines,2026-09-08,Beer,8437.01,csv
+des-moines,2026-09-08,Liquor,5761.46,csv
+des-moines,2026-09-08,Wine,2390.83,csv
+des-moines,2026-09-08,NA Bev,1179.73,csv
+des-moines,2026-09-08,Retail,5278.72,csv
+coralville,2026-09-08,Food,6353.25,csv
+coralville,2026-09-08,Beer,5002.22,csv
+coralville,2026-09-08,Liquor,4104.84,csv
+coralville,2026-09-08,Wine,1570.36,csv
+coralville,2026-09-08,NA Bev,642.6,csv
+coralville,2026-09-08,Retail,3120.34,csv
+davenport,2026-09-08,Food,6514.15,csv
+davenport,2026-09-08,Beer,3774.89,csv
+davenport,2026-09-08,Liquor,3585.79,csv
+davenport,2026-09-08,Wine,1399.55,csv
+davenport,2026-09-08,NA Bev,522.42,csv
+davenport,2026-09-08,Retail,2705.93,csv

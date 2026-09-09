@@ -1,0 +1,35 @@
+{
+  "_comment": "Pipeline settings. Days-back windows control incremental pulls; the first run does a backfill of backfill_days.",
+  "backfill_days": 400,
+  "incremental_days": 7,
+  "toast": {
+    "host": "https://ws-api.toasttab.com",
+    "page_size": 100,
+    "labor_window_days": 30,
+    "requests_per_second_per_location": 4
+  },
+  "marginedge": {
+    "base_url": "https://api.marginedge.com/public",
+    "order_statuses": ["ALL"]
+  },
+  "category_map": {
+    "_comment": "Maps Toast sales-category names and MarginEdge category types onto the five portal buckets used for COGS% and sales mix.",
+    "buckets": ["Food", "Beer", "Liquor", "Wine", "NA Bev", "Retail", "Other"],
+    "toast_sales_category_to_bucket": {
+      "Food": "Food", "Kitchen": "Food", "Pizza": "Food", "Apps": "Food", "Entrees": "Food", "Desserts": "Food",
+      "Beer": "Beer", "Draft": "Beer", "Draft Beer": "Beer", "Packaged Beer": "Beer", "Cans": "Beer", "Seltzer": "Beer",
+      "Liquor": "Liquor", "Cocktails": "Liquor", "Spirits": "Liquor",
+      "Wine": "Wine",
+      "NA Bev": "NA Bev", "N/A Bev": "NA Bev", "Non-Alcoholic": "NA Bev", "Soda": "NA Bev", "Coffee": "NA Bev",
+      "Retail": "Retail", "Merch": "Retail", "Merchandise": "Retail", "Gift Card": "Other"
+    },
+    "marginedge_category_type_to_bucket": {
+      "Food": "Food", "Beer": "Beer", "Liquor": "Liquor", "Wine": "Wine", "N/A Bev": "NA Bev", "NA Bev": "NA Bev",
+      "Retail": "Retail", "Other": "Other", "Labor": "Labor", "Supplies": "Other", "Paper": "Other"
+    }
+  },
+  "site": {
+    "title": "Big Grove Brewery — Store Director Portal",
+    "history_days_in_bundle": 400
+  }
+}

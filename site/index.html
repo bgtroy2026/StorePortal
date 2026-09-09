@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Big Grove Brewery — Store Director Portal</title>
+<style>
+:root{
+  --navy:#1b2449;--green:#94bb36;--ink:#0b0b0b;--ink2:#52514e;--muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;
+  --surface:#ffffff;--plane:#f4f5f8;--border:rgba(11,11,11,.10);--good:#006300;--bad:#d03b3b;
+  --s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--s4:#eda100;--s5:#e87ba4;--s6:#008300;--s7:#4a3aa7;--s8:#e34948;--sx:#9a9a94;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:'Brandon Grotesque','Josefin Sans','Avenir Next',Avenir,'Segoe UI',system-ui,sans-serif;background:var(--plane);color:var(--ink);font-size:14px}
+button{font-family:inherit}
+/* ---------- login shell ---------- */
+#login{position:fixed;inset:0;background:var(--navy);display:flex;align-items:center;justify-content:center;z-index:50}
+.card{background:#fff;border-radius:14px;padding:38px 42px;width:min(400px,calc(100vw - 40px));box-shadow:0 20px 60px rgba(0,0,0,.4);text-align:center}
+.card h1{font-size:19px;color:var(--navy);margin-bottom:4px}
+.card .sub{font-size:12.5px;color:#6b7288;margin-bottom:24px}
+#gbtn{display:flex;justify-content:center;min-height:44px}
+#status{font-size:13px;color:#6b7288;margin-top:16px;min-height:18px;font-weight:600}
+#err{color:#c0392b;font-size:12.5px;margin-top:8px;min-height:16px;font-weight:600}
+.foot{margin-top:20px;font-size:10.5px;color:#9aa3c0;text-transform:uppercase;letter-spacing:.1em}
+.stamp{margin-top:7px;font-size:11px;color:var(--green);font-weight:600}
+.bar{height:5px;border-radius:3px;background:#e0e2ea;margin-top:14px;overflow:hidden;display:none}
+.bar i{display:block;height:100%;width:0%;background:var(--green);transition:width .2s}
+/* ---------- app ---------- */
+#app{display:none;min-height:100%}
+header{background:var(--navy);color:#fff;padding:0 18px;display:flex;align-items:center;gap:14px;height:54px;position:sticky;top:0;z-index:10}
+header .brand{font-weight:700;letter-spacing:.02em;font-size:15px}
+header .brand span{color:var(--green)}
+header nav{display:flex;gap:2px;margin-left:10px;overflow-x:auto}
+header nav button{background:transparent;border:0;color:#c9cfe3;padding:8px 12px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap}
+header nav button.on{background:rgba(255,255,255,.12);color:#fff}
+header .who{margin-left:auto;font-size:12px;color:#c9cfe3;white-space:nowrap}
+header .who b{color:#fff}
+.filters{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:12px 18px;background:var(--surface);border-bottom:1px solid var(--border)}
+.filters label{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:700;margin-right:4px}
+.seg{display:inline-flex;border:1px solid var(--border);border-radius:9px;overflow:hidden}
+.seg button{border:0;background:#fff;padding:7px 11px;font-size:12.5px;font-weight:600;color:var(--ink2);cursor:pointer}
+.seg button.on{background:var(--navy);color:#fff}
+.filters select,.filters input[type=date]{border:1px solid var(--border);border-radius:8px;padding:6px 9px;font:inherit;font-size:12.5px;background:#fff}
+.filters .fresh{margin-left:auto;font-size:11.5px;color:var(--muted)}
+main{padding:16px 18px 40px;max-width:1500px;margin:0 auto}
+.grid{display:grid;gap:14px}
+.tiles{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+.tile{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 14px}
+.tile .l{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:700}
+.tile .v{font-size:26px;font-weight:700;color:var(--navy);margin-top:4px;line-height:1.1}
+.tile .d{font-size:12px;color:var(--ink2);margin-top:5px;display:flex;gap:8px;flex-wrap:wrap}
+.tile .d .up{color:var(--good);font-weight:700}.tile .d .dn{color:var(--bad);font-weight:700}
+.tile .d .tg{color:var(--muted)}
+.panel{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;min-width:0;overflow-x:auto}
+.panel h3{font-size:13px;color:var(--navy);margin-bottom:2px}
+.panel .hint{font-size:11.5px;color:var(--muted);margin-bottom:10px}
+.panel .cw{position:relative;height:260px}
+.panel .cw.tall{height:340px}
+.cols2{grid-template-columns:repeat(auto-fit,minmax(420px,1fr))}
+.cols3{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+table.t{width:100%;border-collapse:collapse;font-size:12.5px}
+table.t th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);padding:6px 8px;border-bottom:2px solid var(--grid);white-space:nowrap}
+table.t td{padding:6px 8px;border-bottom:1px solid #eef0f6;white-space:nowrap}
+table.t td.r,table.t th.r{text-align:right;font-variant-numeric:tabular-nums}
+table.t td.n{font-weight:700;color:var(--navy)}
+.sw{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+.heat{display:grid;grid-template-columns:44px repeat(14,1fr);gap:2px;font-size:11px}
+.heat .h{color:var(--muted);text-align:center;padding:2px 0}
+.heat .c{height:26px;border-radius:4px;position:relative}
+.heat .c:hover::after{content:attr(data-t);position:absolute;bottom:110%;left:50%;transform:translateX(-50%);background:var(--navy);color:#fff;padding:4px 7px;border-radius:6px;white-space:nowrap;font-size:11px;z-index:5}
+.pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;background:#eef0f6;color:var(--navy)}
+.empty{padding:26px;text-align:center;color:var(--muted);font-size:13px}
+.legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:var(--ink2);margin-top:8px}
+.tt{position:absolute;pointer-events:none;background:var(--navy);color:#fff;padding:6px 9px;border-radius:7px;font-size:11.5px;white-space:nowrap;display:none;z-index:5;box-shadow:0 4px 14px rgba(0,0,0,.25)}
+@media (max-width:720px){header{height:auto;flex-wrap:wrap;padding:8px 12px}header .who{display:none}.panel .cw{height:220px}.cols2,.cols3{grid-template-columns:1fr}main{padding:12px}}
+</style>
+</head>
+<body>
+
+<div id="login">
+ <div class="card">
+  <h1>Big Grove Brewery</h1>
+  <div class="sub">Store Director Portal — sign in with your company Google account</div>
+  <div id="gbtn"></div>
+  <div class="bar" id="bar"><i id="barfill"></i></div>
+  <div id="status"></div>
+  <div id="err"></div>
+  <div class="foot">Authorized personnel only</div>
+  <div class="stamp" id="stamp"></div>
+ </div>
+</div>
+
+<div id="app">
+ <header>
+  <div class="brand">BIG GROVE <span>STORE DIRECTOR PORTAL</span></div>
+  <nav id="nav"></nav>
+  <div class="who" id="who"></div>
+ </header>
+ <div class="filters">
+  <label>Location</label><select id="locSel"></select>
+  <label>Range</label>
+  <div class="seg" id="rangeSeg"></div>
+  <input type="date" id="d0"> <span style="color:var(--muted)">to</span> <input type="date" id="d1">
+  <label>Compare</label>
+  <div class="seg" id="cmpSeg"><button data-c="prior" class="on">Prior period</button><button data-c="ly">Last year</button></div>
+  <div class="fresh" id="fresh"></div>
+ </div>
+ <main id="main"></main>
+</div>
+
+<script src="vendor/chart.umd.min.js"></script>
+<script>
+/* =========================================================================================
+   LOGIN SHELL — same protocol as the Sales Portal: Google ID token -> Apps Script -> bundle keys
+   ========================================================================================= */
+var CFG = {
+  CLIENT_ID: 'PASTE_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com',
+  API_URL:   'PASTE_APPS_SCRIPT_WEB_APP_EXEC_URL'
+};
+function $(id){return document.getElementById(id);}
+function setStatus(t){$('status').textContent=t;}
+function setErr(t){$('err').textContent=t;setStatus('');$('bar').style.display='none';}
+function ub64(s){var b=atob(s),a=new Uint8Array(b.length);for(var i=0;i<b.length;i++)a[i]=b.charCodeAt(i);return a;}
+async function fetchBin(name,pct0,pct1){
+  var r=await fetch(name,{cache:'no-store'}); if(!r.ok) throw new Error(name+' HTTP '+r.status);
+  var len=+r.headers.get('Content-Length')||0,got=0,chunks=[],rd=r.body.getReader();
+  for(;;){var c=await rd.read();if(c.done)break;chunks.push(c.value);got+=c.value.length;if(len)$('barfill').style.width=(pct0+(pct1-pct0)*(got/len))+'%';}
+  var buf=new Uint8Array(got),o=0;for(var i=0;i<chunks.length;i++){buf.set(chunks[i],o);o+=chunks[i].length;}return buf;
+}
+async function decrypt(buf,keyB64){
+  var key=await crypto.subtle.importKey('raw',ub64(keyB64),'AES-GCM',false,['decrypt']);
+  return new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:buf.slice(0,12)},key,buf.slice(12)));
+}
+async function gunzipText(u8){
+  if(typeof DecompressionStream!=='undefined'){return await new Response(new Blob([u8]).stream().pipeThrough(new DecompressionStream('gzip'))).text();}
+  await new Promise(function(res,rej){var s=document.createElement('script');s.src='vendor/pako.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+  return pako.ungzip(u8,{to:'string'});
+}
+/* auth = {ok, profile:{email,name,role,locations}, bundles:[{label,id,key}], sid} */
+async function boot(auth){
+  try{ if(auth.sid) navigator.sendBeacon(CFG.API_URL, JSON.stringify({a:'ping',s:auth.sid})); }catch(e){}
+  $('bar').style.display='block'; setStatus('Loading portal data…');
+  var b=auth.bundles[0]; // 'all' for leadership/admin, else the director's own location; multi-location directors get 'all' scoped by roster
+  var buf=await fetchBin('data/'+b.id+'.bin',0,85);
+  setStatus('Decrypting…');
+  var data=JSON.parse(await gunzipText(await decrypt(buf,b.key)));
+  if(auth.profile.locations && auth.profile.locations!=='all'){
+    var allow=String(auth.profile.locations).split(',').map(function(s){return s.trim();});
+    data.locations=data.locations.filter(function(l){return allow.indexOf(l.id)>=0;});
+  }
+  $('barfill').style.width='100%';
+  startApp(data, auth.profile);
+}
+async function onCred(resp){
+  var j;
+  try{
+    setStatus('Checking access…'); $('err').textContent='';
+    var r=await fetch(CFG.API_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({a:'signin',t:resp.credential})});
+    j=await r.json();
+    if(!j.ok){ setErr(j.error==='not on the roster'?'Your account is not on the portal roster — ask Troy to add you.':('Sign-in refused: '+(j.error||'unknown'))); return; }
+    try{ sessionStorage.setItem('sdp_auth',JSON.stringify(j)); }catch(e){}
+  }catch(e){ setErr('Could not reach the sign-in service. '+e.message); return; }
+  try{ await boot(j); }catch(e){ try{sessionStorage.removeItem('sdp_auth');}catch(_){} setErr('Signed in OK, but the portal data failed to load — refresh and try again. ('+e.message+')'); }
+}
+var gsiOK=false;
+function gsiFail(){ if(gsiOK||$('gbtn').firstChild)return; setErr('The Google sign-in button could not load. Open the portal directly in Chrome or Safari (not inside Gmail/Outlook/Messages) and try again.'); }
+function initGsi(){
+  if(CFG.CLIENT_ID.indexOf('PASTE_')===0||CFG.API_URL.indexOf('PASTE_')===0){ setErr('Setup incomplete: CLIENT_ID / API_URL not configured yet (see docs/SETUP.md).'); return; }
+  google.accounts.id.initialize({client_id:CFG.CLIENT_ID,callback:onCred,auto_select:false});
+  google.accounts.id.renderButton($('gbtn'),{theme:'filled_blue',size:'large',shape:'pill',width:280});
+  gsiOK=true;
+}
+window.addEventListener('load',function(){
+  fetch('data/manifest.json',{cache:'no-store'}).then(function(r){return r.json();}).then(function(m){ $('stamp').textContent='Data through '+m.through; }).catch(function(){});
+  if(/[?&]dev=1/.test(location.search)){ // local preview of an unencrypted build (python -m sdp build --no-encrypt)
+    fetch('data/dev.json',{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){ startApp(d,{name:'Dev preview',role:'Admin',email:''}); }).catch(function(e){ setErr('dev.json not found — run: python -m sdp build --no-encrypt'); });
+    return;
+  }
+  try{ var s=sessionStorage.getItem('sdp_auth'); if(s){ boot(JSON.parse(s)).catch(function(e){ try{sessionStorage.removeItem('sdp_auth');}catch(_){} setErr('Session reload failed — sign in again. '+e.message); }); return; } }catch(e){}
+  setTimeout(gsiFail,6000);
+});
+</script>
+<script src="https://accounts.google.com/gsi/client" async defer onload="initGsi()" onerror="gsiFail()"></script>
+
+<script>
+/* =========================================================================================
+   DASHBOARD APP
+   ========================================================================================= */
+var D=null, P=null, S={loc:'all', preset:'l28', d0:null, d1:null, cmp:'prior', page:'overview'};
+var K=null; // daily key index
+var BUCKETS=[['Food','f','pf','s1'],['Beer','b','pb','s2'],['Liquor','l','pl','s3'],['Wine','w','pw','s4'],['NA Bev','n','pn','s5'],['Retail','r',null,'s6'],['Other','x','po','sx']];
+var LOCCOL=['s1','s2','s3','s4','s5','s6','s7','s8'];
+var PAGES=[['overview','Overview'],['sales','Sales'],['labor','Labor'],['cogs','COGS & Purchasing'],['inventory','Inventory'],['activations','Activations'],['locations','Locations']];
+var charts=[];
+function css(v){return getComputedStyle(document.documentElement).getPropertyValue('--'+v).trim();}
+function fm(n,d){ if(n==null||isNaN(n))return '—'; d=d==null?0:d; return '$'+Number(n).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d}); }
+function fk(n){ if(n==null||isNaN(n))return '—'; return Math.abs(n)>=1e6?'$'+(n/1e6).toFixed(2)+'M':Math.abs(n)>=1e4?'$'+(n/1e3).toFixed(1)+'k':fm(n); }
+function fn(n,d){ if(n==null||isNaN(n))return '—'; return Number(n).toLocaleString(undefined,{maximumFractionDigits:d||0}); }
+function fp(x,d){ if(x==null||isNaN(x)||!isFinite(x))return '—'; return (x*100).toFixed(d==null?1:d)+'%'; }
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;');}
+function pd(s){var p=s.split('-');return new Date(+p[0],+p[1]-1,+p[2]);}
+function ds(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+function addDays(s,n){var d=pd(s);d.setDate(d.getDate()+n);return ds(d);}
+function dow(s){return pd(s).getDay();}
+function fdate(s){return pd(s).toLocaleDateString(undefined,{month:'short',day:'numeric'});}
+
+function startApp(data,profile){
+  D=data; P=profile; K={}; D.meta.daily_keys.forEach(function(k,i){K[k]=i;});
+  $('login').style.display='none'; $('app').style.display='block';
+  $('who').innerHTML='<b>'+esc(P.name||P.email)+'</b> · '+esc(P.role||'');
+  $('fresh').textContent='Data through '+fdate(D.meta.through)+' · built '+new Date(D.meta.built_at).toLocaleString();
+  var ls=$('locSel'); ls.innerHTML='';
+  if(D.locations.length>1) ls.appendChild(new Option('All locations','all'));
+  D.locations.forEach(function(l){ls.appendChild(new Option(l.name,l.id));});
+  S.loc=D.locations.length>1?'all':D.locations[0].id; ls.value=S.loc;
+  ls.onchange=function(){S.loc=ls.value;render();};
+  var seg=$('rangeSeg'); [['l7','Last 7'],['l28','Last 28'],['mtd','MTD'],['qtd','QTD'],['ytd','YTD'],['l91','Last 91']].forEach(function(p){
+    var b=document.createElement('button');b.textContent=p[1];b.dataset.p=p[0];b.onclick=function(){S.preset=p[0];applyPreset();render();};seg.appendChild(b);});
+  $('d0').onchange=$('d1').onchange=function(){S.preset='custom';S.d0=$('d0').value;S.d1=$('d1').value;render();};
+  $('cmpSeg').querySelectorAll('button').forEach(function(b){b.onclick=function(){S.cmp=b.dataset.c;render();};});
+  var nav=$('nav'); PAGES.forEach(function(p){var b=document.createElement('button');b.textContent=p[1];b.dataset.p=p[0];b.onclick=function(){S.page=p[0];render();};nav.appendChild(b);});
+  applyPreset(); render();
+}
+function applyPreset(){
+  var T=D.meta.through, t=pd(T);
+  var map={l7:addDays(T,-6),l28:addDays(T,-27),l91:addDays(T,-90),mtd:ds(new Date(t.getFullYear(),t.getMonth(),1)),qtd:ds(new Date(t.getFullYear(),Math.floor(t.getMonth()/3)*3,1)),ytd:ds(new Date(t.getFullYear(),0,1))};
+  if(map[S.preset]){S.d0=map[S.preset];S.d1=T;}
+  $('d0').value=S.d0;$('d1').value=S.d1;
+}
+/* ---- data access ---- */
+function locIds(){return S.loc==='all'?D.locations.map(function(l){return l.id;}):[S.loc];}
+function rowsIn(lid,a,b){ return (D.daily[lid]||[]).filter(function(r){return r[0]>=a&&r[0]<=b;}); }
+function sumRows(rows){ var s={}; D.meta.daily_keys.forEach(function(k){if(k!=='d')s[k]=0;}); rows.forEach(function(r){D.meta.daily_keys.forEach(function(k,i){if(k!=='d')s[k]+=(r[i]||0);});}); s.days=rows.length; return s; }
+function agg(a,b){ var all=[]; locIds().forEach(function(l){all=all.concat(rowsIn(l,a,b));}); return sumRows(all); }
+function byDate(a,b){ var m={}; locIds().forEach(function(l){rowsIn(l,a,b).forEach(function(r){var o=m[r[0]]||(m[r[0]]={});D.meta.daily_keys.forEach(function(k,i){if(k!=='d')o[k]=(o[k]||0)+(r[i]||0);});});}); return Object.keys(m).sort().map(function(d){m[d].d=d;return m[d];}); }
+function cmpWindow(){ var n=(pd(S.d1)-pd(S.d0))/864e5+1; if(S.cmp==='ly'){var a=pd(S.d0),b=pd(S.d1);a.setFullYear(a.getFullYear()-1);b.setFullYear(b.getFullYear()-1);return [ds(a),ds(b)];} return [addDays(S.d0,-n),addDays(S.d0,-1)]; }
+function hasData(a,b){ return locIds().some(function(l){return rowsIn(l,a,b).length>0;}); }
+function targetsFor(a,b){ // sum monthly targets prorated by days in range
+  var t={sales:0,guests:0,cogs:[],labor:[]}; locIds().forEach(function(l){ var tg=D.targets[l]||{}; var d=pd(a); while(ds(d)<=b){ var m=ds(d).slice(0,7); var x=tg[m]; if(x){ var dim=new Date(d.getFullYear(),d.getMonth()+1,0).getDate(); t.sales+=(x[0]||0)/dim; t.guests+=(x[3]||0)/dim; if(x[1])t.cogs.push(x[1]); if(x[2])t.labor.push(x[2]); } d.setDate(d.getDate()+1);} });
+  var avg=function(z){return z.length?z.reduce(function(p,c){return p+c;},0)/z.length:null;}; t.cogs=avg(t.cogs); t.labor=avg(t.labor); return t; }
+function kpis(a,b){ var s=agg(a,b); return {net:s.net,gross:s.gross,disc:s.disc,guests:s.guests,orders:s.orders,checks:s.checks,avgCheck:s.checks?s.net/s.checks:null,ppa:s.guests?s.net/s.guests:null,
+  labor:s.lc,laborPct:s.net?s.lc/s.net:null,hours:s.lh,splh:s.lh?s.net/s.lh:null,purch:s.p,purchPct:s.net?s.p/s.net:null,tips:s.tips,ref:s.ref,days:s.days,
+  food:s.f,beer:s.b,liquor:s.l,wine:s.w,nabev:s.n,retail:s.r,other:s.x,pf:s.pf,pb:s.pb,pl:s.pl,pw:s.pw,pn:s.pn,po:s.po}; }
+
+/* ---- rendering helpers ---- */
+function wkLabel(w,o){return 'wk '+fdate(w)+((o&&o._n&&o._n<7)?' (partial)':'');}
+function killCharts(){charts.forEach(function(c){try{c.destroy();}catch(e){}});charts=[];}
+function delta(cur,prev,inv){ if(cur==null||prev==null||!prev)return '<span class="tg">no comparison</span>'; var d=(cur-prev)/Math.abs(prev); var up=d>=0; var good=inv?!up:up; return '<span class="'+(good?'up':'dn')+'">'+(up?'▲':'▼')+' '+fp(Math.abs(d),1)+'</span><span class="tg">vs '+(S.cmp==='ly'?'LY':'prior')+'</span>'; }
+function tile(label,val,dl,extra){ return '<div class="tile"><div class="l">'+label+'</div><div class="v">'+val+'</div><div class="d">'+(dl||'')+(extra||'')+'</div></div>'; }
+function panel(title,hint,body,cls){ return '<div class="panel '+(cls||'')+'"><h3>'+title+'</h3><div class="hint">'+(hint||'')+'</div>'+body+'</div>'; }
+function chartBox(id,tall){ return '<div class="cw'+(tall?' tall':'')+'"><canvas id="'+id+'"></canvas></div>'; }
+if(window.Chart){Chart.defaults.font.family=getComputedStyle(document.body).fontFamily; Chart.defaults.color=css('ink2'); Chart.defaults.borderColor=css('grid');}
+var baseOpts=function(o){ return Object.assign({responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{display:false},tooltip:{backgroundColor:css('navy'),titleFont:{weight:'700'},padding:8,callbacks:{label:function(c){var v=c.parsed.y!=null?c.parsed.y:c.parsed;return ' '+c.dataset.label+': '+(c.dataset.fmt==='pct'?fp(v):c.dataset.fmt==='int'?fn(v):fm(v));}}}},
+  scales:{x:{grid:{display:false},ticks:{maxRotation:0,autoSkip:true,maxTicksLimit:10}},y:{beginAtZero:true,grid:{color:css('grid')},border:{display:false},ticks:{callback:function(v){return fk(v);}}}}},o||{}); };
+function mk(id,cfg){ if(!window.Chart){$(id).parentNode.innerHTML='<div class="empty">Chart library failed to load.</div>';return null;} var c=new Chart($(id).getContext('2d'),cfg); charts.push(c); return c; }
+function lineCfg(labels,sets){ return {type:'line',data:{labels:labels,datasets:sets.map(function(s){return Object.assign({borderWidth:2,pointRadius:0,pointHoverRadius:4,tension:.25,fill:false},s);})},options:baseOpts()}; }
+
+/* ---- pages ---- */
+function render(){
+  killCharts();
+  document.querySelectorAll('#rangeSeg button').forEach(function(b){b.classList.toggle('on',b.dataset.p===S.preset);});
+  document.querySelectorAll('#cmpSeg button').forEach(function(b){b.classList.toggle('on',b.dataset.c===S.cmp);});
+  document.querySelectorAll('#nav button').forEach(function(b){b.classList.toggle('on',b.dataset.p===S.page);});
+  var m=$('main'); m.innerHTML='';
+  ({overview:pgOverview,sales:pgSales,labor:pgLabor,cogs:pgCogs,inventory:pgInventory,activations:pgActivations,locations:pgLocations})[S.page](m);
+}
+
+function pgOverview(m){
+  var a=S.d0,b=S.d1, cw=cmpWindow(), k=kpis(a,b), kp=hasData(cw[0],cw[1])?kpis(cw[0],cw[1]):null, tg=targetsFor(a,b);
+  var h='<div class="grid tiles">'
+   +tile('Net sales',fk(k.net),delta(k.net,kp&&kp.net),tg.sales?'<span class="tg">target '+fk(tg.sales)+' · '+fp(k.net/tg.sales,0)+'</span>':'')
+   +tile('Guests',fn(k.guests),delta(k.guests,kp&&kp.guests))
+   +tile('Avg check',fm(k.avgCheck,2),delta(k.avgCheck,kp&&kp.avgCheck))
+   +tile('Per-person avg',fm(k.ppa,2),delta(k.ppa,kp&&kp.ppa))
+   +tile('Labor %',fp(k.laborPct),delta(k.laborPct,kp&&kp.laborPct,true),tg.labor?'<span class="tg">target '+fp(tg.labor,0)+'</span>':'')
+   +tile('Purchases % (COGS proxy)',fp(k.purchPct),delta(k.purchPct,kp&&kp.purchPct,true),tg.cogs?'<span class="tg">target '+fp(tg.cogs,0)+'</span>':'')
+   +tile('Sales / labor hour',fm(k.splh,0),delta(k.splh,kp&&kp.splh))
+   +tile('Discounts',fk(k.disc),delta(k.disc,kp&&kp.disc,true),'<span class="tg">'+fp(k.gross?k.disc/k.gross:null)+' of gross</span>')
+   +'</div>';
+  h+='<div class="grid cols2" style="margin-top:14px">'
+   +panel('Net sales by day','Current range vs comparison window; activations marked ●',chartBox('c_trend',true))
+   +panel('Sales mix','Share of net sales by category',chartBox('c_mix')+'<div id="mixLegend" class="legend"></div>')
+   +panel('Labor % and purchases % by week','Weekly ratios against targets',chartBox('c_ratio'))
+   +panel('Day of week','Average net sales per weekday in range',chartBox('c_dow'))
+   +'</div>';
+  m.innerHTML=h;
+  // trend
+  var cur=byDate(a,b), prev=kp?byDate(cw[0],cw[1]):[];
+  var acts={}; D.activations.forEach(function(x){ if(locIds().indexOf(x.loc)<0)return; var d=x.s; while(d<=(x.e||x.s)){acts[d]=(acts[d]?acts[d]+', ':'')+x.name;d=addDays(d,1);} });
+  var sets=[{label:'Net sales',data:cur.map(function(r){return r.net;}),borderColor:css('s1'),pointRadius:cur.map(function(r){return acts[r.d]?5:0;}),pointBackgroundColor:css('s2'),pointBorderColor:'#fff'}];
+  if(prev.length) sets.push({label:S.cmp==='ly'?'Last year':'Prior period',data:prev.map(function(r){return r.net;}),borderColor:css('axis'),borderDash:[4,4]});
+  var lc=lineCfg(cur.map(function(r){return fdate(r.d);}),sets); lc.options.plugins.legend={display:prev.length>0,position:'bottom'};
+  lc.options.plugins.tooltip.callbacks.afterTitle=function(items){var d=cur[items[0].dataIndex];return d&&acts[d.d]?'● '+acts[d.d]:'';};
+  mk('c_trend',lc);
+  // mix
+  var mix=BUCKETS.map(function(bk){return [bk[0],k[{f:'food',b:'beer',l:'liquor',w:'wine',n:'nabev',r:'retail',x:'other'}[bk[1]]],css(bk[3])];}).filter(function(x){return x[1]>0;});
+  mk('c_mix',{type:'doughnut',data:{labels:mix.map(function(x){return x[0];}),datasets:[{data:mix.map(function(x){return x[1];}),backgroundColor:mix.map(function(x){return x[2];}),borderWidth:2,borderColor:'#fff'}]},options:{responsive:true,maintainAspectRatio:false,cutout:'62%',plugins:{legend:{display:false},tooltip:{callbacks:{label:function(c){return ' '+c.label+': '+fk(c.parsed)+' ('+fp(c.parsed/k.net)+')';}}}}}});
+  $('mixLegend').innerHTML=mix.map(function(x){return '<span><i class="sw" style="background:'+x[2]+'"></i>'+x[0]+' '+fp(x[1]/k.net,0)+'</span>';}).join('');
+  // weekly ratios
+  var wk={}; cur.forEach(function(r){var d=pd(r.d);d.setDate(d.getDate()-((d.getDay()+6)%7));var w=ds(d);var o=wk[w]||(wk[w]={net:0,lc:0,p:0,_n:0});o.net+=r.net;o.lc+=r.lc;o.p+=r.p;o._n++;});
+  var wks=Object.keys(wk).sort();
+  var rc=lineCfg(wks.map(function(w){return wkLabel(w,wk[w]);}),[{label:'Labor %',data:wks.map(function(w){return wk[w].net?wk[w].lc/wk[w].net:null;}),borderColor:css('s3'),fmt:'pct'},{label:'Purchases %',data:wks.map(function(w){return wk[w].net?wk[w].p/wk[w].net:null;}),borderColor:css('s2'),fmt:'pct'}]);
+  if(tg.labor) rc.data.datasets.push({label:'Labor target',data:wks.map(function(){return tg.labor;}),borderColor:css('s3'),borderDash:[3,4],borderWidth:1,pointRadius:0,fmt:'pct'});
+  if(tg.cogs) rc.data.datasets.push({label:'COGS target',data:wks.map(function(){return tg.cogs;}),borderColor:css('s2'),borderDash:[3,4],borderWidth:1,pointRadius:0,fmt:'pct'});
+  rc.options.scales.y.ticks.callback=function(v){return fp(v,0);}; rc.options.plugins.legend={display:true,position:'bottom'}; mk('c_ratio',rc);
+  // dow
+  var dn=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'], dsum=[0,0,0,0,0,0,0], dcnt=[0,0,0,0,0,0,0];
+  cur.forEach(function(r){var w=dow(r.d);dsum[w]+=r.net;dcnt[w]++;});
+  var order=[1,2,3,4,5,6,0];
+  mk('c_dow',{type:'bar',data:{labels:order.map(function(i){return dn[i];}),datasets:[{label:'Avg net sales',data:order.map(function(i){return dcnt[i]?dsum[i]/dcnt[i]:0;}),backgroundColor:css('s1'),borderRadius:4,maxBarThickness:46}]},options:baseOpts()});
+}
+
+function pgSales(m){
+  var a=S.d0,b=S.d1,k=kpis(a,b),cw=cmpWindow(),kp=hasData(cw[0],cw[1])?kpis(cw[0],cw[1]):null;
+  var h='<div class="grid tiles">'+tile('Net sales',fk(k.net),delta(k.net,kp&&kp.net))+tile('Orders',fn(k.orders),delta(k.orders,kp&&kp.orders))+tile('Checks',fn(k.checks),delta(k.checks,kp&&kp.checks))
+    +tile('Gross sales',fk(k.gross),delta(k.gross,kp&&kp.gross))+tile('Tips',fk(k.tips),'<span class="tg">'+fp(k.net?k.tips/k.net:null)+' of net</span>')+tile('Refunds',fk(k.ref),delta(k.ref,kp&&kp.ref,true))+'</div>';
+  h+='<div class="grid cols2" style="margin-top:14px">'
+    +panel('Net sales by category over time','Stacked by week',chartBox('c_cat',true))
+    +panel('Hourly heatmap','Average net sales by hour and weekday, last 8 weeks (from item timestamps)','<div id="heat"></div>')
+    +panel('Top items — last 28 days','Ranked by net sales; category color shown','<div id="topItems"></div>')
+    +panel('Dining option & tender — last 28 days','How guests ordered and paid','<div id="dining"></div>')
+    +'</div>';
+  m.innerHTML=h;
+  var cur=byDate(a,b), wk={}; cur.forEach(function(r){var d=pd(r.d);d.setDate(d.getDate()-((d.getDay()+6)%7));var w=ds(d);var o=wk[w]||(wk[w]={_n:0});o._n++;BUCKETS.forEach(function(bk){o[bk[1]]=(o[bk[1]]||0)+(r[bk[1]]||0);});});
+  var wks=Object.keys(wk).sort();
+  mk('c_cat',{type:'bar',data:{labels:wks.map(function(w){return wkLabel(w,wk[w]);}),datasets:BUCKETS.map(function(bk){return {label:bk[0],data:wks.map(function(w){return wk[w][bk[1]]||0;}),backgroundColor:css(bk[3]),borderWidth:2,borderColor:'#fff',borderSkipped:false};})},
+    options:baseOpts({scales:{x:{stacked:true,grid:{display:false}},y:{stacked:true,beginAtZero:true,grid:{color:css('grid')},border:{display:false},ticks:{callback:function(v){return fk(v);}}}},plugins:{legend:{display:true,position:'bottom'},tooltip:{callbacks:{label:function(c){return ' '+c.dataset.label+': '+fk(c.parsed.y);}}}}})});
+  // heatmap
+  var hrs=[]; for(var i=10;i<24;i++)hrs.push(i);
+  var grid={}, max=0; locIds().forEach(function(l){(D.hourly[l]||[]).forEach(function(r){var key=r[0]+':'+r[1];grid[key]=(grid[key]||0)+r[2];});});
+  Object.keys(grid).forEach(function(k2){if(grid[k2]>max)max=grid[k2];});
+  var dn=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'], hh='<div class="heat"><div></div>'+hrs.map(function(x){return '<div class="h">'+(x>12?x-12+'p':x===12?'12p':x+'a')+'</div>';}).join('');
+  [1,2,3,4,5,6,0].forEach(function(d){ hh+='<div class="h" style="text-align:left;line-height:26px">'+dn[d]+'</div>'+hrs.map(function(x){var v=grid[d+':'+x]||0;var t=max?v/max:0;return '<div class="c" data-t="'+dn[d]+' '+x+':00 — '+fm(v)+'" style="background:rgba(42,120,214,'+(0.08+0.92*t).toFixed(2)+')"></div>';}).join(''); });
+  $('heat').innerHTML=hh+'</div>';
+  // top items (sum across selected locations)
+  var ti={}; locIds().forEach(function(l){(D.top_items[l]||[]).forEach(function(r){var o=ti[r[0]]||(ti[r[0]]={b:r[1],q:0,n:0});o.q+=r[2];o.n+=r[3];});});
+  var list=Object.keys(ti).map(function(n){return [n,ti[n]];}).sort(function(x,y){return y[1].n-x[1].n;}).slice(0,20);
+  var tot=list.reduce(function(p,c){return p+c[1].n;},0);
+  $('topItems').innerHTML='<table class="t"><tr><th>#</th><th>Item</th><th>Category</th><th class="r">Qty</th><th class="r">Net</th><th class="r">Share</th></tr>'+list.map(function(x,i){var bk=BUCKETS.filter(function(z){return z[0]===x[1].b;})[0];return '<tr><td>'+(i+1)+'</td><td class="n">'+esc(x[0])+'</td><td><i class="sw" style="background:'+css(bk?bk[3]:'sx')+'"></i>'+esc(x[1].b)+'</td><td class="r">'+fn(x[1].q)+'</td><td class="r">'+fm(x[1].n)+'</td><td class="r">'+fp(x[1].n/tot)+'</td></tr>';}).join('')+'</table>';
+  var dg={},pay={}; locIds().forEach(function(l){(D.dining[l]||[]).forEach(function(r){var o=dg[r[0]]||(dg[r[0]]={n:0,c:0});o.n+=r[1];o.c+=r[2];});(D.payments[l]||[]).forEach(function(r){var o=pay[r[0]]||(pay[r[0]]={a:0,t:0,c:0});o.a+=r[1];o.t+=r[2];o.c+=r[3];});});
+  var dl=Object.keys(dg).sort(function(x,y){return dg[y].n-dg[x].n;}), dt=dl.reduce(function(p,c){return p+dg[c].n;},0);
+  var pl=Object.keys(pay).sort(function(x,y){return pay[y].a-pay[x].a;}), pt=pl.reduce(function(p,c){return p+pay[c].a;},0);
+  $('dining').innerHTML='<table class="t"><tr><th>Dining option</th><th class="r">Net</th><th class="r">Orders</th><th class="r">Share</th></tr>'+dl.map(function(x){return '<tr><td class="n">'+esc(x.replace(/_/g,' '))+'</td><td class="r">'+fm(dg[x].n)+'</td><td class="r">'+fn(dg[x].c)+'</td><td class="r">'+fp(dg[x].n/dt)+'</td></tr>';}).join('')+'</table>'
+    +'<table class="t" style="margin-top:14px"><tr><th>Tender</th><th class="r">Amount</th><th class="r">Tips</th><th class="r">Tip rate</th><th class="r">Share</th></tr>'+pl.map(function(x){return '<tr><td class="n">'+esc(x)+'</td><td class="r">'+fm(pay[x].a)+'</td><td class="r">'+fm(pay[x].t)+'</td><td class="r">'+fp(pay[x].a?pay[x].t/pay[x].a:null)+'</td><td class="r">'+fp(pay[x].a/pt)+'</td></tr>';}).join('')+'</table>';
+}
+
+function pgLabor(m){
+  var a=S.d0,b=S.d1,k=kpis(a,b),cw=cmpWindow(),kp=hasData(cw[0],cw[1])?kpis(cw[0],cw[1]):null,tg=targetsFor(a,b);
+  m.innerHTML='<div class="grid tiles">'+tile('Labor cost',fk(k.labor),delta(k.labor,kp&&kp.labor,true))+tile('Labor %',fp(k.laborPct),delta(k.laborPct,kp&&kp.laborPct,true),tg.labor?'<span class="tg">target '+fp(tg.labor,0)+'</span>':'')
+    +tile('Hours',fn(k.hours),delta(k.hours,kp&&kp.hours,true))+tile('Sales / labor hour',fm(k.splh,0),delta(k.splh,kp&&kp.splh))+tile('Avg wage',fm(k.hours?k.labor/k.hours:null,2),'')+'</div>'
+    +'<div class="grid cols2" style="margin-top:14px">'+panel('Labor % by day','Daily labor cost ÷ net sales; dashed = target',chartBox('c_lab',true))+panel('Hours vs sales by day','Bars: labor hours · line: net sales indexed to hours scale',chartBox('c_hrs',true))
+    +panel('By job — last 28 days','Hours, cost and average rate','<div id="jobs"></div>')+'</div>';
+  var cur=byDate(a,b);
+  var lc=lineCfg(cur.map(function(r){return fdate(r.d);}),[{label:'Labor %',data:cur.map(function(r){return r.net?r.lc/r.net:null;}),borderColor:css('s3'),fmt:'pct'}]);
+  if(tg.labor)lc.data.datasets.push({label:'Target',data:cur.map(function(){return tg.labor;}),borderColor:css('s3'),borderDash:[3,4],borderWidth:1,pointRadius:0,fmt:'pct'});
+  lc.options.scales.y.ticks.callback=function(v){return fp(v,0);}; mk('c_lab',lc);
+  mk('c_hrs',{type:'bar',data:{labels:cur.map(function(r){return fdate(r.d);}),datasets:[{label:'Labor hours',data:cur.map(function(r){return r.lh;}),backgroundColor:css('s3'),borderRadius:3,fmt:'int'}]},options:baseOpts({scales:{x:{grid:{display:false},ticks:{maxRotation:0,autoSkip:true,maxTicksLimit:10}},y:{beginAtZero:true,grid:{color:css('grid')},border:{display:false},ticks:{callback:function(v){return fn(v)+' h';}}}}})});
+  var jb={}; locIds().forEach(function(l){(D.labor_jobs[l]||[]).forEach(function(r){var o=jb[r[0]]||(jb[r[0]]={h:0,c:0,s:0});o.h+=r[1];o.c+=r[2];o.s+=r[3];});});
+  var jl=Object.keys(jb).sort(function(x,y){return jb[y].c-jb[x].c;}), jt=jl.reduce(function(p,c){return p+jb[c].c;},0);
+  $('jobs').innerHTML='<table class="t"><tr><th>Job</th><th class="r">Hours</th><th class="r">Cost</th><th class="r">Avg rate</th><th class="r">Shifts</th><th class="r">Share</th></tr>'+jl.map(function(x){return '<tr><td class="n">'+esc(x)+'</td><td class="r">'+fn(jb[x].h)+'</td><td class="r">'+fm(jb[x].c)+'</td><td class="r">'+fm(jb[x].h?jb[x].c/jb[x].h:null,2)+'</td><td class="r">'+fn(jb[x].s)+'</td><td class="r">'+fp(jb[x].c/jt)+'</td></tr>';}).join('')+'</table>';
+}
+
+function pgCogs(m){
+  var a=S.d0,b=S.d1,k=kpis(a,b),cw=cmpWindow(),kp=hasData(cw[0],cw[1])?kpis(cw[0],cw[1]):null,tg=targetsFor(a,b);
+  var rows=[['Food',k.food,k.pf],['Beer',k.beer,k.pb],['Liquor',k.liquor,k.pl],['Wine',k.wine,k.pw],['NA Bev',k.nabev,k.pn],['Other / supplies',k.other+k.retail,k.po]];
+  m.innerHTML='<div class="grid tiles">'+tile('Purchases',fk(k.purch),delta(k.purch,kp&&kp.purch,true))+tile('Purchases % of net',fp(k.purchPct),delta(k.purchPct,kp&&kp.purchPct,true),tg.cogs?'<span class="tg">target '+fp(tg.cogs,0)+'</span>':'')
+    +tile('Food cost % (purchases)',fp(k.food?k.pf/k.food:null),delta(k.food?k.pf/k.food:null,kp&&kp.food?kp.pf/kp.food:null,true))+tile('Beer cost % (purchases)',fp(k.beer?k.pb/k.beer:null),delta(k.beer?k.pb/k.beer:null,kp&&kp.beer?kp.pb/kp.beer:null,true))
+    +tile('Liquor cost %',fp(k.liquor?k.pl/k.liquor:null),'')+tile('Wine cost %',fp(k.wine?k.pw/k.wine:null),'')+'</div>'
+    +'<div class="hint" style="margin:8px 2px 0;font-size:11.5px;color:var(--muted)">Purchases-based cost % is a proxy; the Inventory page shows count-adjusted actual usage (beginning + purchases − ending) where counts exist.</div>'
+    +'<div class="grid cols2" style="margin-top:14px">'+panel('Purchases by category by week','Invoice line totals from MarginEdge',chartBox('c_purch',true))+panel('Category cost % in range','Purchases ÷ category net sales','<div id="catTbl"></div>')
+    +panel('Top vendors — last 28 days','Invoice totals by vendor','<div id="vend"></div>')+panel('Purchases vs sales by day','Bars: purchases (invoice date) · line: net sales',chartBox('c_pvs',true))+'</div>';
+  var cur=byDate(a,b), wk={}; cur.forEach(function(r){var d=pd(r.d);d.setDate(d.getDate()-((d.getDay()+6)%7));var w=ds(d);var o=wk[w]||(wk[w]={_n:0});o._n++;BUCKETS.forEach(function(bk){if(bk[2])o[bk[2]]=(o[bk[2]]||0)+(r[bk[2]]||0);});});
+  var wks=Object.keys(wk).sort();
+  mk('c_purch',{type:'bar',data:{labels:wks.map(function(w){return wkLabel(w,wk[w]);}),datasets:BUCKETS.filter(function(bk){return bk[2];}).map(function(bk){return {label:bk[0],data:wks.map(function(w){return wk[w][bk[2]]||0;}),backgroundColor:css(bk[3]),borderWidth:2,borderColor:'#fff',borderSkipped:false};})},
+    options:baseOpts({scales:{x:{stacked:true,grid:{display:false}},y:{stacked:true,beginAtZero:true,grid:{color:css('grid')},border:{display:false},ticks:{callback:function(v){return fk(v);}}}},plugins:{legend:{display:true,position:'bottom'},tooltip:{callbacks:{label:function(c){return ' '+c.dataset.label+': '+fk(c.parsed.y);}}}}})});
+  $('catTbl').innerHTML='<table class="t"><tr><th>Category</th><th class="r">Net sales</th><th class="r">Purchases</th><th class="r">Cost %</th></tr>'+rows.map(function(r){return '<tr><td class="n">'+r[0]+'</td><td class="r">'+fm(r[1])+'</td><td class="r">'+fm(r[2])+'</td><td class="r">'+fp(r[1]?r[2]/r[1]:null)+'</td></tr>';}).join('')+'<tr><td class="n">Total</td><td class="r">'+fm(k.net)+'</td><td class="r">'+fm(k.purch)+'</td><td class="r">'+fp(k.purchPct)+'</td></tr></table>';
+  var vd={}; locIds().forEach(function(l){(D.vendors[l]||[]).forEach(function(r){var o=vd[r[0]]||(vd[r[0]]={t:0,n:0,b:r[3]});o.t+=r[1];o.n+=r[2];});});
+  var vl=Object.keys(vd).sort(function(x,y){return vd[y].t-vd[x].t;}).slice(0,15), vt=vl.reduce(function(p,c){return p+vd[c].t;},0);
+  $('vend').innerHTML='<table class="t"><tr><th>Vendor</th><th>Mostly</th><th class="r">Invoices</th><th class="r">Total</th><th class="r">Share</th></tr>'+vl.map(function(x){return '<tr><td class="n">'+esc(x)+'</td><td>'+esc(vd[x].b||'')+'</td><td class="r">'+fn(vd[x].n)+'</td><td class="r">'+fm(vd[x].t)+'</td><td class="r">'+fp(vd[x].t/vt)+'</td></tr>';}).join('')+'</table>';
+  mk('c_pvs',{data:{labels:cur.map(function(r){return fdate(r.d);}),datasets:[{type:'bar',label:'Purchases',data:cur.map(function(r){return r.p;}),backgroundColor:css('s2'),borderRadius:3},{type:'line',label:'Net sales',data:cur.map(function(r){return r.net;}),borderColor:css('s1'),borderWidth:2,pointRadius:0,tension:.25}]},options:baseOpts()});
+}
+
+function pgInventory(m){
+  var h='<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(640px,1fr))">';
+  locIds().forEach(function(l){
+    var loc=D.locations.filter(function(x){return x.id===l;})[0], inv=D.inventory[l]||[];
+    if(!inv.length){h+=panel(loc.name,'No inventory counts yet','<div class="empty">Add counts to inputs/inventory_counts.csv or enable the MarginEdge inventory endpoint.</div>');return;}
+    var tot=inv.reduce(function(p,c){return p+c.value;},0);
+    h+=panel(loc.name+' — on hand '+fk(tot),'Latest count '+fdate(inv[0].date)+(inv[0].prev_date?' vs '+fdate(inv[0].prev_date):''),
+      '<table class="t"><tr><th>Category</th><th class="r">Begin</th><th class="r">Purchases</th><th class="r">End</th><th class="r">Usage</th><th class="r">Sales</th><th class="r">Actual cost %</th><th class="r">Wks on hand</th></tr>'
+      +inv.map(function(r){var days=r.prev_date?(pd(r.date)-pd(r.prev_date))/864e5:null;var woh=(r.usage&&days)?r.value/(r.usage/days*7):null;var bk=BUCKETS.filter(function(z){return z[0]===r.bucket;})[0];
+        return '<tr><td class="n"><i class="sw" style="background:'+css(bk?bk[3]:'sx')+'"></i>'+esc(r.bucket)+'</td><td class="r">'+fm(r.prev_value)+'</td><td class="r">'+fm(r.purchases)+'</td><td class="r">'+fm(r.value)+'</td><td class="r">'+fm(r.usage)+'</td><td class="r">'+fm(r.sales)+'</td><td class="r">'+fp(r.sales?r.usage/r.sales:null)+'</td><td class="r">'+(woh!=null?woh.toFixed(1):'—')+'</td></tr>';}).join('')+'</table>');
+  });
+  m.innerHTML=h+'</div>';
+}
+
+function pgActivations(m){
+  var acts=D.activations.filter(function(x){return locIds().indexOf(x.loc)>=0;}).sort(function(x,y){return y.s<x.s?-1:1;});
+  if(!acts.length){m.innerHTML='<div class="panel"><div class="empty">No activations recorded — add rows to inputs/activations.csv.</div></div>';return;}
+  var rows=acts.map(function(x){
+    var e=x.e||x.s, n=(pd(e)-pd(x.s))/864e5+1;
+    var ev=sumRows(rowsIn(x.loc,x.s,e)); // baseline: same weekdays over the previous 4 weeks
+    var base=0,bn=0; for(var w=1;w<=4;w++){var r=sumRows(rowsIn(x.loc,addDays(x.s,-7*w),addDays(e,-7*w)));if(r.days){base+=r.net;bn++;}}
+    var baseline=bn?base/bn:null, lift=baseline!=null?ev.net-baseline:null, loc=D.locations.filter(function(z){return z.id===x.loc;})[0];
+    return {x:x,loc:loc?loc.name:x.loc,days:n,net:ev.net,guests:ev.guests,baseline:baseline,lift:lift,roi:(lift!=null&&x.cost)?lift/x.cost:null};
+  });
+  var tc=rows.reduce(function(p,c){return p+(c.x.cost||0);},0), tl=rows.reduce(function(p,c){return p+(c.lift||0);},0);
+  m.innerHTML='<div class="grid tiles">'+tile('Activations',fn(rows.length),'')+tile('Total cost',fk(tc),'')+tile('Est. sales lift',fk(tl),'<span class="tg">vs 4-week same-weekday baseline</span>')+tile('Lift ÷ cost',tc?(tl/tc).toFixed(1)+'×':'—','')+'</div>'
+    +'<div class="panel" style="margin-top:14px"><h3>Activation log</h3><div class="hint">Lift = net sales on activation days minus the average of the same weekdays in the prior 4 weeks. Edit inputs/activations.csv to add or correct entries.</div>'
+    +'<div style="overflow-x:auto"><table class="t"><tr><th>Date</th><th>Location</th><th>Activation</th><th>Type</th><th>Owner</th><th class="r">Cost</th><th class="r">Net sales</th><th class="r">Baseline</th><th class="r">Lift</th><th class="r">Lift ÷ cost</th><th>Notes</th></tr>'
+    +rows.map(function(r){return '<tr><td>'+fdate(r.x.s)+(r.days>1?'–'+fdate(r.x.e):'')+'</td><td>'+esc(r.loc)+'</td><td class="n">'+esc(r.x.name)+'</td><td><span class="pill">'+esc(r.x.type||'')+'</span></td><td>'+esc(r.x.owner||'')+'</td><td class="r">'+fm(r.x.cost)+'</td><td class="r">'+fm(r.net)+'</td><td class="r">'+fm(r.baseline)+'</td><td class="r" style="color:'+(r.lift>=0?'var(--good)':'var(--bad)')+';font-weight:700">'+(r.lift!=null?(r.lift>=0?'+':'')+fm(r.lift):'—')+'</td><td class="r">'+(r.roi!=null?r.roi.toFixed(1)+'×':'—')+'</td><td style="white-space:normal;max-width:260px">'+esc(r.x.notes||'')+'</td></tr>';}).join('')+'</table></div></div>';
+}
+
+function pgLocations(m){
+  var a=S.d0,b=S.d1,cw=cmpWindow();
+  var rows=D.locations.map(function(l){ var s=sumRows(rowsIn(l.id,a,b)), p=sumRows(rowsIn(l.id,cw[0],cw[1])); return {l:l,s:s,p:p}; });
+  m.innerHTML='<div class="panel"><h3>Location scorecard</h3><div class="hint">All locations for the selected range; change vs '+(S.cmp==='ly'?'last year':'prior period')+'</div><div style="overflow-x:auto"><table class="t"><tr><th>Location</th><th class="r">Net sales</th><th class="r">Δ</th><th class="r">Guests</th><th class="r">Avg check</th><th class="r">PPA</th><th class="r">Labor %</th><th class="r">Purch %</th><th class="r">SPLH</th><th class="r">Discounts</th></tr>'
+    +rows.map(function(r,i){var s=r.s,p=r.p;var d=p.net?(s.net-p.net)/p.net:null;return '<tr><td class="n"><i class="sw" style="background:'+css(LOCCOL[i%8])+'"></i>'+esc(r.l.name)+'</td><td class="r">'+fm(s.net)+'</td><td class="r" style="color:'+(d>=0?'var(--good)':'var(--bad)')+';font-weight:700">'+(d!=null?(d>=0?'+':'')+fp(d):'—')+'</td><td class="r">'+fn(s.guests)+'</td><td class="r">'+fm(s.checks?s.net/s.checks:null,2)+'</td><td class="r">'+fm(s.guests?s.net/s.guests:null,2)+'</td><td class="r">'+fp(s.net?s.lc/s.net:null)+'</td><td class="r">'+fp(s.net?s.p/s.net:null)+'</td><td class="r">'+fm(s.lh?s.net/s.lh:null,0)+'</td><td class="r">'+fm(s.disc)+'</td></tr>';}).join('')+'</table></div></div>'
+    +'<div class="grid cols2" style="margin-top:14px">'+panel('Net sales by week by location','',chartBox('c_locs',true))+panel('Labor % by week by location','',chartBox('c_loclab',true))+'</div>';
+  var wkAll={}; D.locations.forEach(function(l){rowsIn(l.id,a,b).forEach(function(r){var d=pd(r[0]);d.setDate(d.getDate()-((d.getDay()+6)%7));var w=ds(d);var o=wkAll[w]||(wkAll[w]={_n:0});if(l.id===D.locations[0].id)o._n++;var q=o[l.id]||(o[l.id]={net:0,lc:0});q.net+=r[K.net];q.lc+=r[K.lc];});});
+  var wks=Object.keys(wkAll).sort();
+  var c1=lineCfg(wks.map(function(w){return wkLabel(w,wkAll[w]);}),D.locations.map(function(l,i){return {label:l.name,data:wks.map(function(w){return wkAll[w][l.id]?wkAll[w][l.id].net:null;}),borderColor:css(LOCCOL[i%8])};})); c1.options.plugins.legend={display:true,position:'bottom'}; mk('c_locs',c1);
+  var c2=lineCfg(wks.map(function(w){return wkLabel(w,wkAll[w]);}),D.locations.map(function(l,i){return {label:l.name,data:wks.map(function(w){var q=wkAll[w][l.id];return q&&q.net?q.lc/q.net:null;}),borderColor:css(LOCCOL[i%8]),fmt:'pct'};})); c2.options.plugins.legend={display:true,position:'bottom'}; c2.options.scales.y.ticks.callback=function(v){return fp(v,0);}; mk('c_loclab',c2);
+}
+</script>
+</body>
+</html>
