@@ -39,7 +39,16 @@ def locations() -> list[dict]:
 
 
 def env(name: str, default: str | None = None, required: bool = False) -> str | None:
-    v = os.environ.get(name, default)
+    """Read an environment variable, treating empty/whitespace as ABSENT.
+
+    GitHub Actions substitutes an unset `vars.X` / `secrets.X` as an empty string rather than
+    omitting the variable, so `os.environ.get(name, default)` would return "" and silently defeat
+    the default (e.g. an empty TOAST_HOST produced a schemeless URL). Values are stripped, so a
+    secret pasted with a trailing newline still works."""
+    v = os.environ.get(name)
+    v = v.strip() if isinstance(v, str) else v
+    if not v:
+        v = default
     if required and not v:
         raise SystemExit(f"Missing required environment variable {name}")
     return v
