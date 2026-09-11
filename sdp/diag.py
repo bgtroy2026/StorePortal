@@ -1,6 +1,7 @@
-"""MarginEdge connectivity diagnostic — prints request outcomes, NEVER the key.
+"""Connectivity diagnostics — print request outcomes, NEVER the credentials.
 
-    python -m sdp me-diag
+    python -m sdp me-diag        MarginEdge
+    python -m sdp toast-diag     Toast (also lists restaurant GUIDs for config/locations.json)
 
 Tries /restaurantUnits with a few header/whitespace variants so a 403 can be classified:
   {"message":"Forbidden"}                       -> key not recognized at all
@@ -55,3 +56,74 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# ----------------------------------------------------------------- Toast
+
+TOAST_HOSTS = ["https://ws-api.toasttab.com"]
+
+
+def toast():
+    """Authenticate with the Toast standard-API credentials and list every restaurant they reach.
+
+    The GUIDs printed here are what go into config/locations.json as `toast_guid` — they are
+    identifiers, not secrets, so printing them is fine. The client secret is never printed."""
+    cid = (os.environ.get("TOAST_CLIENT_ID") or "").strip()
+    csec = (os.environ.get("TOAST_CLIENT_SECRET") or "").strip()
+    host = (os.environ.get("TOAST_HOST") or TOAST_HOSTS[0]).strip().rstrip("/")
+    if not cid or not csec:
+        print("TOAST_CLIENT_ID / TOAST_CLIENT_SECRET not set"); return
+    print(f"client id: length={len(cid)} fingerprint={hashlib.sha256(cid.encode()).hexdigest()[:8]}")
+    print(f"client secret: length={len(csec)} fingerprint={hashlib.sha256(csec.encode()).hexdigest()[:8]}")
+    print(f"host: {host}")
+
+    body = {"clientId": cid, "clientSecret": csec, "userAccessType": "TOAST_MACHINE_CLIENT"}
+    try:
+        r = requests.post(f"{host}/authentication/v1/authentication/login", json=body, timeout=45)
+    except Exception as e:
+        print(f"[ERR] auth request failed: {e}"); return
+    if r.status_code != 200:
+        print(f"[{r.status_code}] auth failed: {r.text[:300]}"); return
+    tok = (r.json().get("token") or {})
+    at = tok.get("accessToken") or ""
+    print(f"[200] auth OK — token type={tok.get('tokenType')} expires_in={tok.get('expiresIn')}s length={len(at)}")
+    auth = {"Authorization": f"Bearer {at}", "Accept": "application/json"}
+
+    # restaurants this client can reach (GUIDs are not secret)
+    found = []
+    for path in ("/partners/v1/restaurants", "/partners/v1/connectedRestaurants"):
+        try:
+            rr = requests.get(f"{host}{path}", headers=auth, timeout=45)
+        except Exception as e:
+            print(f"[ERR] {path}: {e}"); continue
+        if rr.status_code != 200:
+            print(f"[{rr.status_code}] {path}: {rr.text[:200]}"); continue
+        data = rr.json()
+        rows = data if isinstance(data, list) else (data.get("results") or data.get("restaurants") or [])
+        print(f"[200] {path}: {len(rows)} restaurants")
+        for x in rows:
+            g = x.get("restaurantGuid") or x.get("guid") or (x.get("restaurant") or {}).get("guid")
+            nm = x.get("restaurantName") or x.get("name") or ""
+            loc = x.get("locationName") or (x.get("location") or {}).get("name") or ""
+            ext = x.get("managementGroupGuid") or ""
+            print(f"    GUID {g}   {nm} | {loc}   mgmtGroup={ext}")
+            if g:
+                found.append((g, f"{nm} {loc}".strip()))
+        if rows:
+            break
+    if not found:
+        print("    (no restaurant list — standard-API credentials sometimes cannot call the Partners API;")
+        print("     use the GUIDs from Toast's credential confirmation email, or Toast Web > Restaurant admin > Restaurant info)")
+        return
+
+    # prove the token works per-restaurant and show closeout hour / timezone for business-date handling
+    for g, label in found:
+        try:
+            rr = requests.get(f"{host}/restaurants/v1/restaurants/{g}", headers=dict(auth, **{"Toast-Restaurant-External-ID": g}), timeout=45)
+            if rr.status_code == 200:
+                gen = (rr.json().get("general") or {})
+                print(f"    [200] {label or g}: name={gen.get('name')} tz={gen.get('timeZone')} closeoutHour={gen.get('closeoutHour')}")
+            else:
+                print(f"    [{rr.status_code}] {label or g}: {rr.text[:140]}")
+        except Exception as e:
+            print(f"    [ERR] {label or g}: {e}")

@@ -14,7 +14,7 @@ on:
         type: boolean
         default: false
       diag:
-        description: "Only run the MarginEdge connectivity diagnostic"
+        description: "Only run the connectivity diagnostics (MarginEdge + Toast)"
         type: boolean
         default: false
 
@@ -54,6 +54,10 @@ jobs:
       - name: MarginEdge connectivity diagnostic
         if: ${{ inputs.diag }}
         run: python -m sdp me-diag
+
+      - name: Toast connectivity diagnostic
+        if: ${{ inputs.diag }}
+        run: python -m sdp toast-diag
 
       - name: Restore warehouse state
         if: ${{ !inputs.mock && !inputs.diag }}
