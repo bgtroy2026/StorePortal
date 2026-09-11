@@ -6,6 +6,7 @@
   python -m sdp all         [--mock] ...            pull -> transform -> build
   python -m sdp restore | persist                   warehouse state <-> GitHub release asset
   python -m sdp me-units                            list MarginEdge restaurant units visible to the key
+  python -m sdp me-diag                             MarginEdge connectivity diagnostic (never prints the key)
   python -m sdp toast-restaurants                   list Toast restaurants visible to the client
 
 Env: MARGINEDGE_API_KEY, TOAST_CLIENT_ID, TOAST_CLIENT_SECRET, PORTAL_SECRET (see docs/SETUP.md)
@@ -98,6 +99,11 @@ def cmd_persist(a):
     state.persist()
 
 
+def cmd_me_diag(a):
+    from . import diag
+    diag.main()
+
+
 def cmd_me_units(a):
     from .marginedge import MarginEdge
     for u in MarginEdge().restaurant_units():
@@ -114,7 +120,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="sdp", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name, fn in [("pull", cmd_pull), ("transform", cmd_transform), ("build", cmd_build), ("all", cmd_all), ("restore", cmd_restore), ("persist", cmd_persist),
-                     ("me-units", cmd_me_units), ("toast-restaurants", cmd_toast_restaurants)]:
+                     ("me-units", cmd_me_units), ("me-diag", cmd_me_diag), ("toast-restaurants", cmd_toast_restaurants)]:
         p = sub.add_parser(name); p.set_defaults(fn=fn)
         p.add_argument("--mock", action="store_true", help="generate sample raw data instead of calling APIs")
         p.add_argument("--mock-days", type=int, default=120)

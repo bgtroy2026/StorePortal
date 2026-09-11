@@ -13,6 +13,10 @@ on:
         description: "Use mock data instead of the APIs (demo/testing)"
         type: boolean
         default: false
+      diag:
+        description: "Only run the MarginEdge connectivity diagnostic"
+        type: boolean
+        default: false
 
 permissions:
   contents: write     # release asset (warehouse state)
@@ -47,36 +51,45 @@ jobs:
 
       - run: pip install -r requirements.txt
 
+      - name: MarginEdge connectivity diagnostic
+        if: ${{ inputs.diag }}
+        run: python -m sdp me-diag
+
       - name: Restore warehouse state
-        if: ${{ !inputs.mock }}
+        if: ${{ !inputs.mock && !inputs.diag }}
         run: python -m sdp restore
 
       - name: Pull from MarginEdge + Toast
-        if: ${{ !inputs.mock }}
+        if: ${{ !inputs.mock && !inputs.diag }}
         run: python -m sdp pull ${{ inputs.backfill && '--backfill' || '' }}
 
       - name: Pull (mock data)
-        if: ${{ inputs.mock }}
+        if: ${{ inputs.mock && !inputs.diag }}
         run: python -m sdp pull --mock
 
       - name: Transform into warehouse
+        if: ${{ !inputs.diag }}
         run: python -m sdp transform
 
       - name: Build site + encrypted bundles
+        if: ${{ !inputs.diag }}
         run: python -m sdp build
 
       - name: Persist warehouse state
-        if: ${{ !inputs.mock }}
+        if: ${{ !inputs.mock && !inputs.diag }}
         run: python -m sdp persist
 
       - name: Sanity check (no plaintext data in the artifact)
+        if: ${{ !inputs.diag }}
         run: |
           test ! -f _site/data/dev.json
           ls -la _site _site/data
 
       - uses: actions/upload-pages-artifact@v3
+        if: ${{ !inputs.diag }}
         with:
           path: _site
 
       - id: deploy
+        if: ${{ !inputs.diag }}
         uses: actions/deploy-pages@v4
