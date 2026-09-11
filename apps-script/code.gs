@@ -7,10 +7,8 @@
  * Deploy: New deployment → Web app → Execute as: Me → Who has access: Anyone.
  * To UPDATE without changing the URL: Deploy → Manage deployments → ✏️ Edit → Version: New version → Deploy.
  *
- * Script Properties required (Project Settings → Script properties):
- *   CLIENT_ID      — the OAuth client ID (…apps.googleusercontent.com), same one pasted into site/index.html CFG
- *   SHEET_ID       — ID of the "Store Director Roster" Google Sheet
- *   PORTAL_SECRET  — EXACTLY the same value as the PORTAL_SECRET GitHub Actions secret. Bundle keys are derived
+ * Script Properties (Project Settings → Script properties):
+ *   PORTAL_SECRET  — REQUIRED. EXACTLY the same value as the PORTAL_SECRET GitHub Actions secret. Bundle keys are derived
  *                    from it (HMAC-SHA256(secret, label)); nothing else has to be shared between the two systems.
  *   LOG_SECRET     — auto-created on first use (session-token signing key)
  *
@@ -30,6 +28,12 @@
  */
 
 var ALLOWED_DOMAINS = ['biggrove.com', 'biggrovebrewery.com'];
+// Non-secret defaults (Script Properties of the same name override these). PORTAL_SECRET has NO default — it must be a Script Property.
+var DEFAULTS = {
+  CLIENT_ID: '169287489700-t5en62nibhp9ttn24vfimd7k974dgl9i.apps.googleusercontent.com',   // "BG Sales" web client in the Big Grove Portal GCP project
+  SHEET_ID:  '1R_W3gWel6rEdQZguf84b7UDJlz5Etn5V4L6AAq6Kg_Q'                                    // "Store Director Roster" sheet
+};
+function prop(name) { return PropertiesService.getScriptProperties().getProperty(name) || DEFAULTS[name] || null; }
 var SESSION_HOURS = 24;
 
 function doPost(e) {
@@ -54,7 +58,7 @@ function doSignin(token) {
   var resp = UrlFetchApp.fetch('https://oauth2.googleapis.com/tokeninfo', { method: 'post', payload: { id_token: token }, muteHttpExceptions: true });
   if (resp.getResponseCode() !== 200) return { ok: false, error: 'invalid token' };
   var info = JSON.parse(resp.getContentText());
-  if (info.aud !== props.getProperty('CLIENT_ID')) return { ok: false, error: 'wrong app' };
+  if (info.aud !== prop('CLIENT_ID')) return { ok: false, error: 'wrong app' };
   if (Number(info.exp) * 1000 < Date.now()) return { ok: false, error: 'expired token' };
   if (String(info.email_verified) !== 'true') return { ok: false, error: 'unverified email' };
 
@@ -62,7 +66,7 @@ function doSignin(token) {
   var domain = email.split('@')[1] || '';
   if (ALLOWED_DOMAINS.indexOf(domain) === -1) return { ok: false, error: 'outside domain' };
 
-  var rows = rosterSheet(SpreadsheetApp.openById(props.getProperty('SHEET_ID'))).getDataRange().getValues();
+  var rows = rosterSheet(SpreadsheetApp.openById(prop('SHEET_ID'))).getDataRange().getValues();
   var hit = null;
   for (var i = 1; i < rows.length; i++) if (String(rows[i][0]).toLowerCase().trim() === email) { hit = rows[i]; break; }
   if (!hit) return { ok: false, error: 'not on the roster' };
@@ -78,7 +82,7 @@ function doSignin(token) {
 // ---- which bundle(s) this person may open, and the keys (derived, never stored) --------------------------
 
 function portalAccess(props, role, locs) {
-  var secret = props.getProperty('PORTAL_SECRET');
+  var secret = prop('PORTAL_SECRET');
   if (!secret) throw new Error('PORTAL_SECRET script property is not set');
   var all = /^(leadership|admin)/i.test(role) || locs === 'all' || !locs;
   if (all) return { locations: 'all', bundles: [bundleFor(secret, 'all')] };
@@ -113,7 +117,7 @@ function rosterSheet(ss) {
 
 function logEvent(email, name, role, event) {
   try {
-    var ss = SpreadsheetApp.openById(PropertiesService.getScriptProperties().getProperty('SHEET_ID'));
+    var ss = SpreadsheetApp.openById(prop('SHEET_ID'));
     var sh = ss.getSheetByName('Logins');
     if (!sh) { sh = ss.insertSheet('Logins'); sh.appendRow(['When', 'Email', 'Name', 'Role', 'Event']); sh.setFrozenRows(1); }
     sh.appendRow([new Date(), email, name, role, event]);
@@ -145,9 +149,23 @@ function readSid(sid) {
   return payload;
 }
 
+/** Run ONCE from the editor: writes the roster header row + Troy as Admin if the sheet is empty, and reports which
+ *  settings are in place. Also triggers the authorization prompt for Sheets/UrlFetch scopes. */
+function setupRoster() {
+  var ss = SpreadsheetApp.openById(prop('SHEET_ID'));
+  var sh = ss.getSheets()[0];
+  if (String(sh.getRange(1, 1).getValue()).toLowerCase().trim() !== 'email') {
+    sh.setName('Roster');
+    sh.getRange(1, 1, 2, 4).setValues([['email', 'name', 'role', 'locations'], ['troy@biggrovebrewery.com', 'Troy Myler', 'Admin', 'all']]);
+    sh.getRange(1, 1, 1, 4).setFontWeight('bold'); sh.setFrozenRows(1); sh.setColumnWidths(1, 4, 220);
+  }
+  var msg = 'Roster sheet OK: ' + ss.getName() + '\nCLIENT_ID: ' + prop('CLIENT_ID') + '\nPORTAL_SECRET: ' + (prop('PORTAL_SECRET') ? 'set' : 'MISSING - add it under Project Settings > Script properties');
+  Logger.log(msg); return msg;
+}
+
 /** Run once from the editor to sanity-check key derivation against the Python side:
  *  python -c "from sdp.bundle import bundle_id,key_b64; print(bundle_id('all'), key_b64('<secret>','all'))"   */
 function testDerivation() {
-  var b = bundleFor(PropertiesService.getScriptProperties().getProperty('PORTAL_SECRET'), 'all');
+  var b = bundleFor(prop('PORTAL_SECRET'), 'all');
   Logger.log(b.id + ' ' + b.key);
 }
