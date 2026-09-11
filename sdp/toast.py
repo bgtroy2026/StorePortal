@@ -21,6 +21,8 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 
+import time
+
 from .util import Http, RAW_DIR, env, iso, log, settings, today_local, write_raw
 
 
@@ -101,10 +103,16 @@ def _existing_days(slug: str) -> set[str]:
     return {p.stem for p in d.glob("*.json")} if d.exists() else set()
 
 
-def pull(locations: list[dict], days_back: int, incremental_days: int, warehouse_days: set[tuple[str, str]] | None = None) -> dict:
+def pull(locations: list[dict], days_back: int, incremental_days: int, warehouse_days: set[tuple[str, str]] | None = None,
+         max_minutes: float | None = None) -> dict:
     """Pull Toast for each configured restaurant. `warehouse_days` = (slug, business_date) already loaded in the DB,
-    so a fresh runner (no raw/ cache) still only re-pulls the incremental window plus missing days."""
+    so a fresh runner (no raw/ cache) still only re-pulls the incremental window plus missing days.
+
+    Stops cleanly at `max_minutes` so a long first backfill spans several nightly runs instead of being lost to a
+    job timeout — whatever was pulled is transformed and persisted, and the next run picks up the missing days."""
     t = Toast()
+    deadline = time.monotonic() + max_minutes * 60 if max_minutes else None
+    stopped = False
     end = today_local() - timedelta(days=1)          # last complete business day
     start = end - timedelta(days=days_back)
     warehouse_days = warehouse_days or set()
@@ -115,6 +123,8 @@ def pull(locations: list[dict], days_back: int, incremental_days: int, warehouse
         if not guid:
             log.warning("Toast: %s has no toast_guid in config/locations.json — skipped", slug)
             continue
+        if stopped:
+            break
         info = t.restaurant(guid); write_raw("toast", slug, "restaurant", "info", info)
         write_raw("toast", slug, "jobs", "all", {"jobs": t.jobs(guid)})
         write_raw("toast", slug, "menus", "all", t.menus(guid))
@@ -128,6 +138,11 @@ def pull(locations: list[dict], days_back: int, incremental_days: int, warehouse
             d += timedelta(days=1)
         n_orders = 0
         for d in days:
+            if deadline and time.monotonic() > deadline:
+                if not stopped:
+                    log.warning("Toast: time budget reached — stopping cleanly; the next run continues where this left off")
+                stopped = True
+                break
             orders = t.orders_for_business_date(guid, d)
             n_orders += len(orders)
             write_raw("toast", slug, "orders", iso(d), {"businessDate": iso(d), "orders": orders})
@@ -135,6 +150,6 @@ def pull(locations: list[dict], days_back: int, incremental_days: int, warehouse
         lab_start = min(days) if days else end - timedelta(days=incremental_days)
         te = t.time_entries(guid, lab_start, end)
         write_raw("toast", slug, "timeEntries", f"{iso(lab_start)}_{iso(end)}", {"timeEntries": te, "window": [iso(lab_start), iso(end)]})
-        summary[slug] = {"days_pulled": len(days), "orders": n_orders, "time_entries": len(te), "window": [iso(start), iso(end)]}
+        summary[slug] = {"days_pulled": len(days), "orders": n_orders, "time_entries": len(te), "window": [iso(start), iso(end)], "stopped_early": stopped}
         log.info("Toast %s: %s", slug, summary[slug])
     return summary

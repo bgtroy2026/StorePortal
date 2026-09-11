@@ -57,20 +57,38 @@ def cmd_pull(a):
         from . import mock
         mock.generate(locs, days=a.mock_days, toast=not a.mock_no_toast)
         return
+    # Each source is isolated: if one API is down or unauthorized the other still populates the warehouse,
+    # and the build goes ahead with whatever arrived. The run fails only if every configured source failed.
+    attempted, failed = [], []
     if a.source in ("all", "marginedge"):
         if env("MARGINEDGE_API_KEY"):
-            from . import marginedge
-            me_cfg = cfg["marginedge"]
-            marginedge.pull(locs, days_back=cfg["backfill_days"], incremental_days=cfg["incremental_days"], have=({} if a.backfill else _me_have()),
-                            max_minutes=a.max_minutes or me_cfg.get("max_minutes_per_run"))
+            attempted.append("marginedge")
+            try:
+                from . import marginedge
+                me_cfg = cfg["marginedge"]
+                marginedge.pull(locs, days_back=cfg["backfill_days"], incremental_days=cfg["incremental_days"], have=({} if a.backfill else _me_have()),
+                                max_minutes=a.max_minutes or me_cfg.get("max_minutes_per_run"))
+            except Exception as e:
+                failed.append("marginedge"); log.error("MarginEdge pull failed (%s: %s) — continuing with other sources", type(e).__name__, e)
         else:
             log.warning("MARGINEDGE_API_KEY not set — skipping MarginEdge")
     if a.source in ("all", "toast"):
         if env("TOAST_CLIENT_ID") and env("TOAST_CLIENT_SECRET"):
-            from . import toast
-            toast.pull(locs, days_back=cfg["backfill_days"], incremental_days=cfg["incremental_days"], warehouse_days=(set() if a.backfill else _warehouse_days()))
+            attempted.append("toast")
+            try:
+                from . import toast
+                t_cfg = cfg["toast"]
+                toast.pull(locs, days_back=cfg["backfill_days"], incremental_days=cfg["incremental_days"],
+                           warehouse_days=(set() if a.backfill else _warehouse_days()),
+                           max_minutes=a.max_minutes or t_cfg.get("max_minutes_per_run"))
+            except Exception as e:
+                failed.append("toast"); log.error("Toast pull failed (%s: %s) — continuing with other sources", type(e).__name__, e)
         else:
             log.warning("TOAST_CLIENT_ID / TOAST_CLIENT_SECRET not set — skipping Toast")
+    if attempted and len(failed) == len(attempted):
+        raise SystemExit("every configured source failed: " + ", ".join(failed))
+    if failed:
+        log.warning("finished with %s unavailable; the dashboard will show whatever the other sources provided", ", ".join(failed))
 
 
 def cmd_transform(a):
