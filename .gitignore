@@ -20,3 +20,6 @@ __pycache__/
 # os / editor
 .DS_Store
 Thumbs.db
+
+# deploy logs
+_deploy/*.log
