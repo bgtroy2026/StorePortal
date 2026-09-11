@@ -274,6 +274,56 @@ def load_me_inventories(con, bk: Buckets, cat_bucket: dict, prod_cat: dict) -> d
     return {"inventories": n_inv, "inventory_items": n_items}
 
 
+# ---------------------------------------------------------------- Tripleseat
+
+def _num(v):
+    try:
+        return float(str(v).replace("$", "").replace(",", "")) if v not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def load_tripleseat(con) -> dict:
+    """Private events and the lead pipeline behind them. Events are replaced per location on every run —
+    Tripleseat rows are edited long after the event date (final billing, guest counts), so a full refresh of
+    the window is both cheaper and more correct than trying to detect changes."""
+    n_ev = n_ld = 0
+    for slug, ds, p, j in iter_raw("tripleseat", dataset="events"):
+        tid = str(j.get("location_id") or "")
+        rows = []
+        for e in j.get("events") or []:
+            if e.get("deleted_at"):
+                continue
+            rows.append({"event_id": str(e.get("id")), "location_id": slug, "ts_location_id": str(e.get("location_id") or tid),
+                         "booking_id": str(e.get("booking_id") or ""), "name": e.get("name"), "status": e.get("status"),
+                         "event_type": str(e.get("event_type_id") or ""), "event_style": e.get("event_style"),
+                         "event_date": (e.get("event_date_iso8601") or e.get("event_date") or "")[:10],
+                         "start_at": e.get("event_start_iso8601") or e.get("event_start"),
+                         "end_at": e.get("event_end_iso8601") or e.get("event_end"),
+                         "guest_count": int(e.get("guest_count") or 0), "guaranteed_guest_count": int(e.get("guaranteed_guest_count") or 0),
+                         "fb_minimum": _num(e.get("food_and_beverage_min")), "rental_fee": _num(e.get("rental_fee")),
+                         "deposit": _num(e.get("deposit_amount")), "grand_total": _num(e.get("grand_total")),
+                         "actual_amount": _num(e.get("actual_amount")), "amount_due": _num(e.get("amount_due")),
+                         "price_per_person": _num(e.get("price_per_person")),
+                         "created_at": e.get("created_at"), "updated_at": e.get("updated_at")})
+        con.execute("DELETE FROM ts_events WHERE location_id=?", (slug,))
+        n_ev += _upsert(con, "ts_events", rows)
+    for slug, ds, p, j in iter_raw("tripleseat", dataset="leads"):
+        tid = str(j.get("location_id") or "")
+        rows = []
+        for l in j.get("leads") or []:
+            nm = " ".join(x for x in [l.get("first_name"), l.get("last_name")] if x).strip()
+            rows.append({"lead_id": str(l.get("id")), "location_id": slug, "ts_location_id": str(l.get("location_id") or tid),
+                         "company": l.get("company"), "contact_name": nm, "status": l.get("status") or l.get("state"),
+                         "source": (l.get("lead_source") or {}).get("name") if isinstance(l.get("lead_source"), dict) else l.get("lead_source"),
+                         "event_date": (l.get("event_date") or "")[:10], "guest_count": int(l.get("guest_count") or 0),
+                         "description": (l.get("event_description") or "")[:500],
+                         "created_at": l.get("created_at"), "updated_at": l.get("updated_at")})
+        con.execute("DELETE FROM ts_leads WHERE location_id=?", (slug,))
+        n_ld += _upsert(con, "ts_leads", rows)
+    return {"events": n_ev, "leads": n_ld}
+
+
 # ---------------------------------------------------------------- manual inputs
 
 def load_inputs(con) -> dict:
@@ -351,7 +401,7 @@ def run() -> dict:
     con = connect()
     _upsert(con, "locations", [{"location_id": l["slug"], "name": l["name"], "short": l.get("short"), "toast_guid": l.get("toast_guid"), "marginedge_unit_id": str(l.get("marginedge_unit_id") or ""),
                                 "timezone": l.get("timezone"), "opened": l.get("opened"), "state": l.get("state")} for l in locations()])
-    s = {"toast": load_toast(con, bk), "marginedge": load_marginedge(con, bk), "inputs": load_inputs(con)}
+    s = {"toast": load_toast(con, bk), "marginedge": load_marginedge(con, bk), "tripleseat": load_tripleseat(con), "inputs": load_inputs(con)}
     rebuild_daily_summary(con)
     con.execute("INSERT OR REPLACE INTO meta VALUES ('last_transform', ?)", (datetime.utcnow().isoformat(timespec="seconds") + "Z",))
     con.commit()

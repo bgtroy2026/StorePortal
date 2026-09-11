@@ -8,6 +8,7 @@
   python -m sdp me-units                            list MarginEdge restaurant units visible to the key
   python -m sdp me-diag                             MarginEdge connectivity diagnostic (never prints the key)
   python -m sdp toast-diag                          Toast connectivity diagnostic + restaurant GUIDs
+  python -m sdp ts-locations                        list Tripleseat locations (ids for config/locations.json)
   python -m sdp toast-restaurants                   list Toast restaurants visible to the client
 
 Env: MARGINEDGE_API_KEY, TOAST_CLIENT_ID, TOAST_CLIENT_SECRET, PORTAL_SECRET (see docs/SETUP.md)
@@ -85,6 +86,17 @@ def cmd_pull(a):
                 failed.append("toast"); log.error("Toast pull failed (%s: %s) — continuing with other sources", type(e).__name__, e)
         else:
             log.warning("TOAST_CLIENT_ID / TOAST_CLIENT_SECRET not set — skipping Toast")
+    if a.source in ("all", "tripleseat"):
+        if env("TRIPLESEAT_CLIENT_ID") and env("TRIPLESEAT_CLIENT_SECRET"):
+            attempted.append("tripleseat")
+            try:
+                from . import tripleseat
+                ts_cfg = cfg.get("tripleseat", {})
+                tripleseat.pull(locs, days_back=cfg["backfill_days"], days_forward=int(ts_cfg.get("days_forward", 180)))
+            except Exception as e:
+                failed.append("tripleseat"); log.error("Tripleseat pull failed (%s: %s) — continuing with other sources", type(e).__name__, e)
+        else:
+            log.warning("TRIPLESEAT_CLIENT_ID / TRIPLESEAT_CLIENT_SECRET not set — skipping Tripleseat")
     if attempted and len(failed) == len(attempted):
         raise SystemExit("every configured source failed: " + ", ".join(failed))
     if failed:
@@ -128,6 +140,12 @@ def cmd_toast_diag(a):
     diag.toast()
 
 
+def cmd_ts_locations(a):
+    from .tripleseat import Tripleseat
+    for l in Tripleseat().locations():
+        print(f"{l.get('id')}\t{l.get('name')}")
+
+
 def cmd_me_units(a):
     from .marginedge import MarginEdge
     for u in MarginEdge().restaurant_units():
@@ -144,13 +162,13 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="sdp", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name, fn in [("pull", cmd_pull), ("transform", cmd_transform), ("build", cmd_build), ("all", cmd_all), ("restore", cmd_restore), ("persist", cmd_persist),
-                     ("me-units", cmd_me_units), ("me-diag", cmd_me_diag), ("toast-diag", cmd_toast_diag), ("toast-restaurants", cmd_toast_restaurants)]:
+                     ("me-units", cmd_me_units), ("me-diag", cmd_me_diag), ("toast-diag", cmd_toast_diag), ("ts-locations", cmd_ts_locations), ("toast-restaurants", cmd_toast_restaurants)]:
         p = sub.add_parser(name); p.set_defaults(fn=fn)
         p.add_argument("--mock", action="store_true", help="generate sample raw data instead of calling APIs")
         p.add_argument("--mock-days", type=int, default=120)
         p.add_argument("--mock-no-toast", action="store_true", help="mock the MarginEdge-only phase (no Toast raw data)")
         p.add_argument("--max-minutes", type=float, default=None, help="stop the MarginEdge pull cleanly after N minutes (default from settings)")
-        p.add_argument("--source", choices=["all", "toast", "marginedge"], default="all")
+        p.add_argument("--source", choices=["all", "toast", "marginedge", "tripleseat"], default="all")
         p.add_argument("--backfill", action="store_true", help="pull the full backfill window even if a warehouse exists")
         p.add_argument("--dev-json", action="store_true", help="also write site/data/dev.json (unencrypted, local preview)")
         p.add_argument("--no-encrypt", action="store_true", help="skip bundles; write dev.json only")

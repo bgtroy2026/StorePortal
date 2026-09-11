@@ -187,11 +187,11 @@ window.addEventListener('load',function(){
 /* =========================================================================================
    DASHBOARD APP
    ========================================================================================= */
-var D=null, P=null, S={loc:'all', preset:'l28', d0:null, d1:null, cmp:'prior', page:'overview'};
+var D=null, P=null, S={loc:'all', preset:'l28', d0:null, d1:null, cmp:'prior', page:'overview', actSrc:'all'};
 var K=null; // daily key index
 var BUCKETS=[['Food','f','pf','s1'],['Beer','b','pb','s2'],['Liquor','l','pl','s3'],['Wine','w','pw','s4'],['NA Bev','n','pn','s5'],['Retail','r',null,'s6'],['Other','x','po','sx']];
 var LOCCOL=['s1','s2','s3','s4','s5','s6','s7','s8'];
-var PAGES=[['overview','Overview'],['sales','Sales'],['labor','Labor'],['cogs','COGS & Purchasing'],['inventory','Inventory'],['activations','Activations'],['locations','Locations']];
+var PAGES=[['overview','Overview'],['sales','Sales'],['labor','Labor'],['cogs','COGS & Purchasing'],['inventory','Inventory'],['events','Events'],['activations','Activations'],['locations','Locations']];
 var charts=[];
 function css(v){return getComputedStyle(document.documentElement).getPropertyValue('--'+v).trim();}
 function fm(n,d){ if(n==null||isNaN(n))return '—'; d=d==null?0:d; return '$'+Number(n).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d}); }
@@ -266,7 +266,7 @@ function render(){
   document.querySelectorAll('#cmpSeg button').forEach(function(b){b.classList.toggle('on',b.dataset.c===S.cmp);});
   document.querySelectorAll('#nav button').forEach(function(b){b.classList.toggle('on',b.dataset.p===S.page);});
   var m=$('main'); m.innerHTML='';
-  ({overview:pgOverview,sales:pgSales,labor:pgLabor,cogs:pgCogs,inventory:pgInventory,activations:pgActivations,locations:pgLocations})[S.page](m);
+  ({overview:pgOverview,sales:pgSales,labor:pgLabor,cogs:pgCogs,inventory:pgInventory,events:pgEvents,activations:pgActivations,locations:pgLocations})[S.page](m);
 }
 
 function pgOverview(m){
@@ -277,6 +277,7 @@ function pgOverview(m){
    +tile('Labor %',fp(k.laborPct),delta(k.laborPct,kp&&kp.laborPct,true),tg.labor?'<span class="tg">target '+fp(tg.labor,0)+'</span>':'')
    +tile('Purchases % (COGS proxy)',fp(k.purchPct),delta(k.purchPct,kp&&kp.purchPct,true),tg.cogs?'<span class="tg">target '+fp(tg.cogs,0)+'</span>':'')
    +(hasToast()?tile('Sales / labor hour',fm(k.splh,0),delta(k.splh,kp&&kp.splh))+tile('Discounts',fk(k.disc),delta(k.disc,kp&&kp.disc,true),'<span class="tg">'+fp(k.gross?k.disc/k.gross:null)+' of gross</span>'):tile('Prime cost %',fp(k.net?(k.labor+k.purch)/k.net:null),delta(k.net?(k.labor+k.purch)/k.net:null,kp&&kp.net?(kp.labor+kp.purch)/kp.net:null,true),'<span class="tg">labor + purchases</span>'))
+   +(hasEvents()?tile('Event revenue',fk(evRows().filter(function(e){return evIsDef(e.status)&&e.d>=a&&e.d<=b;}).reduce(function(p,c){return p+evValue(c);},0)),'','<span class="tg">private events (Tripleseat)</span>'):'')
    +'</div>';
   h+='<div class="grid cols2" style="margin-top:14px">'
    +panel('Net sales by day','Current range vs comparison window; activations marked ●',chartBox('c_trend',true))
@@ -419,21 +420,102 @@ function pgInventory(m){
   m.innerHTML=h+'</div>';
 }
 
+/* ---------- Tripleseat events ---------- */
+function hasEvents(){ return locIds().some(function(l){return ((D.events||{})[l]||[]).length;}); }
+function evRows(){ var out=[]; locIds().forEach(function(l){((D.events||{})[l]||[]).forEach(function(r){ out.push({loc:l,id:r[0],name:r[1],d:r[2],status:r[3],guests:r[4],booked:r[5],actual:r[6],fb:r[7],dep:r[8],style:r[9]}); });}); return out.sort(function(a,b){return a.d<b.d?-1:1;}); }
+function evIsDef(st){ return /^(definite|confirmed)/i.test(st||''); }
+function evValue(e){ return (e.actual!=null&&e.actual>0)?e.actual:(e.booked||0); }
+
+function pgEvents(m){
+  if(!hasEvents()){ m.innerHTML='<div class="panel"><h3>Events</h3><div class="empty">No Tripleseat data yet. Once the Tripleseat credentials are set, booked private events and the lead pipeline appear here.</div></div>'; return; }
+  var a=S.d0,b=S.d1,T=D.meta.through;
+  var all=evRows(), inRange=all.filter(function(e){return e.d>=a&&e.d<=b;}), future=all.filter(function(e){return e.d>T;});
+  var defIn=inRange.filter(function(e){return evIsDef(e.status);});
+  var rev=defIn.reduce(function(p,c){return p+evValue(c);},0), gu=defIn.reduce(function(p,c){return p+(c.guests||0);},0);
+  var futDef=future.filter(function(e){return evIsDef(e.status);});
+  var futRev=futDef.reduce(function(p,c){return p+(c.booked||0);},0);
+  var k=kpis(a,b);
+  m.innerHTML='<div class="grid tiles">'
+    +tile('Events in range',fn(defIn.length),'<span class="tg">'+fn(inRange.length-defIn.length)+' tentative/other</span>')
+    +tile('Event revenue',fk(rev),'',k.net?'<span class="tg">'+fp(rev/k.net)+' of net sales</span>':'')
+    +tile('Event guests',fn(gu),'<span class="tg">'+fm(gu?rev/gu:null,2)+' per guest</span>')
+    +tile('Booked ahead',fk(futRev),'<span class="tg">'+fn(futDef.length)+' confirmed events</span>')
+    +tile('Avg event value',fm(defIn.length?rev/defIn.length:null,0),'')
+    +'</div>'
+    +'<div class="grid cols2" style="margin-top:14px">'
+    +panel('Event revenue by month','Booked (contracted) vs actual billed, from Tripleseat',chartBox('c_evm',true))
+    +panel('Lead pipeline','Inbound enquiries by status','<div id="evLead"></div>')
+    +'</div>'
+    +'<div class="grid" style="margin-top:14px;grid-template-columns:repeat(auto-fit,minmax(560px,1fr))">'
+    +panel('Upcoming events','Confirmed and tentative bookings after '+fdate(T),'<div id="evUp"></div>')
+    +panel('Events in the selected range','Definite events counted in the revenue tile above','<div id="evIn"></div>')
+    +'</div>';
+  var mm={}; locIds().forEach(function(l){var e=(D.events_monthly||{})[l]||{};Object.keys(e).forEach(function(mo){var o=mm[mo]||(mm[mo]={n:0,booked:0,actual:0,guests:0});o.n+=e[mo][0];o.booked+=e[mo][1];o.actual+=e[mo][2];o.guests+=e[mo][3];});});
+  var ms=Object.keys(mm).sort().slice(-14);
+  mk('c_evm',{type:'bar',data:{labels:ms.map(fmon),datasets:[
+      {label:'Booked',data:ms.map(function(x){return mm[x].booked;}),backgroundColor:css('s1'),borderRadius:4,maxBarThickness:34},
+      {label:'Actual billed',data:ms.map(function(x){return mm[x].actual;}),backgroundColor:css('s3'),borderRadius:4,maxBarThickness:34}]},
+    options:baseOpts({plugins:{legend:{display:true,position:'bottom'},tooltip:{callbacks:{label:function(c){return ' '+c.dataset.label+': '+fk(c.parsed.y)+'  ('+fn(mm[ms[c.dataIndex]].n)+' events)';}}}}})});
+  function evTable(list,showStatus){
+    if(!list.length) return '<div class="empty">None in this window.</div>';
+    var multi=locIds().length>1;
+    return '<div style="overflow-x:auto"><table class="t"><tr><th>Date</th>'+(multi?'<th>Location</th>':'')+'<th>Event</th>'+(showStatus?'<th>Status</th>':'')+'<th class="r">Guests</th><th class="r">Booked</th><th class="r">Actual</th></tr>'
+      +list.slice(0,40).map(function(e){var L=D.locations.filter(function(z){return z.id===e.loc;})[0];
+        return '<tr><td>'+fdate(e.d)+'</td>'+(multi?'<td>'+esc(L?L.name:e.loc)+'</td>':'')+'<td class="n">'+esc(e.name)+'</td>'
+        +(showStatus?'<td><span class="pill"'+(evIsDef(e.status)?' style="background:#e6f4ea;color:var(--good)"':'')+'>'+esc(e.status||'')+'</span></td>':'')
+        +'<td class="r">'+fn(e.guests)+'</td><td class="r">'+fm(e.booked)+'</td><td class="r">'+(e.actual!=null&&e.actual>0?fm(e.actual):'—')+'</td></tr>';}).join('')
+      +'</table>'+(list.length>40?'<div class="hint" style="margin-top:6px">Showing 40 of '+fn(list.length)+'</div>':'')+'</div>';
+  }
+  $('evUp').innerHTML=evTable(future,true);
+  $('evIn').innerHTML=evTable(defIn.slice().reverse(),false);
+  var ld={}; locIds().forEach(function(l){((D.leads||{})[l]||[]).forEach(function(r){var o=ld[r[0]]||(ld[r[0]]={n:0,g:0});o.n+=r[1];o.g+=r[2];});});
+  var lk=Object.keys(ld).sort(function(x,y){return ld[y].n-ld[x].n;}), lt=lk.reduce(function(p,c){return p+ld[c].n;},0);
+  $('evLead').innerHTML=lk.length?('<table class="t"><tr><th>Status</th><th class="r">Leads</th><th class="r">Guests</th><th class="r">Share</th></tr>'
+    +lk.map(function(x){return '<tr><td class="n">'+esc(x)+'</td><td class="r">'+fn(ld[x].n)+'</td><td class="r">'+fn(ld[x].g)+'</td><td class="r">'+fp(ld[x].n/lt)+'</td></tr>';}).join('')+'</table>')
+    :'<div class="empty">No leads in this window.</div>';
+}
+
 function pgActivations(m){
-  var acts=D.activations.filter(function(x){return locIds().indexOf(x.loc)>=0;}).sort(function(x,y){return y.s<x.s?-1:1;});
-  if(!acts.length){m.innerHTML='<div class="panel"><div class="empty">No activations recorded — add rows to inputs/activations.csv.</div></div>';return;}
+  var acts=D.activations.filter(function(x){return locIds().indexOf(x.loc)>=0;}).map(function(x){
+    return {loc:x.loc,s:x.s,e:x.e,name:x.name,type:x.type||'Promo',cost:x.cost,owner:x.owner,notes:x.notes,src:'csv'};});
+  if(S.actSrc!=='csv'){
+    evRows().filter(function(e){return evIsDef(e.status)&&e.d<=D.meta.through;}).forEach(function(e){
+      acts.push({loc:e.loc,s:e.d,e:e.d,name:e.name,type:'Private event',cost:0,owner:'Events',
+                 notes:fn(e.guests)+' guests',src:'tripleseat',value:evValue(e)});});
+  }
+  if(S.actSrc==='events') acts=acts.filter(function(x){return x.src==='tripleseat';});
+  acts.sort(function(x,y){return y.s<x.s?-1:1;});
+  if(!acts.length){m.innerHTML='<div class="panel"><div class="empty">Nothing in this view — add rows to inputs/activations.csv, or connect Tripleseat for private events.</div></div>';return;}
   var rows=acts.map(function(x){
     var e=x.e||x.s, n=(pd(e)-pd(x.s))/864e5+1;
-    var ev=sumRows(rowsIn(x.loc,x.s,e)); // baseline: same weekdays over the previous 4 weeks
-    var base=0,bn=0; for(var w=1;w<=4;w++){var r=sumRows(rowsIn(x.loc,addDays(x.s,-7*w),addDays(e,-7*w)));if(r.days){base+=r.net;bn++;}}
-    var baseline=bn?base/bn:null, lift=baseline!=null?ev.net-baseline:null, loc=D.locations.filter(function(z){return z.id===x.loc;})[0];
-    return {x:x,loc:loc?loc.name:x.loc,days:n,net:ev.net,guests:ev.guests,baseline:baseline,lift:lift,roi:(lift!=null&&x.cost)?lift/x.cost:null};
+    var ev=sumRows(rowsIn(x.loc,x.s,e));
+    var loc=D.locations.filter(function(z){return z.id===x.loc;})[0];
+    // Lift-vs-baseline answers "did this bring in business we wouldn't otherwise have had?" — a fair question
+    // for a marketing promo. A booked private event is different: its revenue is already inside the day's net
+    // sales, so a day-over-day delta measures the rest of the taproom, not the event. Events report their
+    // contracted value instead; only marketing activations get a baseline.
+    var baseline=null, lift=null;
+    if(x.src!=='tripleseat'){
+      var base=0,bn=0; for(var w=1;w<=4;w++){var r=sumRows(rowsIn(x.loc,addDays(x.s,-7*w),addDays(e,-7*w)));if(r.days){base+=r.net;bn++;}}
+      baseline=bn?base/bn:null; lift=baseline!=null?ev.net-baseline:null;
+    }
+    return {x:x,loc:loc?loc.name:x.loc,days:n,net:ev.net,guests:ev.guests,baseline:baseline,lift:lift,
+            value:(x.src==='tripleseat'?(x.value||0):null), roi:(lift!=null&&x.cost)?lift/x.cost:null};
   });
-  var tc=rows.reduce(function(p,c){return p+(c.x.cost||0);},0), tl=rows.reduce(function(p,c){return p+(c.lift||0);},0);
-  m.innerHTML='<div class="grid tiles">'+tile('Activations',fn(rows.length),'')+tile('Total cost',fk(tc),'')+tile('Est. sales lift',fk(tl),'<span class="tg">vs 4-week same-weekday baseline</span>')+tile('Lift ÷ cost',tc?(tl/tc).toFixed(1)+'×':'—','')+'</div>'
-    +'<div class="panel" style="margin-top:14px"><h3>Activation log</h3><div class="hint">Lift = net sales on activation days minus the average of the same weekdays in the prior 4 weeks. Edit inputs/activations.csv to add or correct entries.</div>'
-    +'<div style="overflow-x:auto"><table class="t"><tr><th>Date</th><th>Location</th><th>Activation</th><th>Type</th><th>Owner</th><th class="r">Cost</th><th class="r">Net sales</th><th class="r">Baseline</th><th class="r">Lift</th><th class="r">Lift ÷ cost</th><th>Notes</th></tr>'
-    +rows.map(function(r){return '<tr><td>'+fdate(r.x.s)+(r.days>1?'–'+fdate(r.x.e):'')+'</td><td>'+esc(r.loc)+'</td><td class="n">'+esc(r.x.name)+'</td><td><span class="pill">'+esc(r.x.type||'')+'</span></td><td>'+esc(r.x.owner||'')+'</td><td class="r">'+fm(r.x.cost)+'</td><td class="r">'+fm(r.net)+'</td><td class="r">'+fm(r.baseline)+'</td><td class="r" style="color:'+(r.lift>=0?'var(--good)':'var(--bad)')+';font-weight:700">'+(r.lift!=null?(r.lift>=0?'+':'')+fm(r.lift):'—')+'</td><td class="r">'+(r.roi!=null?r.roi.toFixed(1)+'×':'—')+'</td><td style="white-space:normal;max-width:260px">'+esc(r.x.notes||'')+'</td></tr>';}).join('')+'</table></div></div>';
+  var mk_=rows.filter(function(r){return r.x.src!=='tripleseat';}), evs=rows.filter(function(r){return r.x.src==='tripleseat';});
+  var tc=mk_.reduce(function(p,c){return p+(c.x.cost||0);},0), tl=mk_.reduce(function(p,c){return p+(c.lift||0);},0);
+  var evVal=evs.reduce(function(p,c){return p+(c.value||0);},0);
+  var nEv=evs.length;
+  var seg=hasEvents()?('<div class="seg" style="margin-left:auto">'+['all','csv','events'].map(function(v){return '<button data-as="'+v+'"'+((S.actSrc||'all')===v?' class="on"':'')+'>'+({all:'All',csv:'Marketing only',events:'Events only'})[v]+'</button>';}).join('')+'</div>'):'';
+  m.innerHTML='<div class="grid tiles">'+tile('Activations',fn(rows.length),(nEv?'<span class="tg">'+fn(mk_.length)+' marketing · '+fn(nEv)+' events</span>':''))
+    +tile('Marketing spend',fk(tc),'')
+    +tile('Marketing lift',fk(tl),'<span class="tg">vs 4-week same-weekday baseline</span>')
+    +tile('Lift ÷ cost',tc?(tl/tc).toFixed(1)+'×':'—','<span class="tg">marketing only</span>')
+    +(nEv?tile('Event revenue',fk(evVal),'<span class="tg">contracted value, already in net sales</span>'):'')+'</div>'
+    +'<div class="panel" style="margin-top:14px"><div style="display:flex;align-items:center;gap:10px"><h3 style="margin:0">Activation log</h3>'+seg+'</div><div class="hint">Lift = net sales on activation days minus the average of the same weekdays in the prior 4 weeks. Marketing promos come from inputs/activations.csv and are measured against that baseline; private events come from Tripleseat and show their contracted value, which is already counted inside net sales.</div>'
+    +'<div style="overflow-x:auto"><table class="t"><tr><th>Date</th><th>Location</th><th>Activation</th><th>Type</th><th>Owner</th><th class="r">Cost</th><th class="r">Booked</th><th class="r">Net sales</th><th class="r">Baseline</th><th class="r">Lift</th><th class="r">Lift ÷ cost</th><th>Notes</th></tr>'
+    +rows.map(function(r){return '<tr><td>'+fdate(r.x.s)+(r.days>1?'–'+fdate(r.x.e):'')+'</td><td>'+esc(r.loc)+'</td><td class="n">'+esc(r.x.name)+'</td><td><span class="pill">'+esc(r.x.type||'')+'</span></td><td>'+esc(r.x.owner||'')+'</td><td class="r">'+(r.x.src==='tripleseat'?'—':fm(r.x.cost))+'</td><td class="r">'+(r.value!=null?fm(r.value):'—')+'</td><td class="r">'+fm(r.net)+'</td><td class="r">'+(r.baseline!=null?fm(r.baseline):'—')+'</td><td class="r"'+(r.lift!=null?' style="color:'+(r.lift>=0?'var(--good)':'var(--bad)')+';font-weight:700"':'')+'>'+(r.lift!=null?(r.lift>=0?'+':'')+fm(r.lift):'—')+'</td><td class="r">'+(r.roi!=null?r.roi.toFixed(1)+'×':'—')+'</td><td style="white-space:normal;max-width:260px">'+esc(r.x.notes||'')+'</td></tr>';}).join('')+'</table></div></div>';
+  m.querySelectorAll('[data-as]').forEach(function(b){b.onclick=function(){S.actSrc=b.dataset.as;render();};});
 }
 
 function pgLocations(m){

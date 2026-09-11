@@ -191,6 +191,30 @@ CREATE TABLE IF NOT EXISTS me_inventory_counts (       -- grain: one bucket valu
   PRIMARY KEY (location_id, count_date, bucket)
 );
 
+-- ---------- Tripleseat (private events / banquets) ----------
+
+CREATE TABLE IF NOT EXISTS ts_events (                  -- grain: one Tripleseat event
+  event_id TEXT NOT NULL, location_id TEXT NOT NULL,
+  ts_location_id TEXT, booking_id TEXT, name TEXT, status TEXT, event_type TEXT, event_style TEXT,
+  event_date TEXT, start_at TEXT, end_at TEXT,
+  guest_count INTEGER, guaranteed_guest_count INTEGER,
+  fb_minimum REAL, rental_fee REAL, deposit REAL,
+  grand_total REAL,                                     -- booked/contracted value
+  actual_amount REAL,                                   -- what was actually billed (after the event)
+  amount_due REAL, price_per_person REAL,
+  created_at TEXT, updated_at TEXT,
+  PRIMARY KEY (event_id, location_id)
+);
+CREATE INDEX IF NOT EXISTS ix_ts_events_loc_date ON ts_events(location_id, event_date);
+
+CREATE TABLE IF NOT EXISTS ts_leads (                   -- grain: one inbound lead (the pipeline behind events)
+  lead_id TEXT NOT NULL, location_id TEXT NOT NULL,
+  ts_location_id TEXT, company TEXT, contact_name TEXT, status TEXT, source TEXT,
+  event_date TEXT, guest_count INTEGER, description TEXT, created_at TEXT, updated_at TEXT,
+  PRIMARY KEY (lead_id, location_id)
+);
+CREATE INDEX IF NOT EXISTS ix_ts_leads_loc_date ON ts_leads(location_id, event_date);
+
 -- ---------- Manual inputs (inputs/*.csv) ----------
 
 CREATE TABLE IF NOT EXISTS activations (               -- market activations / events / promos

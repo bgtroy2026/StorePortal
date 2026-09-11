@@ -41,6 +41,8 @@ jobs:
       TOAST_CLIENT_ID: ${{ secrets.TOAST_CLIENT_ID }}
       TOAST_CLIENT_SECRET: ${{ secrets.TOAST_CLIENT_SECRET }}
       TOAST_HOST: ${{ vars.TOAST_HOST }}
+      TRIPLESEAT_CLIENT_ID: ${{ secrets.TRIPLESEAT_CLIENT_ID }}
+      TRIPLESEAT_CLIENT_SECRET: ${{ secrets.TRIPLESEAT_CLIENT_SECRET }}
     steps:
       - uses: actions/checkout@v4
 

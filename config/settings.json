@@ -77,5 +77,10 @@
   "site": {
     "title": "Big Grove Brewery \u2014 Store Director Portal",
     "history_days_in_bundle": 400
+  },
+  "tripleseat": {
+    "base_url": "https://api.tripleseat.com/v1",
+    "requests_per_second": 5,
+    "days_forward": 180
   }
 }

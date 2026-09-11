@@ -10,7 +10,9 @@
       "marginedge_unit_id": "",
       "timezone": "America/Chicago",
       "opened": "2013-09-01",
-      "state": "IA"
+      "state": "IA",
+      "tripleseat_location_id": "",
+      "tripleseat_name": "Solon"
     },
     {
       "slug": "iowa-city",
@@ -21,7 +23,9 @@
       "marginedge_unit_id": "",
       "timezone": "America/Chicago",
       "opened": "2017-06-01",
-      "state": "IA"
+      "state": "IA",
+      "tripleseat_location_id": "",
+      "tripleseat_name": "Iowa City"
     },
     {
       "slug": "cedar-rapids",
@@ -32,7 +36,9 @@
       "marginedge_unit_id": "",
       "timezone": "America/Chicago",
       "opened": "2021-09-01",
-      "state": "IA"
+      "state": "IA",
+      "tripleseat_location_id": "",
+      "tripleseat_name": "Cedar Rapids"
     },
     {
       "slug": "des-moines",
@@ -43,7 +49,9 @@
       "marginedge_unit_id": "",
       "timezone": "America/Chicago",
       "opened": "2022-11-01",
-      "state": "IA"
+      "state": "IA",
+      "tripleseat_location_id": "",
+      "tripleseat_name": "Des Moines"
     },
     {
       "slug": "omaha",
@@ -54,7 +62,9 @@
       "marginedge_unit_id": "",
       "timezone": "America/Chicago",
       "opened": "2024-01-01",
-      "state": "NE"
+      "state": "NE",
+      "tripleseat_location_id": "",
+      "tripleseat_name": "Omaha"
     },
     {
       "slug": "prairie-village",
@@ -65,7 +75,9 @@
       "marginedge_unit_id": "",
       "timezone": "America/Chicago",
       "opened": "2025-01-01",
-      "state": "KS"
+      "state": "KS",
+      "tripleseat_location_id": "",
+      "tripleseat_name": "Prairie Village"
     }
   ]
 }

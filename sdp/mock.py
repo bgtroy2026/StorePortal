@@ -263,6 +263,60 @@ def gen_marginedge(loc: dict, loc_idx: int, start: date, end: date, day_sales: d
     return len(orders)
 
 
+EVENT_NAMES = ["Rehearsal Dinner", "Corporate Holiday Party", "Wedding Reception", "Birthday Party", "Retirement Party",
+               "Company Happy Hour", "Baby Shower", "Fundraiser", "Beer Dinner", "Graduation Party", "Team Offsite", "Anniversary Dinner"]
+EVENT_STATUS = ["Definite", "Definite", "Definite", "Tentative", "Prospect", "Closed/Lost"]
+LEAD_STATUS = ["New", "Contacted", "Proposal Sent", "Won", "Lost"]
+
+
+def gen_tripleseat(loc: dict, loc_idx: int, start: date, end: date, forward: date):
+    """Private events in the Tripleseat response shape, including the booked-but-future calendar."""
+    slug = loc["slug"]
+    rnd = random.Random(f"ts:{slug}")
+    tid = str(3000 + loc_idx)
+    scale = [1.0, 1.4, 0.8, 1.1, 0.7, 0.6][loc_idx % 6]
+    events, leads = [], []
+    d, eid = start, 0
+    while d <= forward:
+        # a couple of events a week, heavier Fri/Sat and in Nov/Dec
+        base = 0.30 * scale * (1.9 if d.weekday() in (4, 5) else 1.0) * (1.8 if d.month in (11, 12) else 1.0)
+        for _ in range(1 if rnd.random() < base else 0):
+            eid += 1
+            guests = rnd.choice([12, 18, 20, 25, 30, 40, 50, 60, 80, 120])
+            ppp = round(rnd.uniform(28, 68), 2)
+            fb = round(guests * ppp, 2)
+            rental = round(rnd.choice([0, 0, 150, 250, 500]), 2)
+            total = round(fb + rental, 2)
+            past = d <= end
+            status = "Definite" if past else rnd.choices(EVENT_STATUS, weights=[45, 20, 15, 12, 6, 2])[0]
+            events.append({"id": int(f"{loc_idx}{eid:04d}"), "name": rnd.choice(EVENT_NAMES), "status": status,
+                           "location_id": int(tid), "booking_id": int(f"{loc_idx}9{eid:03d}"),
+                           "event_date": d.strftime("%m/%d/%Y"), "event_date_iso8601": iso(d),
+                           "event_start_iso8601": iso(d) + "T17:30:00-05:00", "event_end_iso8601": iso(d) + "T21:30:00-05:00",
+                           "event_style": rnd.choice(["Buffet", "Plated", "Passed Apps", "Family Style"]),
+                           "event_type_id": rnd.randint(1, 8), "guest_count": guests,
+                           "guaranteed_guest_count": guests if past else 0,
+                           "food_and_beverage_min": fb, "rental_fee": rental, "deposit_amount": round(total * 0.25, 2),
+                           "grand_total": total,
+                           "actual_amount": (round(total * rnd.uniform(0.9, 1.25), 2) if past and status == "Definite" else None),
+                           "amount_due": (0.0 if past else round(total * 0.75, 2)), "price_per_person": ppp,
+                           "created_at": iso(d - timedelta(days=rnd.randint(20, 120))) + "T10:00:00-05:00",
+                           "updated_at": iso(min(d, end)) + "T10:00:00-05:00", "deleted_at": None})
+        if rnd.random() < base * 1.6:
+            leads.append({"id": int(f"{loc_idx}8{len(leads):04d}"), "first_name": rnd.choice(["Sam", "Alex", "Jordan", "Casey", "Riley", "Morgan"]),
+                          "last_name": rnd.choice(["Nguyen", "Patel", "Johnson", "Garcia", "Smith", "Olson"]),
+                          "company": rnd.choice(["", "Hills Bank", "ACT", "Collins Aerospace", "UIHC", "Kum & Go", "", ""]),
+                          "location_id": int(tid), "event_date": iso(d), "guest_count": rnd.choice([10, 20, 30, 45, 60, 100]),
+                          "status": rnd.choices(LEAD_STATUS, weights=[22, 20, 18, 28, 12])[0],
+                          "lead_source": {"name": rnd.choice(["Website", "Referral", "Phone", "Walk-in", "Repeat client"])},
+                          "event_description": rnd.choice(EVENT_NAMES), "created_at": iso(d - timedelta(days=rnd.randint(10, 90))) + "T09:00:00-05:00",
+                          "updated_at": iso(min(d, end)) + "T09:00:00-05:00"})
+        d += timedelta(days=1)
+    write_raw("tripleseat", slug, "events", f"{iso(start)}_{iso(forward)}", {"events": events, "window": [iso(start), iso(forward)], "location_id": tid})
+    write_raw("tripleseat", slug, "leads", f"{iso(start)}_{iso(forward)}", {"leads": leads, "window": [iso(start), iso(forward)], "location_id": tid})
+    return len(events), len(leads)
+
+
 def generate(locations: list[dict], days: int = 120, toast: bool = True) -> None:
     end = today_local() - timedelta(days=1)
     start = end - timedelta(days=days)
@@ -274,7 +328,12 @@ def generate(locations: list[dict], days: int = 120, toast: bool = True) -> None
         s = date.fromisoformat(a["start_date"]); e = date.fromisoformat(a.get("end_date") or a["start_date"])
         for dd in (s + timedelta(n) for n in range((e - s).days + 1)):
             events[f"{a['location_id']}:{iso(dd)}"] = 1.0 + float(a.get("_mock_lift") or 0.25)
+    write_raw("tripleseat", "_all", "locations", "all",
+              {"locations": [{"id": 3000 + i, "name": l.get("tripleseat_name") or l["name"]} for i, l in enumerate(locations)]})
+    forward = end + timedelta(days=180)
     for i, loc in enumerate(locations):
         no, nt, day_sales, day_labor = gen_toast(loc, i, start, end, events, write=toast)
         ni = gen_marginedge(loc, i, start, end, day_sales, day_labor)
-        log.info("mock %-13s toast orders=%d time entries=%d%s | marginedge invoices=%d + daily sales/P&L + inventories", loc["slug"], no, nt, "" if toast else " (not written: --mock-no-toast)", ni)
+        ne, nl = gen_tripleseat(loc, i, start, end, forward)
+        log.info("mock %-13s toast orders=%d time entries=%d%s | marginedge invoices=%d + daily sales/P&L + inventories | tripleseat events=%d leads=%d",
+                 loc["slug"], no, nt, "" if toast else " (not written: --mock-no-toast)", ni, ne, nl)

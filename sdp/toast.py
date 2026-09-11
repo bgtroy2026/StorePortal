@@ -137,7 +137,16 @@ def pull(locations: list[dict], days_back: int, incremental_days: int, warehouse
                 days.append(d)
             d += timedelta(days=1)
         n_orders = 0
-        for d in days:
+        t0, last_note = time.monotonic(), time.monotonic()
+        if days:
+            log.info("Toast %s: %d business days to pull (%s..%s)", slug, len(days), iso(days[0]), iso(days[-1]))
+        for n, d in enumerate(days, 1):
+            # progress every ~2 minutes, with a rate-based estimate — a silent hour-long backfill is unreviewable
+            if time.monotonic() - last_note > 120:
+                rate = n / max(time.monotonic() - t0, 1)
+                log.info("Toast %s: %d/%d days (%.1f%%), %d orders so far, ~%.0f min left for this location",
+                         slug, n, len(days), 100.0 * n / len(days), n_orders, (len(days) - n) / rate / 60)
+                last_note = time.monotonic()
             if deadline and time.monotonic() > deadline:
                 if not stopped:
                     log.warning("Toast: time budget reached — stopping cleanly; the next run continues where this left off")
