@@ -1,6 +1,6 @@
 """Store Director Portal pipeline CLI.
 
-  python -m sdp pull        [--mock] [--source toast|marginedge|all] [--backfill]
+  python -m sdp pull        [--mock [--mock-no-toast]] [--source toast|marginedge|all] [--backfill] [--max-minutes N]
   python -m sdp transform
   python -m sdp build       [--dev-json] [--no-encrypt]
   python -m sdp all         [--mock] ...            pull -> transform -> build
@@ -31,14 +31,19 @@ def _warehouse_days() -> set[tuple[str, str]]:
         con.close()
 
 
-def _detailed_ids() -> set[tuple[str, str]]:
+def _me_have() -> dict:
+    """What the warehouse already holds from MarginEdge, so pulls only fetch the incremental window + gaps."""
     if not DB_PATH.exists():
-        return set()
+        return {}
     con = sqlite3.connect(DB_PATH)
+    q = lambda sql: set(con.execute(sql).fetchall())
     try:
-        return set(con.execute("SELECT DISTINCT location_id, order_id FROM me_invoice_lines").fetchall())
+        return {"orders": q("SELECT DISTINCT location_id, order_id FROM me_invoice_lines"),
+                "sales_days": q("SELECT DISTINCT location_id, business_date FROM me_sales_daily"),
+                "pnl_days": q("SELECT DISTINCT location_id, business_date FROM me_pnl_summary"),
+                "inventories": q("SELECT location_id, inventory_id, COALESCE(saved_date, closed_date, '') FROM me_inventories WHERE inventory_id IN (SELECT DISTINCT inventory_id FROM me_inventory_items)")}
     except sqlite3.OperationalError:
-        return set()
+        return {}
     finally:
         con.close()
 
@@ -48,19 +53,20 @@ def cmd_pull(a):
     cfg = settings()
     if a.mock:
         from . import mock
-        mock.generate(locs, days=a.mock_days)
+        mock.generate(locs, days=a.mock_days, toast=not a.mock_no_toast)
         return
-    days = cfg["backfill_days"] if (a.backfill or not DB_PATH.exists()) else cfg["incremental_days"]
     if a.source in ("all", "marginedge"):
         if env("MARGINEDGE_API_KEY"):
             from . import marginedge
-            marginedge.pull(locs, days_back=max(days, cfg["incremental_days"]), detailed_ids=_detailed_ids())
+            me_cfg = cfg["marginedge"]
+            marginedge.pull(locs, days_back=cfg["backfill_days"], incremental_days=cfg["incremental_days"], have=({} if a.backfill else _me_have()),
+                            max_minutes=a.max_minutes or me_cfg.get("max_minutes_per_run"))
         else:
             log.warning("MARGINEDGE_API_KEY not set — skipping MarginEdge")
     if a.source in ("all", "toast"):
         if env("TOAST_CLIENT_ID") and env("TOAST_CLIENT_SECRET"):
             from . import toast
-            toast.pull(locs, days_back=cfg["backfill_days"], incremental_days=cfg["incremental_days"], warehouse_days=_warehouse_days())
+            toast.pull(locs, days_back=cfg["backfill_days"], incremental_days=cfg["incremental_days"], warehouse_days=(set() if a.backfill else _warehouse_days()))
         else:
             log.warning("TOAST_CLIENT_ID / TOAST_CLIENT_SECRET not set — skipping Toast")
 
@@ -112,6 +118,8 @@ def main(argv=None):
         p = sub.add_parser(name); p.set_defaults(fn=fn)
         p.add_argument("--mock", action="store_true", help="generate sample raw data instead of calling APIs")
         p.add_argument("--mock-days", type=int, default=120)
+        p.add_argument("--mock-no-toast", action="store_true", help="mock the MarginEdge-only phase (no Toast raw data)")
+        p.add_argument("--max-minutes", type=float, default=None, help="stop the MarginEdge pull cleanly after N minutes (default from settings)")
         p.add_argument("--source", choices=["all", "toast", "marginedge"], default="all")
         p.add_argument("--backfill", action="store_true", help="pull the full backfill window even if a warehouse exists")
         p.add_argument("--dev-json", action="store_true", help="also write site/data/dev.json (unencrypted, local preview)")

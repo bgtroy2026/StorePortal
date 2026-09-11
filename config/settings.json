@@ -10,7 +10,10 @@
   },
   "marginedge": {
     "base_url": "https://api.marginedge.com/public",
-    "order_statuses": ["ALL"]
+    "requests_per_second": 1,
+    "max_minutes_per_run": 300,
+    "sales_source_priority": ["toast", "marginedge"],
+    "labor_source_priority": ["toast", "marginedge"]
   },
   "category_map": {
     "_comment": "Maps Toast sales-category names and MarginEdge category types onto the five portal buckets used for COGS% and sales mix.",

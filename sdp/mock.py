@@ -56,20 +56,23 @@ def _daily_volume(loc_idx: int, d: date, rnd: random.Random) -> int:
     return max(15, int(base * dow * season * growth * rnd.uniform(0.85, 1.15)))
 
 
-def gen_toast(loc: dict, loc_idx: int, start: date, end: date, events: dict[str, float]):
+def gen_toast(loc: dict, loc_idx: int, start: date, end: date, events: dict[str, float], write: bool = True):
+    """Returns (n_orders, n_time_entries, day_sales{date:{bucket:net}}, day_labor{date:cost})."""
     slug = loc["slug"]
     guid = loc.get("toast_guid") or _g(f"toast:{slug}")
     rnd = random.Random(f"toast:{slug}")
     info = {"guid": guid, "general": {"name": f"Big Grove Brewery {loc['name']}", "locationName": loc["name"], "timeZone": loc.get("timezone", "America/Chicago"), "closeoutHour": 4, "firstBusinessDate": 20130901},
             "location": {"city": loc["name"], "stateCode": loc.get("state", "IA")}}
-    write_raw("toast", slug, "restaurant", "info", info)
+    W = (lambda *a: write_raw(*a)) if write else (lambda *a: None)
+    W("toast", slug, "restaurant", "info", info)
     jobs = [{"guid": _g(f"job:{slug}:{t}"), "title": t, "wageFrequency": "HOURLY", "defaultWage": w, "deleted": False} for t, w in JOBS]
-    write_raw("toast", slug, "jobs", "all", {"jobs": jobs})
+    W("toast", slug, "jobs", "all", {"jobs": jobs})
     items = [{"guid": _g(f"item:{slug}:{n}"), "name": n, "price": p, "menuGroup": g, "salesCategory": {"name": sc}} for n, g, sc, p, b in MENU]
     menus = {"restaurantGuid": guid, "menus": [{"name": "Main", "menuGroups": [
         {"name": g, "menuItems": [{"guid": it["guid"], "name": it["name"], "price": it["price"], "salesCategory": it["salesCategory"]} for it in items if it["menuGroup"] == g]}
         for g in sorted({m[1] for m in MENU})]}]}
-    write_raw("toast", slug, "menus", "all", menus)
+    W("toast", slug, "menus", "all", menus)
+    day_sales, day_labor = {}, {}
     servers = [_g(f"emp:{slug}:{i}") for i in range(14)]
     n_orders_total = 0
     d = start
@@ -94,6 +97,7 @@ def gen_toast(loc: dict, loc_idx: int, start: date, end: date, events: dict[str,
                 line = round(pre - disc, 2)
                 t = round(line * 0.07, 2)
                 amount += line; tax += t
+                if not voided: day_sales.setdefault(iso(d), {})[b] = day_sales.setdefault(iso(d), {}).get(b, 0) + line
                 sels.append({"guid": _g(f"sel:{og}:{j}"), "entityType": "MenuItemSelection", "item": {"guid": _g(f"item:{slug}:{name}")}, "itemGroup": {"guid": _g(f"grp:{slug}:{grp}")},
                              "salesCategory": {"guid": _g(f"sc:{slug}:{sc}"), "name": sc}, "displayName": name, "quantity": q, "preDiscountPrice": pre, "price": line, "tax": t,
                              "voided": False, "createdDate": _ts(d, hour + 0.1 * j), "appliedDiscounts": ([{"discountAmount": disc, "name": "Happy Hour"}] if disc else [])})
@@ -109,7 +113,7 @@ def gen_toast(loc: dict, loc_idx: int, start: date, end: date, events: dict[str,
                            "server": {"guid": rnd.choice(servers)}, "numberOfGuests": guests, "voided": voided, "voidDate": (_ts(d, hour + 0.5) if voided else None),
                            "checks": [{"guid": cg, "entityType": "Check", "amount": amount, "taxAmount": tax, "totalAmount": total, "voided": voided, "paymentStatus": "CLOSED",
                                        "selections": sels, "payments": [pay], "appliedDiscounts": [], "appliedServiceCharges": ([{"chargeAmount": round(amount * 0.18, 2), "gratuity": True, "name": "Auto grat"}] if guests >= 6 else [])}]})
-        write_raw("toast", slug, "orders", iso(d), {"businessDate": iso(d), "orders": orders})
+        W("toast", slug, "orders", iso(d), {"businessDate": iso(d), "orders": orders})
         n_orders_total += n
         d += timedelta(days=1)
     # time entries in 30-day windows, ~sales-scaled
@@ -123,16 +127,17 @@ def gen_toast(loc: dict, loc_idx: int, start: date, end: date, events: dict[str,
             hrs = rnd.choice([4, 5, 6, 6.5, 7, 8, 8.5])
             ot = 0.5 if hrs > 8 else 0
             start_h = rnd.choice([9, 10, 11, 14, 15, 16, 17])
+            day_labor[iso(d)] = day_labor.get(iso(d), 0) + (hrs - ot) * wage + ot * wage * 1.5
             tes.append({"guid": _g(f"te:{slug}:{iso(d)}:{i}"), "employeeReference": {"guid": rnd.choice(servers)}, "jobReference": {"guid": _g(f"job:{slug}:{title}")},
                         "inDate": _ts(d, start_h), "outDate": _ts(d, start_h + hrs), "businessDate": d.strftime("%Y%m%d"),
                         "regularHours": hrs - ot, "overtimeHours": ot, "hourlyWage": wage, "declaredCashTips": (round(rnd.uniform(0, 40), 2) if title in ("Server", "Bartender") else 0),
                         "nonCashTips": (round(rnd.uniform(40, 220), 2) if title in ("Server", "Bartender") else 0), "deleted": False})
         d += timedelta(days=1)
-    write_raw("toast", slug, "timeEntries", f"{iso(start)}_{iso(end)}", {"timeEntries": tes, "window": [iso(start), iso(end)]})
-    return n_orders_total, len(tes)
+    W("toast", slug, "timeEntries", f"{iso(start)}_{iso(end)}", {"timeEntries": tes, "window": [iso(start), iso(end)]})
+    return n_orders_total, len(tes), day_sales, day_labor
 
 
-def gen_marginedge(loc: dict, loc_idx: int, start: date, end: date):
+def gen_marginedge(loc: dict, loc_idx: int, start: date, end: date, day_sales: dict, day_labor: dict):
     slug = loc["slug"]
     uid = loc.get("marginedge_unit_id") or str(1000 + loc_idx)
     rnd = random.Random(f"me:{slug}")
@@ -201,10 +206,64 @@ def gen_marginedge(loc: dict, loc_idx: int, start: date, end: date):
     write_raw("marginedge", slug, "orders", f"{iso(start)}_{iso(end)}", {"orders": orders, "window": [iso(start), iso(end)]})
     for det in details:
         write_raw("marginedge", slug, "orderDetail", det["orderId"], det)
+
+    # ---- daily sales report + daily P&L (what the Toast→MarginEdge integration produces) ----
+    SALES_CATS = [("Food", "Food"), ("Beer", "Beer"), ("Liquor", "Liquor"), ("Wine", "Wine"), ("N/A Bev", "NA Bev"), ("Retail", "Retail")]
+    purch_by_day = {}
+    for det in details:
+        for l in det["lineItems"]:
+            b = next((bb for bb, ids in cat_by_bucket.items() if l["categoryId"] in ids), "Other")
+            purch_by_day.setdefault(det["invoiceDate"], {})[b] = purch_by_day.setdefault(det["invoiceDate"], {}).get(b, 0) + l["linePrice"]
+    hdr = {"restaurantUnitId": int(uid), "restaurantUnitName": f"Big Grove {loc['name']}", "companyId": 1, "companyName": "Big Grove Brewery", "conceptId": 1, "conceptName": "Taprooms", "currency": "USD"}
+    d = start
+    while d <= end:
+        ds_ = day_sales.get(iso(d), {}); tot = sum(ds_.values()) or 0.0
+        cats = [{"id": 900 + i, "name": n, "total": round(ds_.get(b, 0), 2), "percentOfTotalSales": round(ds_.get(b, 0) / tot, 4) if tot else 0} for i, (n, b) in enumerate(SALES_CATS)]
+        write_raw("marginedge", slug, "salesReport", iso(d), {"salesReports": [dict(hdr, startDate=iso(d), endDate=iso(d), summary={"totalSales": round(tot, 2)}, categories=cats)]})
+        labor = day_labor.get(iso(d), 0.0); pb = purch_by_day.get(iso(d), {})
+        def sec(cats_):
+            t = sum(c["total"] for c in cats_)
+            return {"total": round(t, 2), "totalPercentOfSales": round(t / tot, 4) if tot else 0, "categories": cats_, "items": []}
+        def cat(i, n, v, items=None):
+            return {"id": i, "name": n, "total": round(v, 2), "percentOfSales": round(v / tot, 4) if tot else 0, "items": items or [{"name": n, "total": round(v, 2), "percentOfSales": round(v / tot, 4) if tot else 0}]}
+        income = sec([cat(900 + i, n, ds_.get(b, 0)) for i, (n, b) in enumerate(SALES_CATS)])
+        cogs = sec([cat(600 + i, {"NA Bev": "N/A Bev", "Other": "Paper & Supplies"}.get(b, b), pb.get(b, 0)) for i, b in enumerate(["Food", "Beer", "Liquor", "Wine", "NA Bev", "Other", "Retail"])])
+        lab = sec([cat(801, "Hourly Labor", labor * 0.82, [{"name": "FOH Hourly", "total": round(labor * 0.45, 2), "percentOfSales": 0}, {"name": "BOH Hourly", "total": round(labor * 0.37, 2), "percentOfSales": 0}]),
+                   cat(802, "Salaried Labor", labor * 0.10), cat(803, "Payroll Taxes & Benefits", labor * 0.08)])
+        exp = sec([cat(701, "Occupancy", tot * 0.06), cat(702, "Utilities", tot * 0.025), cat(703, "Marketing", tot * 0.015), cat(704, "Repairs & Maintenance", tot * 0.01)])
+        gp = income["total"] - cogs["total"]; prime = cogs["total"] + lab["total"]
+        write_raw("marginedge", slug, "pnl", iso(d), {"profitAndLossReports": [dict(hdr, startDate=iso(d), endDate=iso(d),
+            summary={"grossProfit": round(gp, 2), "grossProfitPercentOfSales": round(gp / tot, 4) if tot else 0, "primeCostTotal": round(prime, 2), "primeCostPercentOfSales": round(prime / tot, 4) if tot else 0,
+                     "controllableProfit": round(gp - lab["total"] - exp["total"], 2), "controllableProfitPercentOfSales": round((gp - lab["total"] - exp["total"]) / tot, 4) if tot else 0},
+            income=income, cogs=cogs, labor=lab, expenses=exp)]})
+        d += timedelta(days=1)
+
+    # ---- inventories: one count every two weeks, items valued per product ----
+    invs, cnt = [], 0
+    d = end
+    while d >= start:
+        cnt += 1
+        iid = f"inv{loc_idx}-{cnt}"
+        head = {"inventoryId": iid, "countsheetId": f"cs{loc_idx}", "countsheetName": "Full Store Count", "inventoryDate": iso(d), "status": "CLOSED", "closedDate": iso(d) + "T23:30:00Z",
+                "firstClosedDate": iso(d) + "T23:30:00Z", "savedDate": iso(d) + "T23:30:00Z", "origin": "WEB"}
+        sections, total = [], 0.0
+        for si, (b, ps) in enumerate(prods_by_bucket.items()):
+            items = []
+            for pi, pr in enumerate(ps):
+                q = rnd.uniform(0.5, 14) * (1.0 + 0.15 * math.sin(cnt))
+                val = round(q * pr["latestPrice"], 2); total += val
+                items.append({"itemId": f"{iid}-{si}-{pi}", "position": pi, "productId": pr["companyConceptProductId"], "productName": pr["productName"], "companyConceptProductId": pr["companyConceptProductId"],
+                              "centralProductId": pr["centralProductId"], "quantity": round(q, 2), "price": pr["latestPrice"], "value": val, "unit": pr["reportByUnit"], "unitSize": 1, "productCodes": []})
+            sections.append({"sectionId": f"{iid}-s{si}", "name": f"{b} storage", "position": si, "items": items})
+        head["totalValue"] = round(total, 2)
+        invs.append({k: v for k, v in head.items()})
+        write_raw("marginedge", slug, "inventoryDetail", iid, dict(head, sections=sections))
+        d -= timedelta(days=14)
+    write_raw("marginedge", slug, "inventories", "list", {"inventories": invs, "window": [iso(start), iso(end)]})
     return len(orders)
 
 
-def generate(locations: list[dict], days: int = 120) -> None:
+def generate(locations: list[dict], days: int = 120, toast: bool = True) -> None:
     end = today_local() - timedelta(days=1)
     start = end - timedelta(days=days)
     write_raw("marginedge", "_all", "restaurantUnits", "units", {"restaurants": [{"id": int(l.get("marginedge_unit_id") or 1000 + i), "name": f"Big Grove {l['name']}"} for i, l in enumerate(locations)]})
@@ -216,6 +275,6 @@ def generate(locations: list[dict], days: int = 120) -> None:
         for dd in (s + timedelta(n) for n in range((e - s).days + 1)):
             events[f"{a['location_id']}:{iso(dd)}"] = 1.0 + float(a.get("_mock_lift") or 0.25)
     for i, loc in enumerate(locations):
-        no, nt = gen_toast(loc, i, start, end, events)
-        ni = gen_marginedge(loc, i, start, end)
-        log.info("mock %-13s toast orders=%d time entries=%d | marginedge invoices=%d", loc["slug"], no, nt, ni)
+        no, nt, day_sales, day_labor = gen_toast(loc, i, start, end, events, write=toast)
+        ni = gen_marginedge(loc, i, start, end, day_sales, day_labor)
+        log.info("mock %-13s toast orders=%d time entries=%d%s | marginedge invoices=%d + daily sales/P&L + inventories", loc["slug"], no, nt, "" if toast else " (not written: --mock-no-toast)", ni)

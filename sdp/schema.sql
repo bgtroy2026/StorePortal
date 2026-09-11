@@ -149,9 +149,45 @@ CREATE TABLE IF NOT EXISTS me_invoice_lines (          -- grain: one line item o
 );
 CREATE INDEX IF NOT EXISTS ix_me_lines_loc_date ON me_invoice_lines(location_id, invoice_date);
 
-CREATE TABLE IF NOT EXISTS me_inventory_counts (       -- grain: one bucket value per count date per location
+CREATE TABLE IF NOT EXISTS me_sales_daily (             -- grain: location × business date × ME sales category (GET /sales/report per day)
+  location_id TEXT NOT NULL, business_date TEXT NOT NULL, category_id TEXT NOT NULL,
+  category_name TEXT, bucket TEXT, total REAL DEFAULT 0,
+  PRIMARY KEY (location_id, business_date, category_id)
+);
+
+CREATE TABLE IF NOT EXISTS me_pnl_daily (               -- grain: location × business date × P&L line (GET /profitAndLoss/report per day)
+  location_id TEXT NOT NULL, business_date TEXT NOT NULL,
+  section TEXT NOT NULL,                                -- income | cogs | labor | expenses
+  category_id TEXT, category_name TEXT, item_name TEXT, -- item_name NULL = category total row; category NULL = section total
+  total REAL DEFAULT 0, pct_of_sales REAL, bucket TEXT,
+  PRIMARY KEY (location_id, business_date, section, category_id, item_name)
+);
+CREATE INDEX IF NOT EXISTS ix_me_pnl_loc_date ON me_pnl_daily(location_id, business_date);
+
+CREATE TABLE IF NOT EXISTS me_pnl_summary (             -- grain: location × business date (P&L summary block)
+  location_id TEXT NOT NULL, business_date TEXT NOT NULL,
+  income_total REAL, cogs_total REAL, labor_total REAL, expenses_total REAL,
+  gross_profit REAL, prime_cost REAL, controllable_profit REAL,
+  PRIMARY KEY (location_id, business_date)
+);
+
+CREATE TABLE IF NOT EXISTS me_inventories (             -- grain: one inventory (count event)
+  inventory_id TEXT NOT NULL, location_id TEXT NOT NULL,
+  countsheet_id TEXT, countsheet_name TEXT, inventory_date TEXT, status TEXT, total_value REAL,
+  closed_date TEXT, saved_date TEXT, origin TEXT,
+  PRIMARY KEY (inventory_id, location_id)
+);
+
+CREATE TABLE IF NOT EXISTS me_inventory_items (         -- grain: one counted product line in an inventory
+  inventory_id TEXT NOT NULL, location_id TEXT NOT NULL, item_id TEXT NOT NULL,
+  section_name TEXT, product_id TEXT, product_name TEXT, central_product_id TEXT,
+  quantity REAL, price REAL, value REAL, unit TEXT, unit_size REAL, bucket TEXT,
+  PRIMARY KEY (inventory_id, location_id, item_id)
+);
+
+CREATE TABLE IF NOT EXISTS me_inventory_counts (       -- grain: one bucket value per count date per location (derived from items, or CSV fallback)
   location_id TEXT NOT NULL, count_date TEXT NOT NULL, bucket TEXT NOT NULL,
-  value REAL DEFAULT 0, source TEXT DEFAULT 'csv',      -- 'api' once the count-sheet endpoint is wired, else inputs/inventory_counts.csv
+  value REAL DEFAULT 0, source TEXT DEFAULT 'csv',      -- 'api' = rolled up from me_inventory_items; 'csv' = inputs/inventory_counts.csv
   PRIMARY KEY (location_id, count_date, bucket)
 );
 

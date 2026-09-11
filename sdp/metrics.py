@@ -30,14 +30,14 @@ def build_payload(con, through: date | None = None) -> dict:
     cfg = settings()
     locs = locations()
     days_in_bundle = int(cfg["site"].get("history_days_in_bundle", 400))
-    through = through or date.fromisoformat(con.execute("SELECT MAX(business_date) FROM toast_orders").fetchone()[0] or date.today().isoformat())
+    through = through or date.fromisoformat(con.execute("SELECT MAX(business_date) FROM daily_summary WHERE net_sales>0").fetchone()[0] or date.today().isoformat())
     since = through - timedelta(days=days_in_bundle)
     w28 = through - timedelta(days=27)
     w56 = through - timedelta(days=55)
     payload = {"meta": {"built_at": datetime.utcnow().isoformat(timespec="seconds") + "Z", "through": through.isoformat(), "since": since.isoformat(),
                         "title": cfg["site"]["title"], "buckets": cfg["category_map"]["buckets"]},
                "locations": [{"id": l["slug"], "name": l["name"], "short": l.get("short"), "opened": l.get("opened")} for l in locs],
-               "daily": {}, "hourly": {}, "top_items": {}, "labor_jobs": {}, "vendors": {}, "inventory": {}, "activations": [], "targets": {}, "payments": {}, "dining": {}}
+               "daily": {}, "hourly": {}, "top_items": {}, "labor_jobs": {}, "vendors": {}, "inventory": {}, "activations": [], "targets": {}, "payments": {}, "dining": {}, "pnl": {}, "sources": {}}
 
     for l in locs:
         lid = l["slug"]
@@ -88,6 +88,23 @@ def build_payload(con, through: date | None = None) -> dict:
                         "purchases": _r(purch) if purch is not None else None, "usage": _r(usage) if usage is not None else None, "sales": _r(sales) if sales is not None else None})
         payload["inventory"][lid] = inv
 
+        # which source feeds this location (drives the dashboard's "needs Toast" states)
+        t_days = con.execute("SELECT COUNT(DISTINCT business_date) FROM toast_orders WHERE location_id=? AND business_date>=?", (lid, w28.isoformat())).fetchone()[0]
+        m_days = con.execute("SELECT COUNT(DISTINCT business_date) FROM me_sales_daily WHERE location_id=? AND business_date>=?", (lid, w28.isoformat())).fetchone()[0]
+        payload["sources"][lid] = {"toast": t_days > 0, "marginedge": m_days > 0, "toast_days_28": t_days, "me_days_28": m_days}
+
+        # P&L by month (MarginEdge): last 4 months incl. current, section totals + COGS/labor/expense categories
+        pnl = {}
+        for r in _rows(con, """SELECT substr(business_date,1,7) m, SUM(income_total) inc, SUM(cogs_total) cogs, SUM(labor_total) lab, SUM(expenses_total) exp, SUM(gross_profit) gp, SUM(prime_cost) pc,
+                               SUM(controllable_profit) cp, COUNT(*) days FROM me_pnl_summary WHERE location_id=? AND business_date>=? GROUP BY 1 ORDER BY 1""",
+                       (lid, (through.replace(day=1) - timedelta(days=95)).replace(day=1).isoformat())):
+            pnl[r["m"]] = {"income": _r(r["inc"]), "cogs": _r(r["cogs"]), "labor": _r(r["lab"]), "expenses": _r(r["exp"]), "gross_profit": _r(r["gp"]), "prime_cost": _r(r["pc"]), "controllable_profit": _r(r["cp"]), "days": r["days"], "cats": {}}
+        for r in _rows(con, """SELECT substr(business_date,1,7) m, section, category_name, bucket, SUM(total) t FROM me_pnl_daily WHERE location_id=? AND business_date>=? AND category_id!='' AND item_name=''
+                               GROUP BY 1,2,3,4 ORDER BY 1,2,5 DESC""", (lid, (through.replace(day=1) - timedelta(days=95)).replace(day=1).isoformat())):
+            if r["m"] in pnl:
+                pnl[r["m"]]["cats"].setdefault(r["section"], []).append([r["category_name"], r["bucket"], _r(r["t"])])
+        payload["pnl"][lid] = pnl
+
         payload["targets"][lid] = {r["month"]: [r["sales_target"], r["cogs_pct_target"], r["labor_pct_target"], r["guests_target"]] for r in _rows(con, "SELECT * FROM targets WHERE location_id=?", (lid,))}
 
     payload["activations"] = _rows(con, "SELECT activation_id id, location_id loc, start_date s, end_date e, name, type, cost, owner, notes FROM activations ORDER BY start_date")
@@ -98,7 +115,7 @@ def build_payload(con, through: date | None = None) -> dict:
 def slice_for_location(payload: dict, lid: str) -> dict:
     """A director's bundle: only their location (other locations are not merely hidden — they are absent)."""
     out = {"meta": dict(payload["meta"]), "locations": [l for l in payload["locations"] if l["id"] == lid], "activations": [a for a in payload["activations"] if a["loc"] == lid]}
-    for k in ("daily", "hourly", "top_items", "labor_jobs", "vendors", "inventory", "targets", "payments", "dining"):
+    for k in ("daily", "hourly", "top_items", "labor_jobs", "vendors", "inventory", "targets", "payments", "dining", "pnl", "sources"):
         out[k] = {lid: payload[k].get(lid)} if lid in payload[k] else {}
     return out
 

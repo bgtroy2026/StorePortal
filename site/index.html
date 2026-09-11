@@ -245,6 +245,9 @@ function kpis(a,b){ var s=agg(a,b); return {net:s.net,gross:s.gross,disc:s.disc,
 
 /* ---- rendering helpers ---- */
 function wkLabel(w,o){return 'wk '+fdate(w)+((o&&o._n&&o._n<7)?' (partial)':'');}
+function hasToast(){ return locIds().some(function(l){var x=(D.sources||{})[l];return x&&x.toast;}); }
+function needToast(what){ return '<div class="empty">'+what+' needs the Toast API connection (order-level detail). MarginEdge supplies sales by category, labor cost, purchases, P&amp;L and inventory in the meantime.</div>'; }
+function tileNT(label){ return '<div class="tile"><div class="l">'+label+'</div><div class="v" style="font-size:15px;color:var(--muted);margin-top:10px">Needs Toast</div><div class="d"><span class="tg">order-level data</span></div></div>'; }
 function killCharts(){charts.forEach(function(c){try{c.destroy();}catch(e){}});charts=[];}
 function delta(cur,prev,inv){ if(cur==null||prev==null||!prev)return '<span class="tg">no comparison</span>'; var d=(cur-prev)/Math.abs(prev); var up=d>=0; var good=inv?!up:up; return '<span class="'+(good?'up':'dn')+'">'+(up?'▲':'▼')+' '+fp(Math.abs(d),1)+'</span><span class="tg">vs '+(S.cmp==='ly'?'LY':'prior')+'</span>'; }
 function tile(label,val,dl,extra){ return '<div class="tile"><div class="l">'+label+'</div><div class="v">'+val+'</div><div class="d">'+(dl||'')+(extra||'')+'</div></div>'; }
@@ -270,13 +273,10 @@ function pgOverview(m){
   var a=S.d0,b=S.d1, cw=cmpWindow(), k=kpis(a,b), kp=hasData(cw[0],cw[1])?kpis(cw[0],cw[1]):null, tg=targetsFor(a,b);
   var h='<div class="grid tiles">'
    +tile('Net sales',fk(k.net),delta(k.net,kp&&kp.net),tg.sales?'<span class="tg">target '+fk(tg.sales)+' · '+fp(k.net/tg.sales,0)+'</span>':'')
-   +tile('Guests',fn(k.guests),delta(k.guests,kp&&kp.guests))
-   +tile('Avg check',fm(k.avgCheck,2),delta(k.avgCheck,kp&&kp.avgCheck))
-   +tile('Per-person avg',fm(k.ppa,2),delta(k.ppa,kp&&kp.ppa))
+   +(hasToast()?tile('Guests',fn(k.guests),delta(k.guests,kp&&kp.guests))+tile('Avg check',fm(k.avgCheck,2),delta(k.avgCheck,kp&&kp.avgCheck))+tile('Per-person avg',fm(k.ppa,2),delta(k.ppa,kp&&kp.ppa)):tileNT('Guests · avg check · PPA'))
    +tile('Labor %',fp(k.laborPct),delta(k.laborPct,kp&&kp.laborPct,true),tg.labor?'<span class="tg">target '+fp(tg.labor,0)+'</span>':'')
    +tile('Purchases % (COGS proxy)',fp(k.purchPct),delta(k.purchPct,kp&&kp.purchPct,true),tg.cogs?'<span class="tg">target '+fp(tg.cogs,0)+'</span>':'')
-   +tile('Sales / labor hour',fm(k.splh,0),delta(k.splh,kp&&kp.splh))
-   +tile('Discounts',fk(k.disc),delta(k.disc,kp&&kp.disc,true),'<span class="tg">'+fp(k.gross?k.disc/k.gross:null)+' of gross</span>')
+   +(hasToast()?tile('Sales / labor hour',fm(k.splh,0),delta(k.splh,kp&&kp.splh))+tile('Discounts',fk(k.disc),delta(k.disc,kp&&kp.disc,true),'<span class="tg">'+fp(k.gross?k.disc/k.gross:null)+' of gross</span>'):tile('Prime cost %',fp(k.net?(k.labor+k.purch)/k.net:null),delta(k.net?(k.labor+k.purch)/k.net:null,kp&&kp.net?(kp.labor+kp.purch)/kp.net:null,true),'<span class="tg">labor + purchases</span>'))
    +'</div>';
   h+='<div class="grid cols2" style="margin-top:14px">'
    +panel('Net sales by day','Current range vs comparison window; activations marked ●',chartBox('c_trend',true))
@@ -313,19 +313,23 @@ function pgOverview(m){
 
 function pgSales(m){
   var a=S.d0,b=S.d1,k=kpis(a,b),cw=cmpWindow(),kp=hasData(cw[0],cw[1])?kpis(cw[0],cw[1]):null;
-  var h='<div class="grid tiles">'+tile('Net sales',fk(k.net),delta(k.net,kp&&kp.net))+tile('Orders',fn(k.orders),delta(k.orders,kp&&kp.orders))+tile('Checks',fn(k.checks),delta(k.checks,kp&&kp.checks))
-    +tile('Gross sales',fk(k.gross),delta(k.gross,kp&&kp.gross))+tile('Tips',fk(k.tips),'<span class="tg">'+fp(k.net?k.tips/k.net:null)+' of net</span>')+tile('Refunds',fk(k.ref),delta(k.ref,kp&&kp.ref,true))+'</div>';
+  var T=hasToast();
+  var h='<div class="grid tiles">'+tile('Net sales',fk(k.net),delta(k.net,kp&&kp.net))
+    +(T?tile('Orders',fn(k.orders),delta(k.orders,kp&&kp.orders))+tile('Checks',fn(k.checks),delta(k.checks,kp&&kp.checks))+tile('Gross sales',fk(k.gross),delta(k.gross,kp&&kp.gross))+tile('Tips',fk(k.tips),'<span class="tg">'+fp(k.net?k.tips/k.net:null)+' of net</span>')+tile('Refunds',fk(k.ref),delta(k.ref,kp&&kp.ref,true))
+       :tile('Food',fk(k.food),delta(k.food,kp&&kp.food))+tile('Beer',fk(k.beer),delta(k.beer,kp&&kp.beer))+tile('Liquor',fk(k.liquor),delta(k.liquor,kp&&kp.liquor))+tile('Wine',fk(k.wine),delta(k.wine,kp&&kp.wine))+tile('NA bev + retail',fk(k.nabev+k.retail),delta(k.nabev+k.retail,kp&&(kp.nabev+kp.retail))))
+    +'</div>';
   h+='<div class="grid cols2" style="margin-top:14px">'
     +panel('Net sales by category over time','Stacked by week',chartBox('c_cat',true))
-    +panel('Hourly heatmap','Average net sales by hour and weekday, last 8 weeks (from item timestamps)','<div id="heat"></div>')
-    +panel('Top items — last 28 days','Ranked by net sales; category color shown','<div id="topItems"></div>')
-    +panel('Dining option & tender — last 28 days','How guests ordered and paid','<div id="dining"></div>')
+    +panel('Hourly heatmap','Average net sales by hour and weekday, last 8 weeks (from item timestamps)',T?'<div id="heat"></div>':needToast('The hourly heatmap'))
+    +panel('Top items — last 28 days','Ranked by net sales; category color shown',T?'<div id="topItems"></div>':needToast('Item ranking'))
+    +panel('Dining option & tender — last 28 days','How guests ordered and paid',T?'<div id="dining"></div>':needToast('Dining-option and tender mix'))
     +'</div>';
   m.innerHTML=h;
   var cur=byDate(a,b), wk={}; cur.forEach(function(r){var d=pd(r.d);d.setDate(d.getDate()-((d.getDay()+6)%7));var w=ds(d);var o=wk[w]||(wk[w]={_n:0});o._n++;BUCKETS.forEach(function(bk){o[bk[1]]=(o[bk[1]]||0)+(r[bk[1]]||0);});});
   var wks=Object.keys(wk).sort();
   mk('c_cat',{type:'bar',data:{labels:wks.map(function(w){return wkLabel(w,wk[w]);}),datasets:BUCKETS.map(function(bk){return {label:bk[0],data:wks.map(function(w){return wk[w][bk[1]]||0;}),backgroundColor:css(bk[3]),borderWidth:2,borderColor:'#fff',borderSkipped:false};})},
     options:baseOpts({scales:{x:{stacked:true,grid:{display:false}},y:{stacked:true,beginAtZero:true,grid:{color:css('grid')},border:{display:false},ticks:{callback:function(v){return fk(v);}}}},plugins:{legend:{display:true,position:'bottom'},tooltip:{callbacks:{label:function(c){return ' '+c.dataset.label+': '+fk(c.parsed.y);}}}}})});
+  if(!T) return;
   // heatmap
   var hrs=[]; for(var i=10;i<24;i++)hrs.push(i);
   var grid={}, max=0; locIds().forEach(function(l){(D.hourly[l]||[]).forEach(function(r){var key=r[0]+':'+r[1];grid[key]=(grid[key]||0)+r[2];});});
@@ -347,14 +351,17 @@ function pgSales(m){
 
 function pgLabor(m){
   var a=S.d0,b=S.d1,k=kpis(a,b),cw=cmpWindow(),kp=hasData(cw[0],cw[1])?kpis(cw[0],cw[1]):null,tg=targetsFor(a,b);
+  var T=hasToast();
   m.innerHTML='<div class="grid tiles">'+tile('Labor cost',fk(k.labor),delta(k.labor,kp&&kp.labor,true))+tile('Labor %',fp(k.laborPct),delta(k.laborPct,kp&&kp.laborPct,true),tg.labor?'<span class="tg">target '+fp(tg.labor,0)+'</span>':'')
-    +tile('Hours',fn(k.hours),delta(k.hours,kp&&kp.hours,true))+tile('Sales / labor hour',fm(k.splh,0),delta(k.splh,kp&&kp.splh))+tile('Avg wage',fm(k.hours?k.labor/k.hours:null,2),'')+'</div>'
-    +'<div class="grid cols2" style="margin-top:14px">'+panel('Labor % by day','Daily labor cost ÷ net sales; dashed = target',chartBox('c_lab',true))+panel('Hours vs sales by day','Bars: labor hours · line: net sales indexed to hours scale',chartBox('c_hrs',true))
-    +panel('By job — last 28 days','Hours, cost and average rate','<div id="jobs"></div>')+'</div>';
+    +(T?tile('Hours',fn(k.hours),delta(k.hours,kp&&kp.hours,true))+tile('Sales / labor hour',fm(k.splh,0),delta(k.splh,kp&&kp.splh))+tile('Avg wage',fm(k.hours?k.labor/k.hours:null,2),''):tileNT('Hours · SPLH · avg wage'))+'</div>'
+    +'<div class="grid cols2" style="margin-top:14px">'+panel('Labor % by day','Daily labor cost ÷ net sales; dashed = target'+(T?'':' · labor cost from the MarginEdge P&amp;L'),chartBox('c_lab',true))
+    +(T?panel('Hours vs sales by day','Bars: labor hours · line: net sales',chartBox('c_hrs',true)):panel('Labor by P&amp;L category','MarginEdge P&amp;L labor lines by month','<div id="pnlLabor"></div>'))
+    +(T?panel('By job — last 28 days','Hours, cost and average rate','<div id="jobs"></div>'):panel('By job','Hours, cost and average rate',needToast('Job-level labor')))+'</div>';
   var cur=byDate(a,b);
   var lc=lineCfg(cur.map(function(r){return fdate(r.d);}),[{label:'Labor %',data:cur.map(function(r){return r.net?r.lc/r.net:null;}),borderColor:css('s3'),fmt:'pct'}]);
   if(tg.labor)lc.data.datasets.push({label:'Target',data:cur.map(function(){return tg.labor;}),borderColor:css('s3'),borderDash:[3,4],borderWidth:1,pointRadius:0,fmt:'pct'});
   lc.options.scales.y.ticks.callback=function(v){return fp(v,0);}; mk('c_lab',lc);
+  if(!T){ $('pnlLabor').innerHTML=pnlSectionTable('labor'); return; }
   mk('c_hrs',{type:'bar',data:{labels:cur.map(function(r){return fdate(r.d);}),datasets:[{label:'Labor hours',data:cur.map(function(r){return r.lh;}),backgroundColor:css('s3'),borderRadius:3,fmt:'int'}]},options:baseOpts({scales:{x:{grid:{display:false},ticks:{maxRotation:0,autoSkip:true,maxTicksLimit:10}},y:{beginAtZero:true,grid:{color:css('grid')},border:{display:false},ticks:{callback:function(v){return fn(v)+' h';}}}}})});
   var jb={}; locIds().forEach(function(l){(D.labor_jobs[l]||[]).forEach(function(r){var o=jb[r[0]]||(jb[r[0]]={h:0,c:0,s:0});o.h+=r[1];o.c+=r[2];o.s+=r[3];});});
   var jl=Object.keys(jb).sort(function(x,y){return jb[y].c-jb[x].c;}), jt=jl.reduce(function(p,c){return p+jb[c].c;},0);
@@ -369,7 +376,8 @@ function pgCogs(m){
     +tile('Liquor cost %',fp(k.liquor?k.pl/k.liquor:null),'')+tile('Wine cost %',fp(k.wine?k.pw/k.wine:null),'')+'</div>'
     +'<div class="hint" style="margin:8px 2px 0;font-size:11.5px;color:var(--muted)">Purchases-based cost % is a proxy; the Inventory page shows count-adjusted actual usage (beginning + purchases − ending) where counts exist.</div>'
     +'<div class="grid cols2" style="margin-top:14px">'+panel('Purchases by category by week','Invoice line totals from MarginEdge',chartBox('c_purch',true))+panel('Category cost % in range','Purchases ÷ category net sales','<div id="catTbl"></div>')
-    +panel('Top vendors — last 28 days','Invoice totals by vendor','<div id="vend"></div>')+panel('Purchases vs sales by day','Bars: purchases (invoice date) · line: net sales',chartBox('c_pvs',true))+'</div>';
+    +panel('Top vendors — last 28 days','Invoice totals by vendor','<div id="vend"></div>')+panel('Purchases vs sales by day','Bars: purchases (invoice date) · line: net sales',chartBox('c_pvs',true))
+    +panel('P&amp;L by month (MarginEdge)','Income, COGS, labor and controllable expenses as MarginEdge reports them','<div id="pnlTbl"></div>')+panel('COGS by P&amp;L category','Inventory-adjusted where MarginEdge has counts','<div id="pnlCogs"></div>')+'</div>';
   var cur=byDate(a,b), wk={}; cur.forEach(function(r){var d=pd(r.d);d.setDate(d.getDate()-((d.getDay()+6)%7));var w=ds(d);var o=wk[w]||(wk[w]={_n:0});o._n++;BUCKETS.forEach(function(bk){if(bk[2])o[bk[2]]=(o[bk[2]]||0)+(r[bk[2]]||0);});});
   var wks=Object.keys(wk).sort();
   mk('c_purch',{type:'bar',data:{labels:wks.map(function(w){return wkLabel(w,wk[w]);}),datasets:BUCKETS.filter(function(bk){return bk[2];}).map(function(bk){return {label:bk[0],data:wks.map(function(w){return wk[w][bk[2]]||0;}),backgroundColor:css(bk[3]),borderWidth:2,borderColor:'#fff',borderSkipped:false};})},
@@ -378,8 +386,24 @@ function pgCogs(m){
   var vd={}; locIds().forEach(function(l){(D.vendors[l]||[]).forEach(function(r){var o=vd[r[0]]||(vd[r[0]]={t:0,n:0,b:r[3]});o.t+=r[1];o.n+=r[2];});});
   var vl=Object.keys(vd).sort(function(x,y){return vd[y].t-vd[x].t;}).slice(0,15), vt=vl.reduce(function(p,c){return p+vd[c].t;},0);
   $('vend').innerHTML='<table class="t"><tr><th>Vendor</th><th>Mostly</th><th class="r">Invoices</th><th class="r">Total</th><th class="r">Share</th></tr>'+vl.map(function(x){return '<tr><td class="n">'+esc(x)+'</td><td>'+esc(vd[x].b||'')+'</td><td class="r">'+fn(vd[x].n)+'</td><td class="r">'+fm(vd[x].t)+'</td><td class="r">'+fp(vd[x].t/vt)+'</td></tr>';}).join('')+'</table>';
+  $('pnlTbl').innerHTML=pnlSummaryTable(); $('pnlCogs').innerHTML=pnlSectionTable('cogs');
   mk('c_pvs',{data:{labels:cur.map(function(r){return fdate(r.d);}),datasets:[{type:'bar',label:'Purchases',data:cur.map(function(r){return r.p;}),backgroundColor:css('s2'),borderRadius:3},{type:'line',label:'Net sales',data:cur.map(function(r){return r.net;}),borderColor:css('s1'),borderWidth:2,pointRadius:0,tension:.25}]},options:baseOpts()});
 }
+
+function pnlMonths(){ var m={}; locIds().forEach(function(l){var p=D.pnl[l]||{};Object.keys(p).forEach(function(mo){var o=m[mo]||(m[mo]={income:0,cogs:0,labor:0,expenses:0,gross_profit:0,prime_cost:0,controllable_profit:0,days:0,cats:{}});['income','cogs','labor','expenses','gross_profit','prime_cost','controllable_profit'].forEach(function(k){o[k]+=p[mo][k]||0;});o.days=Math.max(o.days,p[mo].days||0);Object.keys(p[mo].cats||{}).forEach(function(sec){(p[mo].cats[sec]||[]).forEach(function(c){var cc=o.cats[sec]||(o.cats[sec]={});cc[c[0]]=(cc[c[0]]||0)+c[2];});});});}); return m; }
+function fmon(mo){var p=mo.split('-');return new Date(+p[0],+p[1]-1,1).toLocaleDateString(undefined,{month:'short',year:'2-digit'});}
+function pnlSummaryTable(){ var m=pnlMonths(), ms=Object.keys(m).sort().slice(-4); if(!ms.length)return '<div class="empty">No P&amp;L data yet.</div>';
+  var rows=[['Income','income'],['COGS','cogs'],['Labor','labor'],['Expenses','expenses'],['Gross profit','gross_profit'],['Prime cost','prime_cost'],['Controllable profit','controllable_profit']];
+  var h='<table class="t"><tr><th></th>'+ms.map(function(x){return '<th class="r">'+fmon(x)+(m[x].days<28?' *':'')+'</th>';}).join('')+'</tr>';
+  rows.forEach(function(r){h+='<tr><td class="n">'+r[0]+'</td>'+ms.map(function(x){var v=m[x][r[1]],inc=m[x].income;return '<td class="r">'+fk(v)+(r[1]!=='income'&&inc?' <span class="tg" style="color:var(--muted)">'+fp(v/inc,0)+'</span>':'')+'</td>';}).join('')+'</tr>';});
+  return h+'</table><div class="hint" style="margin-top:6px">* partial month</div>'; }
+function pnlSectionTable(sec){ var m=pnlMonths(), ms=Object.keys(m).sort().slice(-3); if(!ms.length)return '<div class="empty">No P&amp;L data yet.</div>';
+  var names={}; ms.forEach(function(x){Object.keys((m[x].cats||{})[sec]||{}).forEach(function(n){names[n]=(names[n]||0)+m[x].cats[sec][n];});});
+  var nl=Object.keys(names).sort(function(a,b){return names[b]-names[a];});
+  var h='<table class="t"><tr><th>Category</th>'+ms.map(function(x){return '<th class="r">'+fmon(x)+'</th><th class="r">% sales</th>';}).join('')+'</tr>';
+  nl.forEach(function(n){h+='<tr><td class="n">'+esc(n)+'</td>'+ms.map(function(x){var v=((m[x].cats||{})[sec]||{})[n]||0;return '<td class="r">'+fm(v)+'</td><td class="r">'+fp(m[x].income?v/m[x].income:null)+'</td>';}).join('')+'</tr>';});
+  h+='<tr><td class="n">Total</td>'+ms.map(function(x){return '<td class="r">'+fm(m[x][sec])+'</td><td class="r">'+fp(m[x].income?m[x][sec]/m[x].income:null)+'</td>';}).join('')+'</tr>';
+  return h+'</table>'; }
 
 function pgInventory(m){
   var h='<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(640px,1fr))">';

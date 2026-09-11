@@ -200,14 +200,78 @@ def load_marginedge(con, bk: Buckets) -> dict:
                          "created_date": o.get("createdDate"), "order_total": float(o.get("orderTotal") or 0), "tax": 0, "delivery_charges": 0, "other_charges": 0, "credit_amount": 0, "is_credit": 0,
                          "status": o.get("status"), "payment_account": o.get("paymentAccount")})
         stats["invoices"] += _upsert(con, "me_invoices", rows)
-    # inventories from the API when the endpoint is enabled (shape TBD -> stored as-is per bucket if it has categoryType/value)
-    for slug, ds, p, j in iter_raw("marginedge", dataset="inventories"):
-        rows = []
-        for inv in j.get("inventories", []):
-            for c in inv.get("categories", []) or []:
-                rows.append({"location_id": slug, "count_date": inv.get("inventoryDate") or inv.get("date"), "bucket": bk.from_me(c.get("categoryType"), c.get("categoryName")), "value": float(c.get("value") or c.get("totalValue") or 0), "source": "api"})
-        _upsert(con, "me_inventory_counts", rows)
+    stats.update(load_me_reports(con, bk, cat_bucket))
+    stats.update(load_me_inventories(con, bk, cat_bucket, prod_cat))
     return stats
+
+
+def load_me_reports(con, bk: Buckets, cat_bucket: dict) -> dict:
+    """GET /sales/report and /profitAndLoss/report pulled one business day at a time."""
+    n_sales = n_pnl = 0
+    for slug, ds, p, j in iter_raw("marginedge", dataset="salesReport"):
+        bd = p.stem
+        rows = []
+        for rep in j.get("salesReports") or []:
+            for c in rep.get("categories") or []:
+                cid = str(c.get("id"))
+                rows.append({"location_id": slug, "business_date": bd, "category_id": cid, "category_name": c.get("name"),
+                             "bucket": cat_bucket.get((slug, cid)) or bk.from_toast(c.get("name")), "total": float(c.get("total") or 0)})
+        con.execute("DELETE FROM me_sales_daily WHERE location_id=? AND business_date=?", (slug, bd))
+        n_sales += _upsert(con, "me_sales_daily", rows)
+    for slug, ds, p, j in iter_raw("marginedge", dataset="pnl"):
+        bd = p.stem
+        rows, summ = [], None
+        for rep in j.get("profitAndLossReports") or []:
+            sm = rep.get("summary") or {}
+            summ = {"location_id": slug, "business_date": bd, "gross_profit": sm.get("grossProfit"), "prime_cost": sm.get("primeCostTotal"), "controllable_profit": sm.get("controllableProfit")}
+            for section in ("income", "cogs", "labor", "expenses"):
+                sec = rep.get(section) or {}
+                summ[f"{section}_total"] = float(sec.get("total") or 0)
+                rows.append({"location_id": slug, "business_date": bd, "section": section, "category_id": "", "category_name": None, "item_name": "", "total": float(sec.get("total") or 0), "pct_of_sales": sec.get("totalPercentOfSales"), "bucket": None})
+                for c in sec.get("categories") or []:
+                    cid = str(c.get("id") or c.get("name"))
+                    b = cat_bucket.get((slug, cid)) or bk.from_me(None, c.get("name"))
+                    rows.append({"location_id": slug, "business_date": bd, "section": section, "category_id": cid, "category_name": c.get("name"), "item_name": "", "total": float(c.get("total") or 0), "pct_of_sales": c.get("percentOfSales"), "bucket": b})
+                    for it in c.get("items") or []:
+                        rows.append({"location_id": slug, "business_date": bd, "section": section, "category_id": cid, "category_name": c.get("name"), "item_name": it.get("name") or "?", "total": float(it.get("total") or 0), "pct_of_sales": it.get("percentOfSales"), "bucket": b})
+                for it in sec.get("items") or []:  # uncategorized lines
+                    rows.append({"location_id": slug, "business_date": bd, "section": section, "category_id": "", "category_name": None, "item_name": it.get("name") or "?", "total": float(it.get("total") or 0), "pct_of_sales": it.get("percentOfSales"), "bucket": bk.from_me(None, it.get("name"))})
+        con.execute("DELETE FROM me_pnl_daily WHERE location_id=? AND business_date=?", (slug, bd))
+        n_pnl += _upsert(con, "me_pnl_daily", rows)
+        if summ:
+            _upsert(con, "me_pnl_summary", [summ])
+    return {"sales_days": n_sales, "pnl_rows": n_pnl}
+
+
+def load_me_inventories(con, bk: Buckets, cat_bucket: dict, prod_cat: dict) -> dict:
+    n_inv = n_items = 0
+    for slug, ds, p, j in iter_raw("marginedge", dataset="inventories"):
+        rows = [{"inventory_id": str(i["inventoryId"]), "location_id": slug, "countsheet_id": str(i.get("countsheetId") or ""), "countsheet_name": i.get("countsheetName"), "inventory_date": (i.get("inventoryDate") or "")[:10],
+                 "status": i.get("status"), "total_value": i.get("totalValue"), "closed_date": i.get("closedDate"), "saved_date": i.get("savedDate"), "origin": i.get("origin")} for i in j.get("inventories") or []]
+        n_inv += _upsert(con, "me_inventories", rows)
+    for slug, ds, p, j in iter_raw("marginedge", dataset="inventoryDetail"):
+        iid = str(j.get("inventoryId") or p.stem)
+        _upsert(con, "me_inventories", [{"inventory_id": iid, "location_id": slug, "countsheet_id": str(j.get("countsheetId") or ""), "countsheet_name": j.get("countsheetName"), "inventory_date": (j.get("inventoryDate") or "")[:10],
+                                         "status": j.get("status"), "total_value": j.get("totalValue"), "closed_date": j.get("closedDate"), "saved_date": j.get("savedDate"), "origin": j.get("origin")}])
+        rows = []
+        for sec in j.get("sections") or []:
+            for it in sec.get("items") or []:
+                pid = str(it.get("companyConceptProductId") or it.get("productId") or "")
+                cid = prod_cat.get((slug, pid))
+                rows.append({"inventory_id": iid, "location_id": slug, "item_id": str(it.get("itemId") or f"{sec.get('sectionId')}:{it.get('position')}"), "section_name": sec.get("name"), "product_id": pid,
+                             "product_name": it.get("productName"), "central_product_id": it.get("centralProductId"), "quantity": it.get("quantity"), "price": it.get("price"), "value": float(it.get("value") or 0),
+                             "unit": it.get("unit"), "unit_size": it.get("unitSize"), "bucket": cat_bucket.get((slug, str(cid)), "Other") if cid else "Other"})
+        con.execute("DELETE FROM me_inventory_items WHERE inventory_id=? AND location_id=?", (iid, slug))
+        n_items += _upsert(con, "me_inventory_items", rows)
+    # roll counted items up to bucket values per inventory date (api rows win over csv rows for the same date)
+    con.execute("DELETE FROM me_inventory_counts WHERE source='api'")
+    con.execute("""
+      INSERT OR REPLACE INTO me_inventory_counts (location_id, count_date, bucket, value, source)
+      SELECT i.location_id, i.inventory_date, x.bucket, SUM(x.value), 'api'
+      FROM me_inventory_items x JOIN me_inventories i ON i.inventory_id=x.inventory_id AND i.location_id=x.location_id
+      WHERE i.status IS NULL OR UPPER(i.status) NOT IN ('DELETED','IN_PROGRESS','DRAFT')
+      GROUP BY 1,2,3""")
+    return {"inventories": n_inv, "inventory_items": n_items}
 
 
 # ---------------------------------------------------------------- manual inputs
@@ -219,14 +283,19 @@ def load_inputs(con) -> dict:
     t = [{"location_id": r["location_id"], "month": r["month"], "sales_target": float(r.get("sales_target") or 0) or None, "cogs_pct_target": float(r.get("cogs_pct_target") or 0) or None,
           "labor_pct_target": float(r.get("labor_pct_target") or 0) or None, "guests_target": int(float(r.get("guests_target") or 0)) or None} for r in inputs.read_targets()]
     _upsert(con, "targets", t)
-    inv = [{"location_id": r["location_id"], "count_date": r["count_date"], "bucket": r["bucket"], "value": float(r.get("value") or 0), "source": r.get("source") or "csv"} for r in inputs.read_inventory_counts()]
-    _upsert(con, "me_inventory_counts", inv)
+    inv = [{"location_id": r["location_id"], "count_date": r["count_date"], "bucket": r["bucket"], "value": float(r.get("value") or 0), "source": "csv"} for r in inputs.read_inventory_counts()]
+    con.execute("DELETE FROM me_inventory_counts WHERE source='csv'")
+    if inv:  # CSV rows never override API-derived counts for the same location/date/bucket
+        con.executemany("INSERT OR IGNORE INTO me_inventory_counts (location_id, count_date, bucket, value, source) VALUES (?,?,?,?,?)",
+                        [(r["location_id"], r["count_date"], r["bucket"], r["value"], r["source"]) for r in inv])
     return {"activations": len(a), "targets": len(t), "inventory_counts": len(inv)}
 
 
 # ---------------------------------------------------------------- derived
 
 def rebuild_daily_summary(con):
+    """location × business day. Sales: Toast orders when that day was pulled from Toast, else the MarginEdge sales
+    report (which is Toast data arriving via the ME integration). Labor: Toast time entries, else P&L labor total."""
     con.execute("DELETE FROM daily_summary")
     con.execute("""
     INSERT INTO daily_summary (location_id, business_date, net_sales, gross_sales, discounts, tax, tips, refunds, orders, checks, guests,
@@ -235,6 +304,8 @@ def rebuild_daily_summary(con):
     WITH days AS (
       SELECT location_id, business_date FROM toast_orders
       UNION SELECT location_id, business_date FROM toast_time_entries
+      UNION SELECT location_id, business_date FROM me_sales_daily
+      UNION SELECT location_id, business_date FROM me_pnl_summary
       UNION SELECT location_id, invoice_date FROM me_invoices WHERE invoice_date IS NOT NULL
     ),
     o AS (SELECT location_id, business_date, SUM(net_sales) net, SUM(gross_sales) gross, SUM(discounts) disc, SUM(tax) tax, SUM(tips) tips, SUM(refunds) ref,
@@ -245,7 +316,13 @@ def rebuild_daily_summary(con):
                  SUM(CASE WHEN bucket='Wine' THEN price ELSE 0 END) w, SUM(CASE WHEN bucket='NA Bev' THEN price ELSE 0 END) n, SUM(CASE WHEN bucket='Retail' THEN price ELSE 0 END) r,
                  SUM(CASE WHEN bucket NOT IN ('Food','Beer','Liquor','Wine','NA Bev','Retail') THEN price ELSE 0 END) x
           FROM toast_order_items WHERE voided=0 GROUP BY 1,2),
+    ms AS (SELECT location_id, business_date, SUM(total) net,
+                 SUM(CASE WHEN bucket='Food' THEN total ELSE 0 END) f, SUM(CASE WHEN bucket='Beer' THEN total ELSE 0 END) b, SUM(CASE WHEN bucket='Liquor' THEN total ELSE 0 END) l,
+                 SUM(CASE WHEN bucket='Wine' THEN total ELSE 0 END) w, SUM(CASE WHEN bucket='NA Bev' THEN total ELSE 0 END) n, SUM(CASE WHEN bucket='Retail' THEN total ELSE 0 END) r,
+                 SUM(CASE WHEN bucket NOT IN ('Food','Beer','Liquor','Wine','NA Bev','Retail') THEN total ELSE 0 END) x
+          FROM me_sales_daily GROUP BY 1,2),
     t AS (SELECT location_id, business_date, SUM(regular_hours+overtime_hours) hrs, SUM(wages) cost FROM toast_time_entries GROUP BY 1,2),
+    ml AS (SELECT location_id, business_date, labor_total cost FROM me_pnl_summary),
     p AS (SELECT location_id, invoice_date business_date,
                  SUM(CASE WHEN bucket='Food' THEN line_price ELSE 0 END) f, SUM(CASE WHEN bucket='Beer' THEN line_price ELSE 0 END) b, SUM(CASE WHEN bucket='Liquor' THEN line_price ELSE 0 END) l,
                  SUM(CASE WHEN bucket='Wine' THEN line_price ELSE 0 END) w, SUM(CASE WHEN bucket='NA Bev' THEN line_price ELSE 0 END) n,
@@ -253,15 +330,17 @@ def rebuild_daily_summary(con):
           FROM me_invoice_lines GROUP BY 1,2),
     ph AS (SELECT location_id, invoice_date business_date, SUM(order_total) tot FROM me_invoices GROUP BY 1,2)
     SELECT d.location_id, d.business_date,
-      COALESCE(o.net,0), COALESCE(o.gross,0), COALESCE(o.disc,0), COALESCE(o.tax,0), COALESCE(o.tips,0), COALESCE(o.ref,0), COALESCE(o.orders,0), COALESCE(o.checks,0), COALESCE(o.guests,0),
-      COALESCE(i.f,0), COALESCE(i.b,0), COALESCE(i.l,0), COALESCE(i.w,0), COALESCE(i.n,0), COALESCE(i.r,0), COALESCE(i.x,0),
-      COALESCE(t.hrs,0), COALESCE(t.cost,0),
+      COALESCE(o.net, ms.net, 0), COALESCE(o.gross, ms.net, 0), COALESCE(o.disc,0), COALESCE(o.tax,0), COALESCE(o.tips,0), COALESCE(o.ref,0), COALESCE(o.orders,0), COALESCE(o.checks,0), COALESCE(o.guests,0),
+      COALESCE(i.f, ms.f, 0), COALESCE(i.b, ms.b, 0), COALESCE(i.l, ms.l, 0), COALESCE(i.w, ms.w, 0), COALESCE(i.n, ms.n, 0), COALESCE(i.r, ms.r, 0), COALESCE(i.x, ms.x, 0),
+      COALESCE(t.hrs,0), COALESCE(t.cost, ml.cost, 0),
       COALESCE(ph.tot,0), COALESCE(p.f,0), COALESCE(p.b,0), COALESCE(p.l,0), COALESCE(p.w,0), COALESCE(p.n,0), COALESCE(p.x,0)
     FROM days d
-    LEFT JOIN o ON o.location_id=d.location_id AND o.business_date=d.business_date
-    LEFT JOIN i ON i.location_id=d.location_id AND i.business_date=d.business_date
-    LEFT JOIN t ON t.location_id=d.location_id AND t.business_date=d.business_date
-    LEFT JOIN p ON p.location_id=d.location_id AND p.business_date=d.business_date
+    LEFT JOIN o  ON o.location_id=d.location_id  AND o.business_date=d.business_date
+    LEFT JOIN i  ON i.location_id=d.location_id  AND i.business_date=d.business_date
+    LEFT JOIN ms ON ms.location_id=d.location_id AND ms.business_date=d.business_date
+    LEFT JOIN t  ON t.location_id=d.location_id  AND t.business_date=d.business_date
+    LEFT JOIN ml ON ml.location_id=d.location_id AND ml.business_date=d.business_date
+    LEFT JOIN p  ON p.location_id=d.location_id  AND p.business_date=d.business_date
     LEFT JOIN ph ON ph.location_id=d.location_id AND ph.business_date=d.business_date
     """)
 

@@ -4,9 +4,9 @@ A nightly pipeline + static dashboard that joins **Toast** (POS: sales, guests, 
 (purchasing, COGS, inventory) for the six taprooms, gated by Google sign-in and published on GitHub Pages.
 
 ```
-Toast API ─┐                                    ┌─ data/<id>.bin  (AES-256-GCM, one per audience)
-MarginEdge ┼─ pull ─► raw/ ─► transform ─► SQLite ─► metrics ─► build ─┤
-inputs/*.csv┘                        (warehouse)                     └─ index.html (login shell + dashboard)
+MarginEdge ─┐  (invoices, sales report, P&L, inventories)      ┌─ data/<id>.bin  (AES-256-GCM, one per audience)
+Toast API  ─┼─ pull ─► raw/ ─► transform ─► SQLite ─► metrics ─► build ─┤
+inputs/*.csv┘  (phase 2: order/item/labor detail)   (warehouse)       └─ index.html (login shell + dashboard)
                                           │
                                           └── persisted between runs as an encrypted GitHub Release asset
 ```
@@ -33,11 +33,23 @@ deploys to **GitHub Pages**. Nothing runs on a laptop; no plaintext data is ever
 | `docs/SETUP.md` | One-time setup: secrets, Google OAuth, Apps Script, Pages |
 | `docs/DATA_MODEL.md` | Tables, grains, KPI definitions |
 
+## Phases
+
+**v1 — MarginEdge only (now).** MarginEdge already ingests Toast sales and labor, so one MarginEdge API key
+gives net sales by category per day (`/sales/report`), labor/COGS/expenses (`/profitAndLoss/report`),
+invoice-level purchasing (`/orders`) and counted inventory (`/inventories`). Panels that need order-level
+detail (guests, avg check, top items, hourly heatmap, dining/tender mix, job-level labor) show a "needs
+Toast" note.
+
+**v2 — add Toast.** When the Toast admin grants API credentials, set the Toast secrets and the same nightly
+run fills those panels in; Toast becomes the sales source for days it covers, MarginEdge stays the source for
+purchasing, P&L and inventory.
+
 ## Quick start (local, no credentials)
 
 ```bash
 pip install -r requirements.txt
-python -m sdp pull --mock          # sample data for 6 taprooms, 120 days  (raw/)
+python -m sdp pull --mock          # sample data for 6 taprooms, 120 days  (raw/); add --mock-no-toast for the v1 look
 python -m sdp transform            # → state/warehouse.sqlite
 python -m sdp build --no-encrypt   # → _site/ with data/dev.json
 cd _site && python -m http.server 8000

@@ -1,11 +1,71 @@
 {
-  "_comment": "One entry per taproom. Fill toast_guid from Toast Web (Restaurant admin > Restaurant info) and marginedge_unit_id from GET /public/restaurantUnits. Names below are placeholders — correct them. 'opened' gates like-for-like comparisons.",
+  "_comment": "One entry per taproom (names as they appear in MarginEdge). Fill marginedge_unit_id from `python -m sdp me-units` and toast_guid from Toast Web (Restaurant admin > Restaurant info) once Toast API access exists. 'opened' gates like-for-like comparisons \u2014 correct the dates.",
   "locations": [
-    {"slug": "solon",        "name": "Solon",        "short": "SOL", "toast_guid": "", "marginedge_unit_id": "", "timezone": "America/Chicago", "opened": "2013-09-01", "state": "IA"},
-    {"slug": "iowa-city",    "name": "Iowa City",    "short": "IC",  "toast_guid": "", "marginedge_unit_id": "", "timezone": "America/Chicago", "opened": "2017-06-01", "state": "IA"},
-    {"slug": "cedar-rapids", "name": "Cedar Rapids", "short": "CR",  "toast_guid": "", "marginedge_unit_id": "", "timezone": "America/Chicago", "opened": "2021-09-01", "state": "IA"},
-    {"slug": "des-moines",   "name": "Des Moines",   "short": "DSM", "toast_guid": "", "marginedge_unit_id": "", "timezone": "America/Chicago", "opened": "2022-11-01", "state": "IA"},
-    {"slug": "coralville",   "name": "Coralville",   "short": "CV",  "toast_guid": "", "marginedge_unit_id": "", "timezone": "America/Chicago", "opened": "2023-08-01", "state": "IA"},
-    {"slug": "davenport",    "name": "Davenport",    "short": "DAV", "toast_guid": "", "marginedge_unit_id": "", "timezone": "America/Chicago", "opened": "2024-06-01", "state": "IA"}
+    {
+      "slug": "solon",
+      "name": "Solon",
+      "short": "SOL",
+      "me_name": "Big Grove Brewpub - Solon",
+      "toast_guid": "",
+      "marginedge_unit_id": "",
+      "timezone": "America/Chicago",
+      "opened": "2013-09-01",
+      "state": "IA"
+    },
+    {
+      "slug": "iowa-city",
+      "name": "Iowa City",
+      "short": "IC",
+      "me_name": "Big Grove Brewery - Iowa City",
+      "toast_guid": "",
+      "marginedge_unit_id": "",
+      "timezone": "America/Chicago",
+      "opened": "2017-06-01",
+      "state": "IA"
+    },
+    {
+      "slug": "cedar-rapids",
+      "name": "Cedar Rapids",
+      "short": "CR",
+      "me_name": "Big Grove Brewpub-Cedar Rapids",
+      "toast_guid": "",
+      "marginedge_unit_id": "",
+      "timezone": "America/Chicago",
+      "opened": "2021-09-01",
+      "state": "IA"
+    },
+    {
+      "slug": "des-moines",
+      "name": "Des Moines",
+      "short": "DSM",
+      "me_name": "Big Grove Brewpub-Des Moines",
+      "toast_guid": "",
+      "marginedge_unit_id": "",
+      "timezone": "America/Chicago",
+      "opened": "2022-11-01",
+      "state": "IA"
+    },
+    {
+      "slug": "omaha",
+      "name": "Omaha",
+      "short": "OMA",
+      "me_name": "Big Grove Brewpub-Omaha",
+      "toast_guid": "",
+      "marginedge_unit_id": "",
+      "timezone": "America/Chicago",
+      "opened": "2024-01-01",
+      "state": "NE"
+    },
+    {
+      "slug": "prairie-village",
+      "name": "Prairie Village",
+      "short": "PV",
+      "me_name": "Big Grove Brewery - Prairie Village",
+      "toast_guid": "",
+      "marginedge_unit_id": "",
+      "timezone": "America/Chicago",
+      "opened": "2025-01-01",
+      "state": "KS"
+    }
   ]
 }
