@@ -26,7 +26,11 @@ def main():
     key = raw.strip()
     print(f"key: length={len(raw)} stripped_length={len(key)} leading/trailing whitespace={'YES' if raw != key else 'no'} "
           f"contains_newline={'YES' if chr(10) in raw or chr(13) in raw else 'no'} looks_like_name={'YES' if raw.strip().upper() in ('MARGINEDGE_API_KEY','PORTAL_SECRET') else 'no'} "
-          f"fingerprint={hashlib.sha256(key.encode()).hexdigest()[:8]} charset={'alnum/-_' if all(c.isalnum() or c in '-_' for c in key) else 'has other chars'}")
+          f"fingerprint={hashlib.sha256(key.encode()).hexdigest()[:8]} charset={'alnum/-_' if all(c.isalnum() or c in '-_' for c in key) else 'has other chars'} "
+          # MarginEdge's own settings screen masks the key except its last four characters. Echoing the same
+          # four is what makes "is the secret in GitHub the key I am looking at in MarginEdge?" answerable at
+          # all; four characters of a 40-character key is not enough to be worth anything on its own.
+          f"last4={key[-4:] if len(key) >= 8 else '(too short)'}")
     variants = [
         ("x-api-key, stripped, python UA", {"x-api-key": key}),
         ("X-Api-Key, stripped, curl-like UA", {"X-Api-Key": key, "User-Agent": "curl/8.4.0", "Accept": "*/*"}),
