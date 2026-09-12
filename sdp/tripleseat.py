@@ -1,9 +1,27 @@
 """Tripleseat API pull — private events, bookings and leads.
 
-API:  https://api.tripleseat.com/v1/       OAuth 2.0 bearer (client-credentials grant)
-Auth: POST https://api.tripleseat.com/oauth2/token  {grant_type, client_id, client_secret} -> access_token (2h)
-Rate: 10 req/s, 1 200/min, 18 000/hour — far looser than Toast or MarginEdge, so we run at 5 req/s.
-Docs: https://api.tripleseat.com/api-docs/v1/openapi.yaml (public), Settings > API in the Tripleseat account.
+API:  https://api.tripleseat.com/v1/       OAuth 2.0 Bearer
+Rate: 10 req/s (429 past that) — far looser than Toast or MarginEdge, so we run at 5 req/s.
+Docs: Settings > Tripleseat API > Documentation in the account; OpenAPI at
+      https://api.tripleseat.com/api-docs/v1/openapi.yaml
+
+AUTH — authorization code, not client credentials
+-------------------------------------------------
+Tripleseat has no machine-to-machine grant: an application always acts on behalf of a Tripleseat *user*, who
+logs in and consents once in a browser. That is a poor fit for a nightly unattended job, so we do the consent
+once by hand and keep the refresh token:
+
+  1. `python -m sdp ts-auth-url`      prints the consent URL; open it, approve.
+  2. Tripleseat redirects to TRIPLESEAT_REDIRECT_URI with ?code=... in the address bar.
+  3. `python -m sdp ts-exchange --code <code>`  trades it for an access + refresh token and prints the
+     refresh token. Put that in the repo secret TRIPLESEAT_REFRESH_TOKEN.
+  4. Every run afterwards exchanges the refresh token for a 2-hour access token. No human involved.
+
+Refresh tokens may ROTATE: an exchange can return a new refresh_token, and the old one then stops working.
+A GitHub Actions job cannot write back to its own repo secrets, so a rotated token would strand the pipeline
+after a single night. We therefore keep the current refresh token in the warehouse `meta` table, which is
+already encrypted and persisted between runs as a release asset; the repo secret is only the bootstrap value
+used when meta holds nothing. Precedence is meta -> secret, and a rotation is written back immediately.
 
 Datasets (raw/tripleseat/<loc>/<dataset>/<key>.json):
   locations   _all/locations/all.json                 GET /v1/locations   — maps Tripleseat location_id -> our slug
@@ -17,12 +35,63 @@ enough (hundreds, not hundreds of thousands) that a full refresh costs seconds.
 """
 from __future__ import annotations
 
+import sqlite3
 from datetime import date, timedelta
+from urllib.parse import urlencode
 
-from .util import Http, env, iso, log, settings, today_local, write_raw
+from .util import DB_PATH, Http, env, iso, log, settings, today_local, write_raw
 
+AUTH_URL = "https://login.tripleseat.com/oauth2/authorize"
 TOKEN_URL = "https://api.tripleseat.com/oauth2/token"
 PAGE_SIZE = 50
+META_KEY = "tripleseat_refresh_token"
+DEFAULT_SCOPE = "read"
+
+
+def _meta_get(key: str) -> str | None:
+    if not DB_PATH.exists():
+        return None
+    con = sqlite3.connect(DB_PATH)
+    try:
+        row = con.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        return row[0] if row else None
+    except sqlite3.OperationalError:
+        return None
+    finally:
+        con.close()
+
+
+def _meta_set(key: str, value: str) -> None:
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(DB_PATH)
+    try:
+        con.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
+        con.execute("INSERT INTO meta (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
+        con.commit()
+    finally:
+        con.close()
+
+
+def authorize_url() -> str:
+    """The one-time consent URL. Scope is configurable because the docs give no enumerated list."""
+    cfg = settings().get("tripleseat", {})
+    return AUTH_URL + "?" + urlencode({"client_id": env("TRIPLESEAT_CLIENT_ID", required=True),
+                                       "redirect_uri": env("TRIPLESEAT_REDIRECT_URI", required=True),
+                                       "response_type": "code",
+                                       "scope": cfg.get("scope", DEFAULT_SCOPE)})
+
+
+def exchange_code(code: str) -> dict:
+    """One-time: authorization code -> access + refresh token. Run locally, never in CI."""
+    r = Http(TOKEN_URL).post(TOKEN_URL, {"grant_type": "authorization_code", "code": code,
+                                         "client_id": env("TRIPLESEAT_CLIENT_ID", required=True),
+                                         "client_secret": env("TRIPLESEAT_CLIENT_SECRET", required=True),
+                                         "redirect_uri": env("TRIPLESEAT_REDIRECT_URI", required=True)})
+    j = r.json()
+    if not j.get("refresh_token"):
+        raise RuntimeError(f"no refresh_token in Tripleseat response: {str(j)[:200]}")
+    _meta_set(META_KEY, j["refresh_token"])
+    return j
 
 
 class Tripleseat:
@@ -35,13 +104,27 @@ class Tripleseat:
         self._token = None
 
     def token(self) -> str:
+        """Exchange the stored refresh token for a 2-hour access token, honouring rotation."""
         if self._token:
             return self._token
-        r = self.http.post(TOKEN_URL, {"grant_type": "client_credentials", "client_id": self.client_id, "client_secret": self.client_secret})
+        rt = _meta_get(META_KEY) or env("TRIPLESEAT_REFRESH_TOKEN")
+        if not rt:
+            raise RuntimeError("no Tripleseat refresh token: run `sdp ts-auth-url` then `sdp ts-exchange --code ...` "
+                               "and set TRIPLESEAT_REFRESH_TOKEN")
+        r = self.http.post(TOKEN_URL, {"grant_type": "refresh_token", "refresh_token": rt,
+                                       "client_id": self.client_id, "client_secret": self.client_secret})
         j = r.json()
-        self._token = j.get("access_token") or j.get("token")
+        self._token = j.get("access_token")
         if not self._token:
             raise RuntimeError(f"no access_token in Tripleseat token response: {str(j)[:200]}")
+        new_rt = j.get("refresh_token")
+        if new_rt and new_rt != rt:
+            # Rotation: the token we just used is now dead. Persist the replacement before any API call can
+            # fail, so an interrupted run still leaves a usable token behind.
+            _meta_set(META_KEY, new_rt)
+            log.info("Tripleseat: refresh token rotated — stored in the warehouse")
+        elif not _meta_get(META_KEY):
+            _meta_set(META_KEY, rt)
         self.http.s.headers["Authorization"] = f"Bearer {self._token}"
         log.info("Tripleseat: authenticated (expires in %ss)", j.get("expires_in"))
         return self._token

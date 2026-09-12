@@ -81,6 +81,7 @@
   "tripleseat": {
     "base_url": "https://api.tripleseat.com/v1",
     "requests_per_second": 5,
-    "days_forward": 180
+    "days_forward": 180,
+    "scope": "read"
   }
 }

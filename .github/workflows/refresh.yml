@@ -43,6 +43,8 @@ jobs:
       TOAST_HOST: ${{ vars.TOAST_HOST }}
       TRIPLESEAT_CLIENT_ID: ${{ secrets.TRIPLESEAT_CLIENT_ID }}
       TRIPLESEAT_CLIENT_SECRET: ${{ secrets.TRIPLESEAT_CLIENT_SECRET }}
+      TRIPLESEAT_REFRESH_TOKEN: ${{ secrets.TRIPLESEAT_REFRESH_TOKEN }}
+      TRIPLESEAT_REDIRECT_URI: ${{ vars.TRIPLESEAT_REDIRECT_URI }}
     steps:
       - uses: actions/checkout@v4
 

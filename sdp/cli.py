@@ -9,9 +9,13 @@
   python -m sdp me-diag                             MarginEdge connectivity diagnostic (never prints the key)
   python -m sdp toast-diag                          Toast connectivity diagnostic + restaurant GUIDs
   python -m sdp ts-locations                        list Tripleseat locations (ids for config/locations.json)
+  python -m sdp ts-auth-url                         print the one-time Tripleseat consent URL
+  python -m sdp ts-exchange --code CODE             trade the consent code for a refresh token (run locally)
   python -m sdp toast-restaurants                   list Toast restaurants visible to the client
 
-Env: MARGINEDGE_API_KEY, TOAST_CLIENT_ID, TOAST_CLIENT_SECRET, PORTAL_SECRET (see docs/SETUP.md)
+Env: MARGINEDGE_API_KEY, TOAST_CLIENT_ID, TOAST_CLIENT_SECRET, PORTAL_SECRET,
+     TRIPLESEAT_CLIENT_ID, TRIPLESEAT_CLIENT_SECRET, TRIPLESEAT_REDIRECT_URI, TRIPLESEAT_REFRESH_TOKEN
+     (see docs/SETUP.md)
 """
 from __future__ import annotations
 
@@ -87,6 +91,8 @@ def cmd_pull(a):
         else:
             log.warning("TOAST_CLIENT_ID / TOAST_CLIENT_SECRET not set — skipping Toast")
     if a.source in ("all", "tripleseat"):
+        # The refresh token is the piece that makes this unattended; without it the consent step has not been
+        # done yet and there is nothing to run. It may live in the warehouse (after a rotation) or the secret.
         if env("TRIPLESEAT_CLIENT_ID") and env("TRIPLESEAT_CLIENT_SECRET"):
             attempted.append("tripleseat")
             try:
@@ -140,6 +146,25 @@ def cmd_toast_diag(a):
     diag.toast()
 
 
+def cmd_ts_auth_url(a):
+    from .tripleseat import authorize_url
+    print(authorize_url())
+    print("\nOpen that URL, approve, then copy the ?code=... value out of the address bar and run:\n"
+          "  python -m sdp ts-exchange --code <code>")
+
+
+def cmd_ts_exchange(a):
+    """One-time consent exchange. Prints the refresh token so it can be pasted into a repo secret —
+    run this locally, never in CI, where the output would land in a build log."""
+    if not a.code:
+        raise SystemExit("--code is required (the ?code=... value Tripleseat redirected to)")
+    from .tripleseat import exchange_code
+    j = exchange_code(a.code)
+    print("access_token expires in:", j.get("expires_in"))
+    print("\nSet this as the repo secret TRIPLESEAT_REFRESH_TOKEN:\n")
+    print(j["refresh_token"])
+
+
 def cmd_ts_locations(a):
     from .tripleseat import Tripleseat
     for l in Tripleseat().locations():
@@ -162,13 +187,14 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="sdp", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name, fn in [("pull", cmd_pull), ("transform", cmd_transform), ("build", cmd_build), ("all", cmd_all), ("restore", cmd_restore), ("persist", cmd_persist),
-                     ("me-units", cmd_me_units), ("me-diag", cmd_me_diag), ("toast-diag", cmd_toast_diag), ("ts-locations", cmd_ts_locations), ("toast-restaurants", cmd_toast_restaurants)]:
+                     ("me-units", cmd_me_units), ("me-diag", cmd_me_diag), ("toast-diag", cmd_toast_diag), ("ts-locations", cmd_ts_locations), ("ts-auth-url", cmd_ts_auth_url), ("ts-exchange", cmd_ts_exchange), ("toast-restaurants", cmd_toast_restaurants)]:
         p = sub.add_parser(name); p.set_defaults(fn=fn)
         p.add_argument("--mock", action="store_true", help="generate sample raw data instead of calling APIs")
         p.add_argument("--mock-days", type=int, default=120)
         p.add_argument("--mock-no-toast", action="store_true", help="mock the MarginEdge-only phase (no Toast raw data)")
         p.add_argument("--max-minutes", type=float, default=None, help="stop the MarginEdge pull cleanly after N minutes (default from settings)")
         p.add_argument("--source", choices=["all", "toast", "marginedge", "tripleseat"], default="all")
+        p.add_argument("--code", default=None, help="Tripleseat authorization code (ts-exchange)")
         p.add_argument("--backfill", action="store_true", help="pull the full backfill window even if a warehouse exists")
         p.add_argument("--dev-json", action="store_true", help="also write site/data/dev.json (unencrypted, local preview)")
         p.add_argument("--no-encrypt", action="store_true", help="skip bundles; write dev.json only")
