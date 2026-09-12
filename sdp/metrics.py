@@ -36,7 +36,13 @@ def build_payload(con, through: date | None = None) -> dict:
     w56 = through - timedelta(days=55)
     payload = {"meta": {"built_at": datetime.utcnow().isoformat(timespec="seconds") + "Z", "through": through.isoformat(), "since": since.isoformat(),
                         "title": cfg["site"]["title"], "buckets": cfg["category_map"]["buckets"]},
-               "locations": [{"id": l["slug"], "name": l["name"], "short": l.get("short"), "opened": l.get("opened")} for l in locs],
+               "locations": [{"id": l["slug"], "name": l["name"], "short": l.get("short"), "opened": l.get("opened"),
+                              # first_date is the earliest business day the POS actually has sales for, taken from the
+                              # data rather than the hand-typed `opened` in config/locations.json. A location that opened
+                              # partway through the window (Prairie Village, 2026) has no comparable prior period, so the
+                              # site suppresses its change-vs-prior figures instead of dividing by a partial baseline.
+                              "first_date": (con.execute("SELECT MIN(business_date) FROM daily_summary WHERE location_id=? AND net_sales>0", (l["slug"],)).fetchone() or [None])[0]}
+                             for l in locs],
                "daily": {}, "hourly": {}, "top_items": {}, "labor_jobs": {}, "vendors": {}, "inventory": {}, "activations": [], "targets": {}, "payments": {}, "dining": {}, "pnl": {}, "sources": {}, "events": {}, "leads": {}, "events_monthly": {}}
 
     for l in locs:

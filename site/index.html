@@ -63,7 +63,11 @@ table.t{width:100%;border-collapse:collapse;font-size:12.5px}
 table.t th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);padding:6px 8px;border-bottom:2px solid var(--grid);white-space:nowrap}
 table.t td{padding:6px 8px;border-bottom:1px solid #eef0f6;white-space:nowrap}
 table.t td.r,table.t th.r{text-align:right;font-variant-numeric:tabular-nums}
-table.t td.n{font-weight:700;color:var(--navy)}
+table.t td.n{font-weight:700;color:var(--navy);white-space:normal;min-width:120px}
+/* Name cells hold the longest text in every table (item names, vendors, events). Left on the global
+   white-space:nowrap they push the table past its panel and the right-hand columns get clipped with no
+   scrollbar to reach them, so they wrap instead and every table sits in an overflow-x:auto wrapper. */
+.tw{overflow-x:auto}
 .sw{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px}
 .heat{display:grid;grid-template-columns:44px repeat(14,1fr);gap:2px;font-size:11px}
 .heat .h{color:var(--muted);text-align:center;padding:2px 0}
@@ -342,7 +346,7 @@ function pgSales(m){
   var ti={}; locIds().forEach(function(l){(D.top_items[l]||[]).forEach(function(r){var o=ti[r[0]]||(ti[r[0]]={b:r[1],q:0,n:0});o.q+=r[2];o.n+=r[3];});});
   var list=Object.keys(ti).map(function(n){return [n,ti[n]];}).sort(function(x,y){return y[1].n-x[1].n;}).slice(0,20);
   var tot=list.reduce(function(p,c){return p+c[1].n;},0);
-  $('topItems').innerHTML='<table class="t"><tr><th>#</th><th>Item</th><th>Category</th><th class="r">Qty</th><th class="r">Net</th><th class="r">Share</th></tr>'+list.map(function(x,i){var bk=BUCKETS.filter(function(z){return z[0]===x[1].b;})[0];return '<tr><td>'+(i+1)+'</td><td class="n">'+esc(x[0])+'</td><td><i class="sw" style="background:'+css(bk?bk[3]:'sx')+'"></i>'+esc(x[1].b)+'</td><td class="r">'+fn(x[1].q)+'</td><td class="r">'+fm(x[1].n)+'</td><td class="r">'+fp(x[1].n/tot)+'</td></tr>';}).join('')+'</table>';
+  $('topItems').innerHTML='<div class="tw"><table class="t"><tr><th>#</th><th>Item</th><th>Category</th><th class="r">Qty</th><th class="r">Net</th><th class="r">Share</th></tr>'+list.map(function(x,i){var bk=BUCKETS.filter(function(z){return z[0]===x[1].b;})[0];return '<tr><td>'+(i+1)+'</td><td class="n">'+esc(x[0])+'</td><td><i class="sw" style="background:'+css(bk?bk[3]:'sx')+'"></i>'+esc(x[1].b)+'</td><td class="r">'+fn(x[1].q)+'</td><td class="r">'+fm(x[1].n)+'</td><td class="r">'+fp(x[1].n/tot)+'</td></tr>';}).join('')+'</table></div>';
   var dg={},pay={}; locIds().forEach(function(l){(D.dining[l]||[]).forEach(function(r){var o=dg[r[0]]||(dg[r[0]]={n:0,c:0});o.n+=r[1];o.c+=r[2];});(D.payments[l]||[]).forEach(function(r){var o=pay[r[0]]||(pay[r[0]]={a:0,t:0,c:0});o.a+=r[1];o.t+=r[2];o.c+=r[3];});});
   var dl=Object.keys(dg).sort(function(x,y){return dg[y].n-dg[x].n;}), dt=dl.reduce(function(p,c){return p+dg[c].n;},0);
   var pl=Object.keys(pay).sort(function(x,y){return pay[y].a-pay[x].a;}), pt=pl.reduce(function(p,c){return p+pay[c].a;},0);
@@ -520,9 +524,13 @@ function pgActivations(m){
 
 function pgLocations(m){
   var a=S.d0,b=S.d1,cw=cmpWindow();
-  var rows=D.locations.map(function(l){ var s=sumRows(rowsIn(l.id,a,b)), p=sumRows(rowsIn(l.id,cw[0],cw[1])); return {l:l,s:s,p:p}; });
-  m.innerHTML='<div class="panel"><h3>Location scorecard</h3><div class="hint">All locations for the selected range; change vs '+(S.cmp==='ly'?'last year':'prior period')+'</div><div style="overflow-x:auto"><table class="t"><tr><th>Location</th><th class="r">Net sales</th><th class="r">Δ</th><th class="r">Guests</th><th class="r">Avg check</th><th class="r">PPA</th><th class="r">Labor %</th><th class="r">Purch %</th><th class="r">SPLH</th><th class="r">Discounts</th></tr>'
-    +rows.map(function(r,i){var s=r.s,p=r.p;var d=p.net?(s.net-p.net)/p.net:null;return '<tr><td class="n"><i class="sw" style="background:'+css(LOCCOL[i%8])+'"></i>'+esc(r.l.name)+'</td><td class="r">'+fm(s.net)+'</td><td class="r" style="color:'+(d>=0?'var(--good)':'var(--bad)')+';font-weight:700">'+(d!=null?(d>=0?'+':'')+fp(d):'—')+'</td><td class="r">'+fn(s.guests)+'</td><td class="r">'+fm(s.checks?s.net/s.checks:null,2)+'</td><td class="r">'+fm(s.guests?s.net/s.guests:null,2)+'</td><td class="r">'+fp(s.net?s.lc/s.net:null)+'</td><td class="r">'+fp(s.net?s.p/s.net:null)+'</td><td class="r">'+fm(s.lh?s.net/s.lh:null,0)+'</td><td class="r">'+fm(s.disc)+'</td></tr>';}).join('')+'</table></div></div>'
+  // A location that opened partway through the window has no comparable prior period: comparing a full range
+  // against days before it existed reports growth that is really just the opening. Suppress the delta instead.
+  var rows=D.locations.map(function(l){ var s=sumRows(rowsIn(l.id,a,b)), p=sumRows(rowsIn(l.id,cw[0],cw[1]));
+    return {l:l,s:s,p:p,partial:(l.first_date&&cw[0]<l.first_date)}; });
+  var anyNew=rows.some(function(r){return r.partial;});
+  m.innerHTML='<div class="panel"><h3>Location scorecard</h3><div class="hint">All locations for the selected range; change vs '+(S.cmp==='ly'?'last year':'prior period')+(anyNew?'. Locations marked <span class="pill">new</span> opened partway through this window, so there is no comparable prior period and their change is shown as —.':'')+'</div><div style="overflow-x:auto"><table class="t"><tr><th>Location</th><th class="r">Net sales</th><th class="r">Δ</th><th class="r">Guests</th><th class="r">Avg check</th><th class="r">PPA</th><th class="r">Labor %</th><th class="r">Purch %</th><th class="r">SPLH</th><th class="r">Discounts</th></tr>'
+    +rows.map(function(r,i){var s=r.s,p=r.p;var d=(p.net&&!r.partial)?(s.net-p.net)/p.net:null;return '<tr><td class="n"><i class="sw" style="background:'+css(LOCCOL[i%8])+'"></i>'+esc(r.l.name)+(r.partial?' <span class="pill" title="Opened '+fdate(r.l.first_date)+' — no comparable prior period">new</span>':'')+'</td><td class="r">'+fm(s.net)+'</td><td class="r" style="color:'+(d>=0?'var(--good)':'var(--bad)')+';font-weight:700">'+(d!=null?(d>=0?'+':'')+fp(d):'—')+'</td><td class="r">'+fn(s.guests)+'</td><td class="r">'+fm(s.checks?s.net/s.checks:null,2)+'</td><td class="r">'+fm(s.guests?s.net/s.guests:null,2)+'</td><td class="r">'+fp(s.net?s.lc/s.net:null)+'</td><td class="r">'+fp(s.net?s.p/s.net:null)+'</td><td class="r">'+fm(s.lh?s.net/s.lh:null,0)+'</td><td class="r">'+fm(s.disc)+'</td></tr>';}).join('')+'</table></div></div>'
     +'<div class="grid cols2" style="margin-top:14px">'+panel('Net sales by week by location','',chartBox('c_locs',true))+panel('Labor % by week by location','',chartBox('c_loclab',true))+'</div>';
   var wkAll={}; D.locations.forEach(function(l){rowsIn(l.id,a,b).forEach(function(r){var d=pd(r[0]);d.setDate(d.getDate()-((d.getDay()+6)%7));var w=ds(d);var o=wkAll[w]||(wkAll[w]={_n:0});if(l.id===D.locations[0].id)o._n++;var q=o[l.id]||(o[l.id]={net:0,lc:0});q.net+=r[K.net];q.lc+=r[K.lc];});});
   var wks=Object.keys(wkAll).sort();
