@@ -25,13 +25,16 @@
  * Request protocol (POST body, Content-Type text/plain to avoid CORS preflight):
  *   {"a":"signin","t":<id token>}  → sign-in → { ok, profile:{email,name,role,locations}, bundles:[{label,id,key}], sid }
  *   {"a":"ping","s":<sid>}         → log a portal open
+ *   {"a":"scorecard","k":<key>}    → the Leadership Scorecard tab, for the nightly pipeline (no user session)
  */
 
 var ALLOWED_DOMAINS = ['biggrove.com', 'biggrovebrewery.com'];
 // Non-secret defaults (Script Properties of the same name override these). PORTAL_SECRET has NO default — it must be a Script Property.
 var DEFAULTS = {
   CLIENT_ID: '169287489700-t5en62nibhp9ttn24vfimd7k974dgl9i.apps.googleusercontent.com',   // "BG Sales" web client in the Big Grove Portal GCP project
-  SHEET_ID:  '1R_W3gWel6rEdQZguf84b7UDJlz5Etn5V4L6AAq6Kg_Q'                                    // "Store Director Roster" sheet
+  SHEET_ID:  '1R_W3gWel6rEdQZguf84b7UDJlz5Etn5V4L6AAq6Kg_Q',                                   // "Store Director Roster" sheet
+  SCORECARD_SHEET_ID: '1m8aHNL4kmRyKij8aG_4QhgSFUffn2FLT03pTrEtQpZk',                          // "Leadership Scorecard" workbook
+  SCORECARD_TAB: 'All Company Scorecard'
 };
 function prop(name) { return PropertiesService.getScriptProperties().getProperty(name) || DEFAULTS[name] || null; }
 var SESSION_HOURS = 24;
@@ -49,7 +52,55 @@ function handle(body) {
   try { req = JSON.parse(body); } catch (e) { return doSignin(body); }
   if (req.a === 'ping') return doPing(req.s);
   if (req.a === 'signin') return doSignin(String(req.t || ''));
+  if (req.a === 'scorecard') return doScorecard(String(req.k || ''));
   return { ok: false, error: 'unknown action' };
+}
+
+/**
+ * Serve the Leadership Scorecard tab to the nightly pipeline.
+ *
+ * This is the one action with no signed-in user behind it, so it is not gated by a Google identity but
+ * by proof of the shared PORTAL_SECRET — the same secret the pipeline already holds to build bundles.
+ * It is strictly read-only and returns a single named tab, so a leaked key exposes no more than that tab.
+ *
+ * Both raw and displayed values are returned: the raw ones are what charts and comparisons need, while
+ * the displayed ones preserve the sheet's own currency/percent formatting so the portal can show a figure
+ * exactly as leadership is used to reading it.
+ */
+function doScorecard(k) {
+  var secret = prop('PORTAL_SECRET');
+  if (!secret) return { ok: false, error: 'PORTAL_SECRET script property is not set' };
+  var want = Utilities.base64Encode(Utilities.computeHmacSha256Signature('scorecard', secret, Utilities.Charset.UTF_8));
+  if (!k || k !== want) return { ok: false, error: 'bad key' };
+
+  var id = prop('SCORECARD_SHEET_ID'), name = prop('SCORECARD_TAB');
+  var ss = SpreadsheetApp.openById(id);
+  var sh = ss.getSheetByName(name);
+  if (!sh) return { ok: false, error: 'no tab named ' + name + ' in ' + ss.getName() };
+
+  var rng = sh.getDataRange(), vals = rng.getValues(), disp = rng.getDisplayValues();
+  if (!vals.length) return { ok: false, error: 'tab ' + name + ' is empty' };
+
+  // Row 1 is the header: columns A-C are owner / metric / goal, everything after is a week.
+  var head = disp[0], weeks = [];
+  for (var c = 3; c < head.length; c++) if (String(head[c]).trim()) weeks.push({ i: c, label: String(head[c]).trim() });
+
+  var rows = [];
+  for (var r = 1; r < vals.length; r++) {
+    var metric = String(disp[r][1] || '').trim();
+    if (!metric) continue;                                  // spacer rows carry no metric name
+    var cells = {};
+    for (var w = 0; w < weeks.length; w++) {
+      var v = vals[r][weeks[w].i], d = String(disp[r][weeks[w].i] || '').trim();
+      if (d === '') continue;                               // leave gaps as gaps rather than zeros
+      cells[weeks[w].label] = { v: (typeof v === 'number' ? v : null), d: d };
+    }
+    rows.push({ owner: String(disp[r][0] || '').trim(), metric: metric,
+                goal: { v: (typeof vals[r][2] === 'number' ? vals[r][2] : null), d: String(disp[r][2] || '').trim() },
+                cells: cells });
+  }
+  return { ok: true, sheet: name, workbook: ss.getName(), header: weeks.map(function (w) { return w.label; }),
+           rows: rows, fetched_at: new Date().toISOString() };
 }
 
 function doSignin(token) {

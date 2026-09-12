@@ -251,3 +251,23 @@ CREATE TABLE IF NOT EXISTS pull_log (                  -- what was pulled when (
 );
 
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
+
+-- Leadership Scorecard (Google Sheets, read as-is: see sdp/scorecard.py for why it is not recomputed).
+-- One row per metric per week. `value` is the raw number when the cell held one, `display` the sheet's own
+-- formatting, which is what the page shows so a figure reads exactly as leadership is used to seeing it.
+CREATE TABLE IF NOT EXISTS scorecard (
+  metric      TEXT NOT NULL,
+  week        TEXT NOT NULL,
+  owner       TEXT,
+  value       REAL,
+  display     TEXT,
+  seq         INTEGER,          -- row order in the sheet, so the page can preserve its grouping
+  PRIMARY KEY (metric, week)
+);
+CREATE TABLE IF NOT EXISTS scorecard_goals (
+  metric      TEXT PRIMARY KEY,
+  owner       TEXT,
+  value       REAL,
+  display     TEXT,
+  seq         INTEGER
+);

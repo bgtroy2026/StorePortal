@@ -195,7 +195,7 @@ var D=null, P=null, S={loc:'all', preset:'l28', d0:null, d1:null, cmp:'prior', p
 var K=null; // daily key index
 var BUCKETS=[['Food','f','pf','s1'],['Beer','b','pb','s2'],['Liquor','l','pl','s3'],['Wine','w','pw','s4'],['NA Bev','n','pn','s5'],['Retail','r',null,'s6'],['Other','x','po','sx']];
 var LOCCOL=['s1','s2','s3','s4','s5','s6','s7','s8'];
-var PAGES=[['overview','Overview'],['sales','Sales'],['labor','Labor'],['cogs','COGS & Purchasing'],['inventory','Inventory'],['events','Events'],['activations','Activations'],['locations','Locations']];
+var PAGES=[['overview','Overview'],['sales','Sales'],['labor','Labor'],['cogs','COGS & Purchasing'],['inventory','Inventory'],['events','Events'],['activations','Activations'],['scorecard','Scorecard'],['locations','Locations']];
 var charts=[];
 function css(v){return getComputedStyle(document.documentElement).getPropertyValue('--'+v).trim();}
 function fm(n,d){ if(n==null||isNaN(n))return '—'; d=d==null?0:d; return '$'+Number(n).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d}); }
@@ -270,7 +270,7 @@ function render(){
   document.querySelectorAll('#cmpSeg button').forEach(function(b){b.classList.toggle('on',b.dataset.c===S.cmp);});
   document.querySelectorAll('#nav button').forEach(function(b){b.classList.toggle('on',b.dataset.p===S.page);});
   var m=$('main'); m.innerHTML='';
-  ({overview:pgOverview,sales:pgSales,labor:pgLabor,cogs:pgCogs,inventory:pgInventory,events:pgEvents,activations:pgActivations,locations:pgLocations})[S.page](m);
+  ({overview:pgOverview,sales:pgSales,labor:pgLabor,cogs:pgCogs,inventory:pgInventory,events:pgEvents,activations:pgActivations,scorecard:pgScorecard,locations:pgLocations})[S.page](m);
 }
 
 function pgOverview(m){
@@ -537,6 +537,63 @@ function pgLocations(m){
   var c1=lineCfg(wks.map(function(w){return wkLabel(w,wkAll[w]);}),D.locations.map(function(l,i){return {label:l.name,data:wks.map(function(w){return wkAll[w][l.id]?wkAll[w][l.id].net:null;}),borderColor:css(LOCCOL[i%8])};})); c1.options.plugins.legend={display:true,position:'bottom'}; mk('c_locs',c1);
   var c2=lineCfg(wks.map(function(w){return wkLabel(w,wkAll[w]);}),D.locations.map(function(l,i){return {label:l.name,data:wks.map(function(w){var q=wkAll[w][l.id];return q&&q.net?q.lc/q.net:null;}),borderColor:css(LOCCOL[i%8]),fmt:'pct'};})); c2.options.plugins.legend={display:true,position:'bottom'}; c2.options.scales.y.ticks.callback=function(v){return fp(v,0);}; mk('c_loclab',c2);
 }
+
+/* ---------- Leadership Scorecard (Google Sheets, shown as the sheet formats it) ---------- */
+function hasScorecard(){ return !!(D.scorecard && (D.scorecard.metrics||[]).length); }
+function scWeeks(){ return (D.scorecard.weeks||[]).slice(); }
+
+function pgScorecard(m){
+  if(!hasScorecard()){ m.innerHTML='<div class="panel"><h3>Leadership Scorecard</h3><div class="empty">No scorecard data yet. Once the Apps Script scorecard endpoint is deployed, the weekly company scorecard appears here.</div></div>'; return; }
+  var SC=D.scorecard, weeks=scWeeks(), mets=SC.metrics||[];
+  // The sheet runs newest-first left to right. Keep that for the table (leadership read it that way for
+  // years) but reverse for charts, which have to run forwards in time to mean anything.
+  var chartWeeks=weeks.slice().reverse();
+  var shown=Math.min(weeks.length,S.scWeeks||13);
+
+  function cell(mt,w){ var c=(mt.cells||{})[w]; return c?c:null; }
+  function num(mt,w){ var c=cell(mt,w); return c&&c[0]!=null?c[0]:null; }
+  function disp(mt,w){ var c=cell(mt,w); return c?c[1]:'—'; }
+
+  var owners=[]; mets.forEach(function(x){ if(x.owner && owners.indexOf(x.owner)<0) owners.push(x.owner); });
+  var sel=S.scMetric||(mets.filter(function(x){return Object.keys(x.cells||{}).length>2;})[0]||mets[0]).metric;
+  var selM=mets.filter(function(x){return x.metric===sel;})[0]||mets[0];
+
+  m.innerHTML='<div class="panel"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
+    +'<div><h3 style="margin:0">Leadership Scorecard</h3><div class="hint">'+esc(SC.sheet||'')+' — maintained in Google Sheets, refreshed nightly. Figures are shown exactly as the sheet formats them.</div></div>'
+    +'<div class="seg" style="margin-left:auto">'+[13,26,52].map(function(n){return '<button data-w="'+n+'"'+(shown===n?' class="on"':'')+'>'+n+'w</button>';}).join('')+'</div>'
+    +'</div></div>'
+    +'<div class="panel" style="margin-top:14px"><h3>'+esc(selM.metric)+'</h3><div class="hint">Click any metric row below to chart it'+(selM.goal&&selM.goal[1]?' · goal '+esc(selM.goal[1]):'')+'</div>'+chartBox('c_sc',true)+'</div>'
+    +'<div class="panel" style="margin-top:14px"><h3>Weekly detail</h3><div class="hint">Newest week first, as in the sheet'+(owners.length?' · owners: '+owners.map(esc).join(', '):'')+'</div><div class="tw" id="scTbl"></div></div>';
+
+  var wk=weeks.slice(0,shown);
+  var html='<table class="t"><tr><th>Owner</th><th>Metric</th><th class="r">Goal</th>'
+    +wk.map(function(w){return '<th class="r">'+esc(w)+'</th>';}).join('')+'</tr>'
+    +mets.map(function(x){
+        var on=x.metric===sel;
+        return '<tr data-m="'+esc(x.metric)+'" style="cursor:pointer'+(on?';background:#f4f7ff':'')+'">'
+          +'<td>'+(x.owner?'<span class="pill">'+esc(x.owner)+'</span>':'')+'</td>'
+          +'<td class="n">'+esc(x.metric)+'</td>'
+          +'<td class="r">'+(x.goal&&x.goal[1]?esc(x.goal[1]):'—')+'</td>'
+          +wk.map(function(w){return '<td class="r">'+esc(disp(x,w))+'</td>';}).join('')+'</tr>';
+      }).join('')+'</table>';
+  $('scTbl').innerHTML=html;
+
+  var series=chartWeeks.slice(-shown);
+  var vals=series.map(function(w){return num(selM,w);});
+  var goal=selM.goal&&selM.goal[0]!=null?selM.goal[0]:null;
+  var pct=/%$/.test((disp(selM,series[series.length-1])||'').trim());
+  var sets=[{label:selM.metric,data:vals,borderColor:css('s1'),fill:false}];
+  if(goal!=null) sets.push({label:'Goal',data:series.map(function(){return goal;}),borderColor:css('s3'),borderDash:[5,4],pointRadius:0});
+  var cfg=lineCfg(series,sets);
+  cfg.options.plugins.legend={display:goal!=null,position:'bottom'};
+  if(pct) cfg.options.scales.y.ticks.callback=function(v){return fp(v,1);};
+  cfg.options.plugins.tooltip={callbacks:{label:function(c){var w=series[c.dataIndex];return ' '+(c.dataset.label==='Goal'?'Goal: ':'')+ (c.dataset.label==='Goal'? (pct?fp(goal,1):fm(goal)) : disp(selM,w));}}};
+  mk('c_sc',cfg);
+
+  m.querySelectorAll('[data-w]').forEach(function(b){b.onclick=function(){S.scWeeks=+b.dataset.w;render();};});
+  m.querySelectorAll('[data-m]').forEach(function(tr){tr.onclick=function(){S.scMetric=tr.dataset.m;render();};});
+}
+
 </script>
 </body>
 </html>

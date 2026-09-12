@@ -45,6 +45,7 @@ jobs:
       TRIPLESEAT_CLIENT_SECRET: ${{ secrets.TRIPLESEAT_CLIENT_SECRET }}
       TRIPLESEAT_REFRESH_TOKEN: ${{ secrets.TRIPLESEAT_REFRESH_TOKEN }}
       TRIPLESEAT_REDIRECT_URI: ${{ vars.TRIPLESEAT_REDIRECT_URI }}
+      APPS_SCRIPT_URL: ${{ vars.APPS_SCRIPT_URL }}
     steps:
       - uses: actions/checkout@v4
 

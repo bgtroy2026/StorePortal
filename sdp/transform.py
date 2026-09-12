@@ -395,13 +395,38 @@ def rebuild_daily_summary(con):
     """)
 
 
+def load_scorecard(con) -> dict:
+    """The Leadership Scorecard tab, stored as-is. Replaced wholesale each run: the sheet is the source of
+    truth and cells are revised in place (a week's figure is corrected days later), so merging would preserve
+    numbers leadership has since changed their mind about."""
+    n = 0
+    for slug, ds, p, j in iter_raw("scorecard", dataset="scorecard"):
+        if not j.get("rows"):
+            continue
+        con.execute("DELETE FROM scorecard")
+        con.execute("DELETE FROM scorecard_goals")
+        cells, goals = [], []
+        for i, r in enumerate(j["rows"]):
+            metric, owner = r.get("metric"), r.get("owner") or None
+            g = r.get("goal") or {}
+            if g.get("d"):
+                goals.append({"metric": metric, "owner": owner, "value": g.get("v"), "display": g.get("d"), "seq": i})
+            for week, c in (r.get("cells") or {}).items():
+                cells.append({"metric": metric, "week": week, "owner": owner, "value": c.get("v"), "display": c.get("d"), "seq": i})
+        _upsert(con, "scorecard", cells)
+        _upsert(con, "scorecard_goals", goals)
+        n = len(cells)
+    return {"cells": n}
+
+
 def run() -> dict:
     cfg = settings()
     bk = Buckets(cfg["category_map"])
     con = connect()
     _upsert(con, "locations", [{"location_id": l["slug"], "name": l["name"], "short": l.get("short"), "toast_guid": l.get("toast_guid"), "marginedge_unit_id": str(l.get("marginedge_unit_id") or ""),
                                 "timezone": l.get("timezone"), "opened": l.get("opened"), "state": l.get("state")} for l in locations()])
-    s = {"toast": load_toast(con, bk), "marginedge": load_marginedge(con, bk), "tripleseat": load_tripleseat(con), "inputs": load_inputs(con)}
+    s = {"toast": load_toast(con, bk), "marginedge": load_marginedge(con, bk), "tripleseat": load_tripleseat(con),
+         "scorecard": load_scorecard(con), "inputs": load_inputs(con)}
     rebuild_daily_summary(con)
     con.execute("INSERT OR REPLACE INTO meta VALUES ('last_transform', ?)", (datetime.utcnow().isoformat(timespec="seconds") + "Z",))
     con.commit()

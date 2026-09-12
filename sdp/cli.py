@@ -8,6 +8,7 @@
   python -m sdp me-units                            list MarginEdge restaurant units visible to the key
   python -m sdp me-diag                             MarginEdge connectivity diagnostic (never prints the key)
   python -m sdp toast-diag                          Toast connectivity diagnostic + restaurant GUIDs
+  python -m sdp sc-test                             fetch the Leadership Scorecard once and print its shape
   python -m sdp ts-locations                        list Tripleseat locations (ids for config/locations.json)
   python -m sdp ts-auth-url                         print the one-time Tripleseat consent URL
   python -m sdp ts-exchange --code CODE             trade the consent code for a refresh token (run locally)
@@ -90,6 +91,18 @@ def cmd_pull(a):
                 failed.append("toast"); log.error("Toast pull failed (%s: %s) — continuing with other sources", type(e).__name__, e)
         else:
             log.warning("TOAST_CLIENT_ID / TOAST_CLIENT_SECRET not set — skipping Toast")
+    if a.source in ("all", "scorecard"):
+        # Needs no API credential of its own — the Apps Script web app already deployed for sign-in serves it,
+        # authenticated with an HMAC of PORTAL_SECRET.
+        if env("APPS_SCRIPT_URL") and env("PORTAL_SECRET"):
+            attempted.append("scorecard")
+            try:
+                from . import scorecard
+                scorecard.pull()
+            except Exception as e:
+                failed.append("scorecard"); log.error("Scorecard pull failed (%s: %s) — continuing with other sources", type(e).__name__, e)
+        else:
+            log.warning("APPS_SCRIPT_URL / PORTAL_SECRET not set — skipping the Leadership Scorecard")
     if a.source in ("all", "tripleseat"):
         # The refresh token is the piece that makes this unattended; without it the consent step has not been
         # done yet and there is nothing to run. It may live in the warehouse (after a rotation) or the secret.
@@ -146,6 +159,16 @@ def cmd_toast_diag(a):
     diag.toast()
 
 
+def cmd_sc_test(a):
+    from . import scorecard
+    j = scorecard.fetch()
+    print(f"workbook: {j.get('workbook')}  tab: {j.get('sheet')}  fetched: {j.get('fetched_at')}")
+    print(f"weeks ({len(j.get('header') or [])}): {', '.join((j.get('header') or [])[:8])} ...")
+    for r in (j.get("rows") or []):
+        latest = next(iter(r["cells"].values()), {}).get("d", "")
+        print(f"  {r.get('owner',''):8} {r['metric'][:38]:40} goal={r['goal']['d'][:12]:14} latest={latest}")
+
+
 def cmd_ts_auth_url(a):
     from .tripleseat import authorize_url
     print(authorize_url())
@@ -187,13 +210,13 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="sdp", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name, fn in [("pull", cmd_pull), ("transform", cmd_transform), ("build", cmd_build), ("all", cmd_all), ("restore", cmd_restore), ("persist", cmd_persist),
-                     ("me-units", cmd_me_units), ("me-diag", cmd_me_diag), ("toast-diag", cmd_toast_diag), ("ts-locations", cmd_ts_locations), ("ts-auth-url", cmd_ts_auth_url), ("ts-exchange", cmd_ts_exchange), ("toast-restaurants", cmd_toast_restaurants)]:
+                     ("me-units", cmd_me_units), ("me-diag", cmd_me_diag), ("toast-diag", cmd_toast_diag), ("ts-locations", cmd_ts_locations), ("sc-test", cmd_sc_test), ("ts-auth-url", cmd_ts_auth_url), ("ts-exchange", cmd_ts_exchange), ("toast-restaurants", cmd_toast_restaurants)]:
         p = sub.add_parser(name); p.set_defaults(fn=fn)
         p.add_argument("--mock", action="store_true", help="generate sample raw data instead of calling APIs")
         p.add_argument("--mock-days", type=int, default=120)
         p.add_argument("--mock-no-toast", action="store_true", help="mock the MarginEdge-only phase (no Toast raw data)")
         p.add_argument("--max-minutes", type=float, default=None, help="stop the MarginEdge pull cleanly after N minutes (default from settings)")
-        p.add_argument("--source", choices=["all", "toast", "marginedge", "tripleseat"], default="all")
+        p.add_argument("--source", choices=["all", "toast", "marginedge", "tripleseat", "scorecard"], default="all")
         p.add_argument("--code", default=None, help="Tripleseat authorization code (ts-exchange)")
         p.add_argument("--backfill", action="store_true", help="pull the full backfill window even if a warehouse exists")
         p.add_argument("--dev-json", action="store_true", help="also write site/data/dev.json (unencrypted, local preview)")
