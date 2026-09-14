@@ -99,6 +99,16 @@ def load_toast(con, bk: Buckets) -> dict:
                     item_cat[(slug, it["guid"])] = (it.get("name"), grp.get("name"), sc, it.get("price"))
                     rows.append({"item_guid": it["guid"], "location_id": slug, "name": it.get("name"), "menu_group": grp.get("name"), "sales_category": sc, "price": it.get("price")})
         _upsert(con, "toast_menu_items", rows)
+    # dining options: guid -> name. Orders only reference the option by guid, so without this the portal shows
+    # "5c2cc414-baf5-..." where it should say "Dine In". Rows already in the warehouse from earlier runs are
+    # renamed in place, so history heals on the first run that has the lookup.
+    dining: dict[tuple[str, str], str] = {}
+    for slug, ds, p, j in iter_raw("toast", dataset="diningOptions"):
+        for d in j.get("diningOptions", []):
+            name = d.get("name") or d.get("behavior")
+            if d.get("guid") and name:
+                dining[(slug, d["guid"])] = name
+                con.execute("UPDATE toast_orders SET dining_option=? WHERE location_id=? AND dining_option=?", (name, slug, d["guid"]))
     jobs: dict[tuple[str, str], str] = {}
     for slug, ds, p, j in iter_raw("toast", dataset="jobs"):
         rows = [{"job_guid": x["guid"], "location_id": slug, "title": x.get("title"), "wage_frequency": x.get("wageFrequency"), "default_wage": x.get("defaultWage")} for x in j.get("jobs", [])]
@@ -139,7 +149,7 @@ def load_toast(con, bk: Buckets) -> dict:
                                  "card_type": pm.get("cardType"), "amount": float(pm.get("amount") or 0), "tip_amount": float(pm.get("tipAmount") or 0), "refund_amount": ra, "paid_at": pm.get("paidDate")})
             voided = 1 if o.get("voided") else 0
             orders.append({"order_guid": o["guid"], "location_id": slug, "business_date": bd, "opened_at": o.get("openedDate"), "closed_at": o.get("closedDate"), "modified_at": o.get("modifiedDate"),
-                           "dining_option": (o.get("diningOption") or {}).get("behavior") or (o.get("diningOption") or {}).get("guid"), "revenue_center": (o.get("revenueCenter") or {}).get("guid"),
+                           "dining_option": dining.get((slug, (o.get("diningOption") or {}).get("guid"))) or (o.get("diningOption") or {}).get("behavior") or (o.get("diningOption") or {}).get("guid"), "revenue_center": (o.get("revenueCenter") or {}).get("guid"),
                            "server_guid": (o.get("server") or {}).get("guid"), "guests": int(o.get("numberOfGuests") or 0), "voided": voided, "checks_count": len(checks),
                            "net_sales": 0 if voided else round(net, 2), "tax": 0 if voided else round(tax, 2), "tips": round(tips, 2), "discounts": round(disc, 2), "service_charges": round(svc, 2),
                            "gross_sales": 0 if voided else round(net + disc, 2), "refunds": round(refunds, 2), "source_hash": None})

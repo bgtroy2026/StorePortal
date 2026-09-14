@@ -12,6 +12,7 @@ Datasets pulled per restaurant:
   labor/v1/timeEntries?startDate&endDate    -> raw/toast/<loc>/timeEntries/<start>_<end>.json (≤30-day windows)
   labor/v1/jobs                             -> raw/toast/<loc>/jobs/all.json
   menus/v2/menus                            -> raw/toast/<loc>/menus/all.json  (item -> sales category names)
+  config/v2/diningOptions                   -> raw/toast/<loc>/diningOptions/all.json (guid -> "Dine In"/"Take Out"...)
 
 Rate limits: ordersBulk is capped at 5 req/s per location; we run at 4.
 Incremental strategy: re-pull the last `incremental_days` business days every night (orders get modified after
@@ -95,6 +96,10 @@ class Toast:
     def menus(self, guid: str) -> dict:
         return self.http.get("/menus/v2/menus", headers=self._h(guid)).json() or {}
 
+    def dining_options(self, guid: str) -> list[dict]:
+        # Orders carry the dining option only as a bare reference {guid}; the names live here.
+        return self.http.get("/config/v2/diningOptions", headers=self._h(guid)).json() or []
+
 
 # ---- orchestration ------------------------------------------------------------------------
 
@@ -128,6 +133,10 @@ def pull(locations: list[dict], days_back: int, incremental_days: int, warehouse
         info = t.restaurant(guid); write_raw("toast", slug, "restaurant", "info", info)
         write_raw("toast", slug, "jobs", "all", {"jobs": t.jobs(guid)})
         write_raw("toast", slug, "menus", "all", t.menus(guid))
+        try:
+            write_raw("toast", slug, "diningOptions", "all", {"diningOptions": t.dining_options(guid)})
+        except Exception as e:  # a names-only lookup must never stop the orders pull
+            log.warning("Toast: %s dining options not pulled (%s) — orders will show option guids", slug, e)
 
         have = _existing_days(slug) | {d for s, d in warehouse_days if s == slug}
         days = []
