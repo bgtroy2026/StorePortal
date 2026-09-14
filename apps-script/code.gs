@@ -24,6 +24,7 @@
  *
  * Request protocol (POST body, Content-Type text/plain to avoid CORS preflight):
  *   {"a":"signin","t":<id token>}  → sign-in → { ok, profile:{email,name,role,locations}, bundles:[{label,id,key}], sid }
+ *                                    bundles[0] is the data bundle; leadership/admin also get the "scorecard" bundle
  *   {"a":"ping","s":<sid>}         → log a portal open
  *   {"a":"scorecard","k":<key>}    → the Leadership Scorecard tab, for the nightly pipeline (no user session)
  */
@@ -154,11 +155,16 @@ function doSignin(token) {
 function portalAccess(props, role, locs) {
   var secret = prop('PORTAL_SECRET');
   if (!secret) throw new Error('PORTAL_SECRET script property is not set');
-  var all = /^(leadership|admin)/i.test(role) || locs === 'all' || !locs;
-  if (all) return { locations: 'all', bundles: [bundleFor(secret, 'all')] };
+  // The scorecard workbook carries exec compensation, per-manager audit scores and company financials, so its
+  // key goes ONLY to leadership/admin. Note this is deliberately keyed off the ROLE, not off having the "all"
+  // bundle: a director covering several taprooms also receives "all", and must not receive this.
+  var leadership = /^(leadership|admin)/i.test(role);
+  var extra = leadership ? [bundleFor(secret, 'scorecard')] : [];
+  var all = leadership || locs === 'all' || !locs;
+  if (all) return { locations: 'all', bundles: [bundleFor(secret, 'all')].concat(extra) };
   var list = locs.split(',').filter(Boolean);
-  if (list.length === 1) return { locations: list[0], bundles: [bundleFor(secret, 'loc:' + list[0])] };
-  return { locations: list.join(','), bundles: [bundleFor(secret, 'all')] };  // multi-site director: full bundle, client-side allow-list
+  if (list.length === 1) return { locations: list[0], bundles: [bundleFor(secret, 'loc:' + list[0])].concat(extra) };
+  return { locations: list.join(','), bundles: [bundleFor(secret, 'all')].concat(extra) };  // multi-site director: full bundle, client-side allow-list
 }
 
 function bundleFor(secret, label) {

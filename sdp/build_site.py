@@ -31,9 +31,19 @@ def run(secret: str | None = None, dev_json: bool = False) -> dict:
     (OUT_DIR / ".nojekyll").touch()
     written = {}
     if secret:
+        # The scorecard workbook is leadership-only, so it is NOT part of the "all" bundle. A multi-location
+        # director legitimately receives "all" (their roster entry scopes it client-side), which would have
+        # handed them exec compensation and per-manager audit scores. Splitting it into its own label means the
+        # data is absent unless the sign-in backend hands out that bundle's key, rather than merely hidden.
+        scorecard = payload.pop("scorecard", None)
         labels = ["all"] + [f"loc:{l['id']}" for l in payload["locations"]]
+        if scorecard:
+            labels.append("scorecard")
         for label in labels:
-            obj = payload if label == "all" else metrics.slice_for_location(payload, label.split(":", 1)[1])
+            if label == "scorecard":
+                obj = {"meta": payload["meta"], "scorecard": scorecard}
+            else:
+                obj = payload if label == "all" else metrics.slice_for_location(payload, label.split(":", 1)[1])
             bid = bundle_id(label)
             buf = encrypt(obj, derive_key(secret, label))
             (data / f"{bid}.bin").write_bytes(buf)

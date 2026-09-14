@@ -145,10 +145,21 @@ async function gunzipText(u8){
 async function boot(auth){
   try{ if(auth.sid) navigator.sendBeacon(CFG.API_URL, JSON.stringify({a:'ping',s:auth.sid})); }catch(e){}
   $('bar').style.display='block'; setStatus('Loading portal data…');
-  var b=auth.bundles[0]; // 'all' for leadership/admin, else the director's own location; multi-location directors get 'all' scoped by roster
-  var buf=await fetchBin('data/'+b.id+'.bin',0,85);
+  // bundles[0] is the data bundle: 'all' for leadership/admin, else the director's own location (multi-location
+  // directors get 'all', scoped client-side by their roster entry). Any further bundle is an add-on the backend
+  // chose to grant — currently the leadership-only scorecard — and is merged in on top.
+  var b=auth.bundles[0];
+  var buf=await fetchBin('data/'+b.id+'.bin',0,75);
   setStatus('Decrypting…');
   var data=JSON.parse(await gunzipText(await decrypt(buf,b.key)));
+  for(var i=1;i<auth.bundles.length;i++){
+    var x=auth.bundles[i];
+    try{
+      var xb=await fetchBin('data/'+x.id+'.bin',75,90);
+      var xd=JSON.parse(await gunzipText(await decrypt(xb,x.key)));
+      Object.keys(xd).forEach(function(k){ if(k!=='meta') data[k]=xd[k]; });
+    }catch(e){ /* an add-on that fails to load must never block the portal itself */ }
+  }
   if(auth.profile.locations && auth.profile.locations!=='all'){
     var allow=String(auth.profile.locations).split(',').map(function(s){return s.trim();});
     data.locations=data.locations.filter(function(l){return allow.indexOf(l.id)>=0;});
@@ -223,7 +234,7 @@ function startApp(data,profile){
     var b=document.createElement('button');b.textContent=p[1];b.dataset.p=p[0];b.onclick=function(){S.preset=p[0];applyPreset();render();};seg.appendChild(b);});
   $('d0').onchange=$('d1').onchange=function(){S.preset='custom';S.d0=$('d0').value;S.d1=$('d1').value;render();};
   $('cmpSeg').querySelectorAll('button').forEach(function(b){b.onclick=function(){S.cmp=b.dataset.c;render();};});
-  var nav=$('nav'); PAGES.forEach(function(p){var b=document.createElement('button');b.textContent=p[1];b.dataset.p=p[0];b.onclick=function(){S.page=p[0];render();};nav.appendChild(b);});
+  var nav=$('nav'); PAGES.filter(function(p){ return p[0]!=='scorecard' || hasScorecard(); }).forEach(function(p){var b=document.createElement('button');b.textContent=p[1];b.dataset.p=p[0];b.onclick=function(){S.page=p[0];render();};nav.appendChild(b);});
   applyPreset(); render();
 }
 function applyPreset(){
@@ -270,6 +281,7 @@ function render(){
   document.querySelectorAll('#cmpSeg button').forEach(function(b){b.classList.toggle('on',b.dataset.c===S.cmp);});
   document.querySelectorAll('#nav button').forEach(function(b){b.classList.toggle('on',b.dataset.p===S.page);});
   var m=$('main'); m.innerHTML='';
+  if(S.page==='scorecard' && !hasScorecard()) S.page='overview';
   ({overview:pgOverview,sales:pgSales,labor:pgLabor,cogs:pgCogs,inventory:pgInventory,events:pgEvents,activations:pgActivations,scorecard:pgScorecard,locations:pgLocations})[S.page](m);
 }
 
