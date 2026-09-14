@@ -35,6 +35,9 @@ header nav{display:flex;gap:2px;margin-left:10px;overflow-x:auto}
 header nav button{background:transparent;border:0;color:#c9cfe3;padding:8px 12px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap}
 header nav button.on{background:rgba(255,255,255,.12);color:#fff}
 header .who{margin-left:auto;font-size:12px;color:#c9cfe3;white-space:nowrap}
+header .signout{background:transparent;border:1px solid rgba(255,255,255,.25);color:#c9cfe3;border-radius:7px;
+  padding:5px 10px;margin-left:10px;font-size:11.5px;font-weight:600;cursor:pointer;white-space:nowrap}
+header .signout:hover{background:rgba(255,255,255,.12);color:#fff}
 header .who b{color:#fff}
 .filters{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:12px 18px;background:var(--surface);border-bottom:1px solid var(--border)}
 .filters label{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:700;margin-right:4px}
@@ -99,7 +102,7 @@ table.t td.n{font-weight:700;color:var(--navy);white-space:normal;min-width:120p
 .empty{padding:26px;text-align:center;color:var(--muted);font-size:13px}
 .legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:var(--ink2);margin-top:8px}
 .tt{position:absolute;pointer-events:none;background:var(--navy);color:#fff;padding:6px 9px;border-radius:7px;font-size:11.5px;white-space:nowrap;display:none;z-index:5;box-shadow:0 4px 14px rgba(0,0,0,.25)}
-@media (max-width:720px){header{height:auto;flex-wrap:wrap;padding:8px 12px}header .who{display:none}.panel .cw{height:220px}.cols2,.cols3{grid-template-columns:1fr}main{padding:12px}}
+@media (max-width:720px){header{height:auto;flex-wrap:wrap;padding:8px 12px}header .who{display:none}header .signout{margin-left:auto}.panel .cw{height:220px}.cols2,.cols3{grid-template-columns:1fr}main{padding:12px}}
 </style>
 </head>
 <body>
@@ -122,6 +125,7 @@ table.t td.n{font-weight:700;color:var(--navy);white-space:normal;min-width:120p
   <div class="brand">BIG GROVE <span>STORE DIRECTOR PORTAL</span></div>
   <nav id="nav"></nav>
   <div class="who" id="who"></div>
+  <button id="signout" class="signout" title="Sign out">Sign out</button>
  </header>
  <div class="filters" id="filters">
   <label>Location</label><select id="locSel"></select>
@@ -162,6 +166,15 @@ async function gunzipText(u8){
   if(typeof DecompressionStream!=='undefined'){return await new Response(new Blob([u8]).stream().pipeThrough(new DecompressionStream('gzip'))).text();}
   await new Promise(function(res,rej){var s=document.createElement('script');s.src='vendor/pako.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
   return pako.ungzip(u8,{to:'string'});
+}
+/* Sign out. Beyond the obvious reason, this is the fix when someone's ACCESS changes: the signed-in session
+   caches the bundle keys the backend handed out, so a role change (say, being granted the leadership
+   scorecard) does not reach an open session until it signs in again. Google's auto-select is disabled too,
+   otherwise the next page load silently signs the same account straight back in. */
+function signOut(){
+  try{ sessionStorage.removeItem('sdp_auth'); }catch(e){}
+  try{ if(window.google&&google.accounts&&google.accounts.id) google.accounts.id.disableAutoSelect(); }catch(e){}
+  location.replace(location.pathname);
 }
 /* auth = {ok, profile:{email,name,role,locations}, bundles:[{label,id,key}], sid} */
 async function boot(auth){
@@ -246,7 +259,20 @@ function startApp(data,profile){
   D=data; P=profile; K={}; D.meta.daily_keys.forEach(function(k,i){K[k]=i;});
   $('login').style.display='none'; $('app').style.display='block';
   $('who').innerHTML='<b>'+esc(P.name||P.email)+'</b> · '+esc(P.role||'');
+  $('signout').onclick=signOut;
+  // If the page itself is older than the published build, the browser is serving a cached index.html and the
+  // user is looking at yesterday's app with today's data. Say so plainly rather than letting them wonder why
+  // a change "did not ship".
   $('fresh').textContent='Data through '+fdate(D.meta.through)+' · built '+new Date(D.meta.built_at).toLocaleString();
+  (async function(){
+    try{
+      var live=await (await fetch('data/manifest.json',{cache:'no-store'})).json();
+      if(live.built_at && live.built_at!==D.meta.built_at){
+        $('fresh').innerHTML+=' · <a href="#" id="rl" style="color:var(--bad);font-weight:700">newer build available — reload</a>';
+        $('rl').onclick=function(e){e.preventDefault();location.reload(true);};
+      }
+    }catch(e){}
+  })();
   var ls=$('locSel'); ls.innerHTML='';
   if(D.locations.length>1) ls.appendChild(new Option('All locations','all'));
   D.locations.forEach(function(l){ls.appendChild(new Option(l.name,l.id));});
@@ -669,106 +695,6 @@ function scChart(SC){
   cfg.options.plugins.tooltip={callbacks:{label:function(c){var w=series[c.dataIndex];
     return ' '+(c.dataset.label==='Goal'?('Goal: '+(pct?fp(goal,1):fm(goal))):disp(selM,w));}}};
   mk('c_sc',cfg);
-}
-
-function pgLocations(m){
-  var a=S.d0,b=S.d1,cw=cmpWindow();
-  // A location that opened partway through the window has no comparable prior period: comparing a full range
-  // against days before it existed reports growth that is really just the opening. Suppress the delta instead.
-  var rows=D.locations.map(function(l){ var s=sumRows(rowsIn(l.id,a,b)), p=sumRows(rowsIn(l.id,cw[0],cw[1]));
-    return {l:l,s:s,p:p,partial:(l.first_date&&cw[0]<l.first_date)}; });
-  var anyNew=rows.some(function(r){return r.partial;});
-  m.innerHTML='<div class="panel"><h3>Location scorecard</h3><div class="hint">All locations for the selected range; change vs '+(S.cmp==='ly'?'last year':'prior period')+(anyNew?'. Locations marked <span class="pill">new</span> opened partway through this window, so there is no comparable prior period and their change is shown as —.':'')+'</div><div style="overflow-x:auto"><table class="t"><tr><th>Location</th><th class="r">Net sales</th><th class="r">Δ</th><th class="r">Guests</th><th class="r">Avg check</th><th class="r">PPA</th><th class="r">Labor %</th><th class="r">Purch %</th><th class="r">SPLH</th><th class="r">Discounts</th></tr>'
-    +rows.map(function(r,i){var s=r.s,p=r.p;var d=(p.net&&!r.partial)?(s.net-p.net)/p.net:null;return '<tr><td class="n"><i class="sw" style="background:'+css(LOCCOL[i%8])+'"></i>'+esc(r.l.name)+(r.partial?' <span class="pill" title="Opened '+fdate(r.l.first_date)+' — no comparable prior period">new</span>':'')+'</td><td class="r">'+fm(s.net)+'</td><td class="r" style="color:'+(d>=0?'var(--good)':'var(--bad)')+';font-weight:700">'+(d!=null?(d>=0?'+':'')+fp(d):'—')+'</td><td class="r">'+fn(s.guests)+'</td><td class="r">'+fm(s.checks?s.net/s.checks:null,2)+'</td><td class="r">'+fm(s.guests?s.net/s.guests:null,2)+'</td><td class="r">'+fp(s.net?s.lc/s.net:null)+'</td><td class="r">'+fp(s.net?s.p/s.net:null)+'</td><td class="r">'+fm(s.lh?s.net/s.lh:null,0)+'</td><td class="r">'+fm(s.disc)+'</td></tr>';}).join('')+'</table></div></div>'
-    +'<div class="grid cols2" style="margin-top:14px">'+panel('Net sales by week by location','',chartBox('c_locs',true))+panel('Labor % by week by location','',chartBox('c_loclab',true))+'</div>';
-  var wkAll={}; D.locations.forEach(function(l){rowsIn(l.id,a,b).forEach(function(r){var d=pd(r[0]);d.setDate(d.getDate()-((d.getDay()+6)%7));var w=ds(d);var o=wkAll[w]||(wkAll[w]={_n:0});if(l.id===D.locations[0].id)o._n++;var q=o[l.id]||(o[l.id]={net:0,lc:0});q.net+=r[K.net];q.lc+=r[K.lc];});});
-  var wks=Object.keys(wkAll).sort();
-  var c1=lineCfg(wks.map(function(w){return wkLabel(w,wkAll[w]);}),D.locations.map(function(l,i){return {label:l.name,data:wks.map(function(w){return wkAll[w][l.id]?wkAll[w][l.id].net:null;}),borderColor:css(LOCCOL[i%8])};})); c1.options.plugins.legend={display:true,position:'bottom'}; mk('c_locs',c1);
-  var c2=lineCfg(wks.map(function(w){return wkLabel(w,wkAll[w]);}),D.locations.map(function(l,i){return {label:l.name,data:wks.map(function(w){var q=wkAll[w][l.id];return q&&q.net?q.lc/q.net:null;}),borderColor:css(LOCCOL[i%8]),fmt:'pct'};})); c2.options.plugins.legend={display:true,position:'bottom'}; c2.options.scales.y.ticks.callback=function(v){return fp(v,0);}; mk('c_loclab',c2);
-}
-
-/* ---------- Leadership Scorecard (Google Sheets, shown as the sheet formats it) ---------- */
-function hasScorecard(){ return !!(D.scorecard && (((D.scorecard.metrics||[]).length)||((D.scorecard.tabs||[]).length))); }
-function scTabs(){ return (D.scorecard.tabs||[]); }
-// Tabs other than the headline scorecard have no common shape, so they are rendered as the sheet's own grid:
-// first row as headers, blank-padded columns dropped, numeric-looking cells right-aligned.
-function scGrid(t){
-  var g=t.grid||[]; if(!g.length) return '<div class="empty">This tab has no cell data — it may be chart-only.</div>';
-  var w=0; g.forEach(function(r){ for(var i=r.length-1;i>=0;i--){ if(String(r[i]).trim()){ if(i+1>w)w=i+1; break; } } });
-  if(!w) return '<div class="empty">This tab is empty.</div>';
-  function isNum(v){ return /^[-+(]?[$]?[\d,]+(\.\d+)?[%)]?$/.test(String(v).trim()) && /\d/.test(String(v)); }
-  var head=g[0]||[], body=g.slice(1);
-  var h='<div class="tw"><table class="t"><tr>'+Array.from({length:w}).map(function(_,i){return '<th'+(isNum(body.length&&body[0]?body[0][i]:'')?' class="r"':'')+'>'+esc(head[i]||'')+'</th>';}).join('')+'</tr>';
-  h+=body.map(function(r){
-    var blank=true; for(var i=0;i<w;i++) if(String(r[i]||'').trim()) blank=false;
-    if(blank) return '<tr><td colspan="'+w+'" style="height:6px;border:0"></td></tr>';
-    return '<tr>'+Array.from({length:w}).map(function(_,i){var v=String(r[i]||'');return '<td'+(isNum(v)?' class="r"':(i===0||i===1?' class="n"':''))+'>'+esc(v)+'</td>';}).join('')+'</tr>';
-  }).join('');
-  return h+'</table></div>'+(t.truncated?'<div class="hint" style="margin-top:6px">Showing the first '+fn(g.length)+' of '+fn(t.rows)+' rows and '+fn(Math.min(w,t.cols))+' of '+fn(t.cols)+' columns — this tab was capped so the portal stays quick to load.</div>':'');
-}
-function scWeeks(){ return (D.scorecard.weeks||[]).slice(); }
-
-function pgScorecard(m){
-  if(!hasScorecard()){ m.innerHTML='<div class="panel"><h3>Leadership Scorecard</h3><div class="empty">No scorecard data yet. Once the Apps Script scorecard endpoint is deployed, the workbook appears here.</div></div>'; return; }
-  var SC=D.scorecard, weeks=scWeeks(), mets=SC.metrics||[], tabs=scTabs();
-  var primary=SC.sheet||'', cur=S.scTab||primary;
-  var strip=tabs.length?('<div class="seg" style="flex-wrap:wrap;gap:2px">'+tabs.map(function(t){return '<button data-t="'+esc(t.name)+'"'+(t.name===cur?' class="on"':'')+'>'+esc(t.name)+'</button>';}).join('')+'</div>'):'';
-  if(cur!==primary){
-    var t=tabs.filter(function(x){return x.name===cur;})[0];
-    m.innerHTML='<div class="panel"><h3>Leadership Scorecard</h3><div class="hint">'+esc(SC.workbook||'')+' — every tab, refreshed nightly from Google Sheets.</div><div style="margin-top:10px">'+strip+'</div></div>'
-      +'<div class="panel" style="margin-top:14px"><h3>'+esc(cur)+'</h3>'+(t?scGrid(t):'<div class="empty">Tab not found.</div>')+'</div>';
-    m.querySelectorAll('[data-t]').forEach(function(b){b.onclick=function(){S.scTab=b.dataset.t;render();};});
-    return;
-  }
-  // The sheet runs newest-first left to right. Keep that for the table (leadership read it that way for
-  // years) but reverse for charts, which have to run forwards in time to mean anything.
-  var chartWeeks=weeks.slice().reverse();
-  var shown=Math.min(weeks.length,S.scWeeks||13);
-
-  function cell(mt,w){ var c=(mt.cells||{})[w]; return c?c:null; }
-  function num(mt,w){ var c=cell(mt,w); return c&&c[0]!=null?c[0]:null; }
-  function disp(mt,w){ var c=cell(mt,w); return c?c[1]:'—'; }
-
-  var owners=[]; mets.forEach(function(x){ if(x.owner && owners.indexOf(x.owner)<0) owners.push(x.owner); });
-  var sel=S.scMetric||(mets.filter(function(x){return Object.keys(x.cells||{}).length>2;})[0]||mets[0]).metric;
-  var selM=mets.filter(function(x){return x.metric===sel;})[0]||mets[0];
-
-  m.innerHTML='<div class="panel"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
-    +'<div><h3 style="margin:0">Leadership Scorecard</h3><div class="hint">'+esc(SC.sheet||'')+' — maintained in Google Sheets, refreshed nightly. Figures are shown exactly as the sheet formats them.</div></div>'
-    +'<div class="seg" style="margin-left:auto">'+[13,26,52].map(function(n){return '<button data-w="'+n+'"'+(shown===n?' class="on"':'')+'>'+n+'w</button>';}).join('')+'</div>'
-    +'<div style="flex-basis:100%">'+strip+'</div>'
-    +'</div></div>'
-    +'<div class="panel" style="margin-top:14px"><h3>'+esc(selM.metric)+'</h3><div class="hint">Click any metric row below to chart it'+(selM.goal&&selM.goal[1]?' · goal '+esc(selM.goal[1]):'')+'</div>'+chartBox('c_sc',true)+'</div>'
-    +'<div class="panel" style="margin-top:14px"><h3>Weekly detail</h3><div class="hint">Newest week first, as in the sheet'+(owners.length?' · owners: '+owners.map(esc).join(', '):'')+'</div><div class="tw" id="scTbl"></div></div>';
-
-  var wk=weeks.slice(0,shown);
-  var html='<table class="t"><tr><th>Owner</th><th>Metric</th><th class="r">Goal</th>'
-    +wk.map(function(w){return '<th class="r">'+esc(w)+'</th>';}).join('')+'</tr>'
-    +mets.map(function(x){
-        var on=x.metric===sel;
-        return '<tr data-m="'+esc(x.metric)+'" style="cursor:pointer'+(on?';background:#f4f7ff':'')+'">'
-          +'<td>'+(x.owner?'<span class="pill">'+esc(x.owner)+'</span>':'')+'</td>'
-          +'<td class="n">'+esc(x.metric)+'</td>'
-          +'<td class="r">'+(x.goal&&x.goal[1]?esc(x.goal[1]):'—')+'</td>'
-          +wk.map(function(w){return '<td class="r">'+esc(disp(x,w))+'</td>';}).join('')+'</tr>';
-      }).join('')+'</table>';
-  $('scTbl').innerHTML=html;
-
-  var series=chartWeeks.slice(-shown);
-  var vals=series.map(function(w){return num(selM,w);});
-  var goal=selM.goal&&selM.goal[0]!=null?selM.goal[0]:null;
-  var pct=/%$/.test((disp(selM,series[series.length-1])||'').trim());
-  var sets=[{label:selM.metric,data:vals,borderColor:css('s1'),fill:false}];
-  if(goal!=null) sets.push({label:'Goal',data:series.map(function(){return goal;}),borderColor:css('s3'),borderDash:[5,4],pointRadius:0});
-  var cfg=lineCfg(series,sets);
-  cfg.options.plugins.legend={display:goal!=null,position:'bottom'};
-  if(pct) cfg.options.scales.y.ticks.callback=function(v){return fp(v,1);};
-  cfg.options.plugins.tooltip={callbacks:{label:function(c){var w=series[c.dataIndex];return ' '+(c.dataset.label==='Goal'?'Goal: ':'')+ (c.dataset.label==='Goal'? (pct?fp(goal,1):fm(goal)) : disp(selM,w));}}};
-  mk('c_sc',cfg);
-
-  m.querySelectorAll('[data-w]').forEach(function(b){b.onclick=function(){S.scWeeks=+b.dataset.w;render();};});
-  m.querySelectorAll('[data-t]').forEach(function(b){b.onclick=function(){S.scTab=b.dataset.t;render();};});
-  m.querySelectorAll('[data-m]').forEach(function(tr){tr.onclick=function(){S.scMetric=tr.dataset.m;render();};});
 }
 
 </script>
