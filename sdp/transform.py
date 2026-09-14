@@ -405,6 +405,10 @@ def load_scorecard(con) -> dict:
             continue
         con.execute("DELETE FROM scorecard")
         con.execute("DELETE FROM scorecard_goals")
+        con.execute("DELETE FROM scorecard_tabs")
+        _upsert(con, "scorecard_tabs", [{"tab": t["name"], "seq": i, "rows": t.get("rows"), "cols": t.get("cols"),
+                                         "truncated": 1 if t.get("truncated") else 0, "grid": json.dumps(t.get("grid") or [])}
+                                        for i, t in enumerate(j.get("tabs") or [])])
         cells, goals = [], []
         for i, r in enumerate(j["rows"]):
             metric, owner = r.get("metric"), r.get("owner") or None

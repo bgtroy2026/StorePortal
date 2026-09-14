@@ -271,3 +271,15 @@ CREATE TABLE IF NOT EXISTS scorecard_goals (
   display     TEXT,
   seq         INTEGER
 );
+
+-- Every visible tab of the scorecard workbook, stored as the sheet's own display grid (JSON 2-D array).
+-- Grids rather than parsed columns because the tabs have no common shape: some are weekly metrics, some are
+-- per-location, some are distributor extracts. The portal renders them as the sheet formats them.
+CREATE TABLE IF NOT EXISTS scorecard_tabs (
+  tab       TEXT PRIMARY KEY,
+  seq       INTEGER,            -- workbook order, so the portal's tab strip matches the sheet
+  rows      INTEGER,            -- true size in the sheet, which may exceed what was fetched
+  cols      INTEGER,
+  truncated INTEGER,            -- 1 when the tab was capped, so the portal can say so rather than imply completeness
+  grid      TEXT
+);

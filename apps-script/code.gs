@@ -57,50 +57,69 @@ function handle(body) {
 }
 
 /**
- * Serve the Leadership Scorecard tab to the nightly pipeline.
+ * Serve the Leadership Scorecard workbook to the nightly pipeline.
  *
- * This is the one action with no signed-in user behind it, so it is not gated by a Google identity but
- * by proof of the shared PORTAL_SECRET — the same secret the pipeline already holds to build bundles.
- * It is strictly read-only and returns a single named tab, so a leaked key exposes no more than that tab.
+ * This is the one action with no signed-in user behind it, so it is gated not by a Google identity but by
+ * proof of the shared PORTAL_SECRET - the same secret the pipeline already holds to build bundles. It is
+ * strictly read-only.
  *
- * Both raw and displayed values are returned: the raw ones are what charts and comparisons need, while
- * the displayed ones preserve the sheet's own currency/percent formatting so the portal can show a figure
- * exactly as leadership is used to reading it.
+ * EVERY visible tab is returned, not just the headline scorecard: the workbook is the company's own record
+ * and the parts that matter are spread across it. Hidden tabs are skipped (hidden usually means working
+ * scratch, not something to publish), and each tab is capped - a runaway sheet would otherwise blow past
+ * Apps Script's response limit and bloat the encrypted bundle every portal visitor downloads. A capped tab
+ * says so, so the portal can show that rather than quietly presenting a partial grid as complete.
+ *
+ * The primary tab is additionally returned in structured form (owner / metric / goal / weekly cells) so the
+ * portal can chart it; the rest are returned as display grids, shown as the sheet formats them.
  */
+var SC_MAX_ROWS = 300, SC_MAX_COLS = 60;
+
 function doScorecard(k) {
   var secret = prop('PORTAL_SECRET');
   if (!secret) return { ok: false, error: 'PORTAL_SECRET script property is not set' };
   var want = Utilities.base64Encode(Utilities.computeHmacSha256Signature('scorecard', secret, Utilities.Charset.UTF_8));
   if (!k || k !== want) return { ok: false, error: 'bad key' };
 
-  var id = prop('SCORECARD_SHEET_ID'), name = prop('SCORECARD_TAB');
+  var id = prop('SCORECARD_SHEET_ID'), primary = prop('SCORECARD_TAB');
   var ss = SpreadsheetApp.openById(id);
-  var sh = ss.getSheetByName(name);
-  if (!sh) return { ok: false, error: 'no tab named ' + name + ' in ' + ss.getName() };
+  var sheets = ss.getSheets(), tabs = [], structured = null, header = [];
 
-  var rng = sh.getDataRange(), vals = rng.getValues(), disp = rng.getDisplayValues();
-  if (!vals.length) return { ok: false, error: 'tab ' + name + ' is empty' };
+  for (var i = 0; i < sheets.length; i++) {
+    var sh = sheets[i];
+    if (sh.isSheetHidden()) continue;
+    var lastRow = sh.getLastRow(), lastCol = sh.getLastColumn();
+    if (!lastRow || !lastCol) continue;                       // chart-only or empty tab
+    var nR = Math.min(lastRow, SC_MAX_ROWS), nC = Math.min(lastCol, SC_MAX_COLS);
+    var rng = sh.getRange(1, 1, nR, nC), disp = rng.getDisplayValues();
 
-  // Row 1 is the header: columns A-C are owner / metric / goal, everything after is a week.
-  var head = disp[0], weeks = [];
-  for (var c = 3; c < head.length; c++) if (String(head[c]).trim()) weeks.push({ i: c, label: String(head[c]).trim() });
+    // Trim fully blank trailing rows so a sheet padded to 1000 rows does not ship 900 empty ones.
+    while (disp.length && disp[disp.length - 1].join('') === '') disp.pop();
 
-  var rows = [];
-  for (var r = 1; r < vals.length; r++) {
-    var metric = String(disp[r][1] || '').trim();
-    if (!metric) continue;                                  // spacer rows carry no metric name
-    var cells = {};
-    for (var w = 0; w < weeks.length; w++) {
-      var v = vals[r][weeks[w].i], d = String(disp[r][weeks[w].i] || '').trim();
-      if (d === '') continue;                               // leave gaps as gaps rather than zeros
-      cells[weeks[w].label] = { v: (typeof v === 'number' ? v : null), d: d };
+    tabs.push({ name: sh.getName(), grid: disp, rows: lastRow, cols: lastCol,
+                truncated: (lastRow > nR || lastCol > nC) });
+
+    if (sh.getName() === primary) {
+      var vals = rng.getValues(), head = disp[0], weeks = [];
+      for (var c = 3; c < head.length; c++) if (String(head[c]).trim()) weeks.push({ i: c, label: String(head[c]).trim() });
+      var rows = [];
+      for (var r = 1; r < vals.length && r < disp.length; r++) {
+        var metric = String(disp[r][1] || '').trim();
+        if (!metric) continue;                                // spacer rows carry no metric name
+        var cells = {};
+        for (var w = 0; w < weeks.length; w++) {
+          var v = vals[r][weeks[w].i], d = String(disp[r][weeks[w].i] || '').trim();
+          if (d === '') continue;                             // leave gaps as gaps rather than zeros
+          cells[weeks[w].label] = { v: (typeof v === 'number' ? v : null), d: d };
+        }
+        rows.push({ owner: String(disp[r][0] || '').trim(), metric: metric,
+                    goal: { v: (typeof vals[r][2] === 'number' ? vals[r][2] : null), d: String(disp[r][2] || '').trim() },
+                    cells: cells });
+      }
+      structured = rows; header = weeks.map(function (w) { return w.label; });
     }
-    rows.push({ owner: String(disp[r][0] || '').trim(), metric: metric,
-                goal: { v: (typeof vals[r][2] === 'number' ? vals[r][2] : null), d: String(disp[r][2] || '').trim() },
-                cells: cells });
   }
-  return { ok: true, sheet: name, workbook: ss.getName(), header: weeks.map(function (w) { return w.label; }),
-           rows: rows, fetched_at: new Date().toISOString() };
+  return { ok: true, workbook: ss.getName(), sheet: primary, tabs: tabs,
+           header: header, rows: structured || [], fetched_at: new Date().toISOString() };
 }
 
 function doSignin(token) {

@@ -539,12 +539,38 @@ function pgLocations(m){
 }
 
 /* ---------- Leadership Scorecard (Google Sheets, shown as the sheet formats it) ---------- */
-function hasScorecard(){ return !!(D.scorecard && (D.scorecard.metrics||[]).length); }
+function hasScorecard(){ return !!(D.scorecard && (((D.scorecard.metrics||[]).length)||((D.scorecard.tabs||[]).length))); }
+function scTabs(){ return (D.scorecard.tabs||[]); }
+// Tabs other than the headline scorecard have no common shape, so they are rendered as the sheet's own grid:
+// first row as headers, blank-padded columns dropped, numeric-looking cells right-aligned.
+function scGrid(t){
+  var g=t.grid||[]; if(!g.length) return '<div class="empty">This tab has no cell data — it may be chart-only.</div>';
+  var w=0; g.forEach(function(r){ for(var i=r.length-1;i>=0;i--){ if(String(r[i]).trim()){ if(i+1>w)w=i+1; break; } } });
+  if(!w) return '<div class="empty">This tab is empty.</div>';
+  function isNum(v){ return /^[-+(]?[$]?[\d,]+(\.\d+)?[%)]?$/.test(String(v).trim()) && /\d/.test(String(v)); }
+  var head=g[0]||[], body=g.slice(1);
+  var h='<div class="tw"><table class="t"><tr>'+Array.from({length:w}).map(function(_,i){return '<th'+(isNum(body.length&&body[0]?body[0][i]:'')?' class="r"':'')+'>'+esc(head[i]||'')+'</th>';}).join('')+'</tr>';
+  h+=body.map(function(r){
+    var blank=true; for(var i=0;i<w;i++) if(String(r[i]||'').trim()) blank=false;
+    if(blank) return '<tr><td colspan="'+w+'" style="height:6px;border:0"></td></tr>';
+    return '<tr>'+Array.from({length:w}).map(function(_,i){var v=String(r[i]||'');return '<td'+(isNum(v)?' class="r"':(i===0||i===1?' class="n"':''))+'>'+esc(v)+'</td>';}).join('')+'</tr>';
+  }).join('');
+  return h+'</table></div>'+(t.truncated?'<div class="hint" style="margin-top:6px">Showing the first '+fn(g.length)+' of '+fn(t.rows)+' rows and '+fn(Math.min(w,t.cols))+' of '+fn(t.cols)+' columns — this tab was capped so the portal stays quick to load.</div>':'');
+}
 function scWeeks(){ return (D.scorecard.weeks||[]).slice(); }
 
 function pgScorecard(m){
-  if(!hasScorecard()){ m.innerHTML='<div class="panel"><h3>Leadership Scorecard</h3><div class="empty">No scorecard data yet. Once the Apps Script scorecard endpoint is deployed, the weekly company scorecard appears here.</div></div>'; return; }
-  var SC=D.scorecard, weeks=scWeeks(), mets=SC.metrics||[];
+  if(!hasScorecard()){ m.innerHTML='<div class="panel"><h3>Leadership Scorecard</h3><div class="empty">No scorecard data yet. Once the Apps Script scorecard endpoint is deployed, the workbook appears here.</div></div>'; return; }
+  var SC=D.scorecard, weeks=scWeeks(), mets=SC.metrics||[], tabs=scTabs();
+  var primary=SC.sheet||'', cur=S.scTab||primary;
+  var strip=tabs.length?('<div class="seg" style="flex-wrap:wrap;gap:2px">'+tabs.map(function(t){return '<button data-t="'+esc(t.name)+'"'+(t.name===cur?' class="on"':'')+'>'+esc(t.name)+'</button>';}).join('')+'</div>'):'';
+  if(cur!==primary){
+    var t=tabs.filter(function(x){return x.name===cur;})[0];
+    m.innerHTML='<div class="panel"><h3>Leadership Scorecard</h3><div class="hint">'+esc(SC.workbook||'')+' — every tab, refreshed nightly from Google Sheets.</div><div style="margin-top:10px">'+strip+'</div></div>'
+      +'<div class="panel" style="margin-top:14px"><h3>'+esc(cur)+'</h3>'+(t?scGrid(t):'<div class="empty">Tab not found.</div>')+'</div>';
+    m.querySelectorAll('[data-t]').forEach(function(b){b.onclick=function(){S.scTab=b.dataset.t;render();};});
+    return;
+  }
   // The sheet runs newest-first left to right. Keep that for the table (leadership read it that way for
   // years) but reverse for charts, which have to run forwards in time to mean anything.
   var chartWeeks=weeks.slice().reverse();
@@ -561,6 +587,7 @@ function pgScorecard(m){
   m.innerHTML='<div class="panel"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
     +'<div><h3 style="margin:0">Leadership Scorecard</h3><div class="hint">'+esc(SC.sheet||'')+' — maintained in Google Sheets, refreshed nightly. Figures are shown exactly as the sheet formats them.</div></div>'
     +'<div class="seg" style="margin-left:auto">'+[13,26,52].map(function(n){return '<button data-w="'+n+'"'+(shown===n?' class="on"':'')+'>'+n+'w</button>';}).join('')+'</div>'
+    +'<div style="flex-basis:100%">'+strip+'</div>'
     +'</div></div>'
     +'<div class="panel" style="margin-top:14px"><h3>'+esc(selM.metric)+'</h3><div class="hint">Click any metric row below to chart it'+(selM.goal&&selM.goal[1]?' · goal '+esc(selM.goal[1]):'')+'</div>'+chartBox('c_sc',true)+'</div>'
     +'<div class="panel" style="margin-top:14px"><h3>Weekly detail</h3><div class="hint">Newest week first, as in the sheet'+(owners.length?' · owners: '+owners.map(esc).join(', '):'')+'</div><div class="tw" id="scTbl"></div></div>';
@@ -591,6 +618,7 @@ function pgScorecard(m){
   mk('c_sc',cfg);
 
   m.querySelectorAll('[data-w]').forEach(function(b){b.onclick=function(){S.scWeeks=+b.dataset.w;render();};});
+  m.querySelectorAll('[data-t]').forEach(function(b){b.onclick=function(){S.scTab=b.dataset.t;render();};});
   m.querySelectorAll('[data-m]').forEach(function(tr){tr.onclick=function(){S.scMetric=tr.dataset.m;render();};});
 }
 

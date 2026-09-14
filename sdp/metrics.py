@@ -131,16 +131,24 @@ def build_payload(con, through: date | None = None) -> dict:
     # ---- Leadership Scorecard -------------------------------------------------------------------------
     # Company-wide, not per-location, so it rides in the payload once rather than under each location. Weeks
     # are ordered newest-first in the sheet; the page reverses them for charting.
+    sc_tabs = _rows(con, "SELECT tab, rows, cols, truncated, grid FROM scorecard_tabs ORDER BY seq")
     sc_rows = _rows(con, "SELECT metric, owner, seq FROM scorecard GROUP BY metric ORDER BY MIN(seq)")
+    if sc_tabs:
+        import json as _json
+        payload["scorecard"]["tabs"] = [{"name": t["tab"], "rows": t["rows"], "cols": t["cols"],
+                                         "truncated": bool(t["truncated"]), "grid": _json.loads(t["grid"] or "[]")} for t in sc_tabs]
     if sc_rows:
         goals = {r["metric"]: [r["value"], r["display"]] for r in _rows(con, "SELECT metric, value, display FROM scorecard_goals")}
         weeks = [r["week"] for r in _rows(con, "SELECT week, MAX(seq) s FROM scorecard GROUP BY week ORDER BY MIN(rowid)")]
         cells = {}
         for r in _rows(con, "SELECT metric, week, value, display FROM scorecard"):
             cells.setdefault(r["metric"], {})[r["week"]] = [_r(r["value"]) if r["value"] is not None else None, r["display"]]
-        payload["scorecard"] = {"weeks": weeks,
-                               "metrics": [{"metric": r["metric"], "owner": r["owner"], "goal": goals.get(r["metric"]),
-                                            "cells": cells.get(r["metric"], {})} for r in sc_rows]}
+        payload["scorecard"]["weeks"] = weeks
+        payload["scorecard"]["metrics"] = [{"metric": r["metric"], "owner": r["owner"], "goal": goals.get(r["metric"]),
+                                            "cells": cells.get(r["metric"], {})} for r in sc_rows]
+    if payload["scorecard"].get("tabs"):
+        n = sum(len(_t["grid"]) for _t in payload["scorecard"]["tabs"])
+        log.info("scorecard: %d tabs, %d rows total", len(payload["scorecard"]["tabs"]), n)
 
     return payload
 
