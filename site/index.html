@@ -60,6 +60,10 @@ main{padding:16px 18px 40px;max-width:1500px;margin:0 auto}
    side rather than the portal's pill nav, denser type, and no tiles. The look should tell you at
    a glance that you are reading the company's own sheet rather than live POS numbers. */
 body.sheetmode #main{background:#f2f1ec}
+#usageWrap{position:fixed;inset:0;background:rgba(11,11,11,.45);z-index:40;display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto}
+#usageBox{background:var(--surface);border-radius:12px;max-width:900px;width:100%;padding:18px 20px;box-shadow:0 18px 50px rgba(0,0,0,.25)}
+#usageBox h3{font-size:15px;color:var(--navy)}
+#usageBox .x{float:right;background:transparent;border:0;font-size:20px;line-height:1;color:var(--muted);cursor:pointer}
 .wb{display:grid;grid-template-columns:230px minmax(0,1fr);gap:0;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--surface)}
 .wb .rail{background:#f7f6f2;border-right:1px solid var(--border);padding:8px 0;max-height:calc(100vh - 150px);overflow-y:auto}
 .wb .rail h4{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);padding:6px 14px 4px}
@@ -125,6 +129,7 @@ table.t td.n{font-weight:700;color:var(--navy);white-space:normal;min-width:120p
   <div class="brand">BIG GROVE <span>STORE DIRECTOR PORTAL</span></div>
   <nav id="nav"></nav>
   <div class="who" id="who"></div>
+  <button id="usage" class="signout" title="Portal usage" hidden>Usage</button>
   <button id="signout" class="signout" title="Sign out">Sign out</button>
  </header>
  <div class="filters" id="filters">
@@ -260,6 +265,9 @@ function startApp(data,profile){
   $('login').style.display='none'; $('app').style.display='block';
   $('who').innerHTML='<b>'+esc(P.name||P.email)+'</b> · '+esc(P.role||'');
   $('signout').onclick=signOut;
+  // Admins only. The button is hidden for everyone else, but that is cosmetic — the backend checks the
+  // session's own role before returning anything, so hiding it is convenience, not the control.
+  if(/^admin/i.test(P.role||'')){ $('usage').hidden=false; $('usage').onclick=showUsage; }
   // If the page itself is older than the published build, the browser is serving a cached index.html and the
   // user is looking at yesterday's app with today's data. Say so plainly rather than letting them wonder why
   // a change "did not ship".
@@ -710,6 +718,53 @@ function scChart(SC){
   cfg.options.plugins.tooltip={callbacks:{label:function(c){var w=series[c.dataIndex];
     return ' '+(c.dataset.label==='Goal'?('Goal: '+(pct?fp(goal,1):fm(goal))):disp(selM,w));}}};
   mk('c_sc',cfg);
+}
+
+
+/* ---------- portal usage (admin only) ---------- */
+// The session token lives in the stored auth blob, not on the profile object the app keeps in memory.
+function sessionSid(){ try{ return (JSON.parse(sessionStorage.getItem('sdp_auth')||'{}').sid)||''; }catch(e){ return ''; } }
+
+function showUsage(){
+  var w=document.createElement('div'); w.id='usageWrap';
+  w.innerHTML='<div id="usageBox"><button class="x" title="Close">&times;</button><h3>Portal usage</h3>'
+    +'<div class="hint">Who is actually opening the portal. Live from the sign-in log, not the nightly build.</div>'
+    +'<div id="usageBody" style="margin-top:12px"><div class="empty">Loading…</div></div></div>';
+  document.body.appendChild(w);
+  function close(){ w.remove(); }
+  w.querySelector('.x').onclick=close;
+  w.onclick=function(e){ if(e.target===w) close(); };
+  (async function(){
+    try{
+      var r=await fetch(CFG.API_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},
+        body:JSON.stringify({a:'usage',s:sessionSid()})});
+      var j=await r.json();
+      if(!j.ok){ $('usageBody').innerHTML='<div class="empty">'+esc(j.error||'Could not load usage.')+'</div>'; return; }
+      var ppl=j.people||[], never=j.never||[], rec=j.recent||[];
+      var opens=ppl.reduce(function(p,c){return p+(c.opens||0);},0);
+      var active=ppl.filter(function(x){ return x.last && (Date.now()-new Date(x.last))<7*864e5; }).length;
+      $('usageBody').innerHTML='<div class="grid tiles">'
+        +tile('On the roster',fn(ppl.length+never.length),'')
+        +tile('Signed in at least once',fn(ppl.length),(never.length?'<span class="tg">'+fn(never.length)+' never have</span>':''))
+        +tile('Active in last 7 days',fn(active),'')
+        +tile('Portal opens',fn(opens),'')
+        +'</div>'
+        +'<div class="tw" style="margin-top:14px"><table class="t"><tr><th>Person</th><th>Role</th><th>Locations</th><th class="r">Sign-ins</th><th class="r">Opens</th><th class="r">Days used</th><th>Last seen</th></tr>'
+        +ppl.map(function(x){return '<tr><td class="n">'+esc(x.name||x.email)+'<div class="tg" style="font-weight:400">'+esc(x.email)+'</div></td>'
+          +'<td><span class="pill">'+esc(x.role||'')+'</span></td><td>'+esc(x.locations||'')+'</td>'
+          +'<td class="r">'+fn(x.signins)+'</td><td class="r">'+fn(x.opens)+'</td><td class="r">'+fn(x.activeDays)+'</td>'
+          +'<td>'+(x.last?new Date(x.last).toLocaleString():'—')+'</td></tr>';}).join('')
+        +'</table></div>'
+        +(never.length?('<div class="panel" style="margin-top:14px;border-color:#f3d9d9"><h3>Never signed in</h3>'
+          +'<div class="hint">On the roster but has not opened the portal once.</div>'
+          +'<div class="tw" style="margin-top:8px"><table class="t"><tr><th>Person</th><th>Role</th><th>Locations</th></tr>'
+          +never.map(function(x){return '<tr><td class="n">'+esc(x.name||x.email)+'<div class="tg" style="font-weight:400">'+esc(x.email)+'</div></td><td>'+esc(x.role||'')+'</td><td>'+esc(x.locations||'')+'</td></tr>';}).join('')
+          +'</table></div></div>'):'')
+        +(rec.length?('<div class="hint" style="margin-top:14px">Recent activity</div><div class="tw"><table class="t">'
+          +rec.slice(0,20).map(function(r2){return '<tr><td>'+new Date(r2[0]).toLocaleString()+'</td><td class="n">'+esc(r2[2]||r2[1])+'</td><td>'+esc(r2[3])+'</td></tr>';}).join('')
+          +'</table></div>'):'');
+    }catch(e){ $('usageBody').innerHTML='<div class="empty">Could not reach the sign-in service. '+esc(e.message)+'</div>'; }
+  })();
 }
 
 </script>

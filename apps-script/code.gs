@@ -27,6 +27,7 @@
  *                                    bundles[0] is the data bundle; leadership/admin also get the "scorecard" bundle
  *   {"a":"ping","s":<sid>}         → log a portal open
  *   {"a":"scorecard","k":<key>}    → the Leadership Scorecard tab, for the nightly pipeline (no user session)
+ *   {"a":"usage","s":<sid>}        → portal usage (admins only): who has signed in, how often, and who never has
  */
 
 var ALLOWED_DOMAINS = ['biggrove.com', 'biggrovebrewery.com'];
@@ -54,6 +55,7 @@ function handle(body) {
   if (req.a === 'ping') return doPing(req.s);
   if (req.a === 'signin') return doSignin(String(req.t || ''));
   if (req.a === 'scorecard') return doScorecard(String(req.k || ''));
+  if (req.a === 'usage') return doUsage(String(req.s || ''));
   return { ok: false, error: 'unknown action' };
 }
 
@@ -181,6 +183,72 @@ function doPing(sid) {
   if (!s) return { ok: false, error: 'expired session' };
   logEvent(s.e, s.n, s.r, 'open');
   return { ok: true };
+}
+
+/**
+ * Portal usage, for admins only.
+ *
+ * Served live rather than baked into the nightly bundle: usage changes by the hour, and a figure that is up to
+ * 24 hours stale would be read as current. It is also the one view whose subject is the team rather than the
+ * business, so it is gated on the session's own role -- not on a shared key, and not on the client simply
+ * choosing to show a button.
+ *
+ * The roster is joined in deliberately: who has NEVER signed in is the question worth answering when a portal
+ * is new, and a log of events alone can only show you the people who already turned up.
+ */
+function doUsage(sid) {
+  var s = readSid(sid);
+  if (!s) return { ok: false, error: 'not signed in' };
+  if (!/^admin/i.test(String(s.r || ''))) return { ok: false, error: 'not permitted' };
+
+  var ss = SpreadsheetApp.openById(prop('SHEET_ID'));
+  var log = ss.getSheetByName('Logins');
+  var by = {}, recent = [];
+  if (log && log.getLastRow() > 1) {
+    var rows = log.getRange(2, 1, log.getLastRow() - 1, 5).getValues();
+    for (var i = 0; i < rows.length; i++) {
+      var when = rows[i][0], email = String(rows[i][1] || '').toLowerCase(), ev = String(rows[i][4] || '');
+      if (!email) continue;
+      var o = by[email] || (by[email] = { email: email, name: rows[i][2], role: rows[i][3], signins: 0, opens: 0, last: null, days: {} });
+      if (ev === 'signin') o.signins++; else o.opens++;
+      if (when instanceof Date) {
+        if (!o.last || when > o.last) o.last = when;
+        o.days[Utilities.formatDate(when, Session.getScriptTimeZone(), 'yyyy-MM-dd')] = 1;
+      }
+    }
+    var tail = rows.slice(Math.max(0, rows.length - 40));
+    for (var t = tail.length - 1; t >= 0; t--) {
+      recent.push([tail[t][0] instanceof Date ? tail[t][0].toISOString() : String(tail[t][0]),
+                   String(tail[t][1] || ''), String(tail[t][2] || ''), String(tail[t][4] || '')]);
+    }
+  }
+
+  var people = [], never = [];
+  var rs = rosterSheet(ss);
+  if (rs && rs.getLastRow() > 1) {
+    var r = rs.getRange(2, 1, rs.getLastRow() - 1, 4).getValues();
+    for (var k = 0; k < r.length; k++) {
+      var em = String(r[k][0] || '').toLowerCase().trim();
+      if (!em) continue;
+      var hit = by[em];
+      if (hit) {
+        people.push({ email: em, name: r[k][1] || hit.name, role: r[k][2], locations: r[k][3],
+                      signins: hit.signins, opens: hit.opens, activeDays: Object.keys(hit.days).length,
+                      last: hit.last ? hit.last.toISOString() : null });
+        delete by[em];
+      } else {
+        never.push({ email: em, name: r[k][1], role: r[k][2], locations: r[k][3] });
+      }
+    }
+  }
+  // Anyone in the log but not on the roster -- removed since, or signed in under a different address.
+  for (var left in by) {
+    people.push({ email: left, name: by[left].name, role: by[left].role, locations: '(not on roster)',
+                  signins: by[left].signins, opens: by[left].opens, activeDays: Object.keys(by[left].days).length,
+                  last: by[left].last ? by[left].last.toISOString() : null });
+  }
+  people.sort(function (a, b) { return String(b.last || '').localeCompare(String(a.last || '')); });
+  return { ok: true, people: people, never: never, recent: recent, generated_at: new Date().toISOString() };
 }
 
 // ---- helpers --------------------------------------------------------------------------------------------
