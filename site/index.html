@@ -52,6 +52,28 @@ main{padding:16px 18px 40px;max-width:1500px;margin:0 auto}
 .tile .d{font-size:12px;color:var(--ink2);margin-top:5px;display:flex;gap:8px;flex-wrap:wrap}
 .tile .d .up{color:var(--good);font-weight:700}.tile .d .dn{color:var(--bad);font-weight:700}
 .tile .d .tg{color:var(--muted)}
+/* ---- scorecard: a workbook, not a dashboard ------------------------------------------------
+   Deliberately unlike the POS pages: paper-white ground, a spreadsheet-style tab rail down the
+   side rather than the portal's pill nav, denser type, and no tiles. The look should tell you at
+   a glance that you are reading the company's own sheet rather than live POS numbers. */
+body.sheetmode #main{background:#f2f1ec}
+.wb{display:grid;grid-template-columns:230px minmax(0,1fr);gap:0;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--surface)}
+.wb .rail{background:#f7f6f2;border-right:1px solid var(--border);padding:8px 0;max-height:calc(100vh - 150px);overflow-y:auto}
+.wb .rail h4{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);padding:6px 14px 4px}
+.wb .rail button{display:block;width:100%;text-align:left;background:transparent;border:0;border-left:3px solid transparent;
+  padding:7px 12px 7px 11px;font-size:12.5px;color:var(--ink2);cursor:pointer;line-height:1.25}
+.wb .rail button:hover{background:#efeee8;color:var(--ink)}
+.wb .rail button.on{background:var(--surface);border-left-color:var(--green);color:var(--navy);font-weight:700}
+.wb .doc{padding:16px 18px;min-width:0}
+.wb .doc h2{font-size:17px;color:var(--navy);margin:0 0 2px}
+.wb .src{font-size:11.5px;color:var(--muted);margin-bottom:12px}
+.wb table.t{font-size:12px}
+.wb table.t th{background:#f7f6f2;position:sticky;top:0;z-index:1}
+.wb table.t td{border-bottom:1px solid #f0efe9}
+.wb table.t tr:hover td{background:#fbfbf8}
+@media(max-width:820px){.wb{grid-template-columns:1fr}.wb .rail{max-height:none;border-right:0;border-bottom:1px solid var(--border);display:flex;flex-wrap:wrap;gap:2px;padding:8px}
+  .wb .rail h4{display:none}.wb .rail button{width:auto;border-left:0;border-radius:999px;padding:5px 10px;font-size:12px}
+  .wb .rail button.on{background:var(--navy);color:#fff}}
 .panel{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;min-width:0;overflow-x:auto}
 .panel h3{font-size:13px;color:var(--navy);margin-bottom:2px}
 .panel .hint{font-size:11.5px;color:var(--muted);margin-bottom:10px}
@@ -101,7 +123,7 @@ table.t td.n{font-weight:700;color:var(--navy);white-space:normal;min-width:120p
   <nav id="nav"></nav>
   <div class="who" id="who"></div>
  </header>
- <div class="filters">
+ <div class="filters" id="filters">
   <label>Location</label><select id="locSel"></select>
   <label>Range</label>
   <div class="seg" id="rangeSeg"></div>
@@ -277,6 +299,12 @@ function lineCfg(labels,sets){ return {type:'line',data:{labels:labels,datasets:
 /* ---- pages ---- */
 function render(){
   killCharts();
+  // The scorecard comes from a Google Sheet, not the POS: location, date range and the prior-period
+  // comparison are all meaningless against it, so the filter bar is hidden rather than left there
+  // looking operative.
+  var sc=(S.page==='scorecard');
+  $('filters').style.display=sc?'none':'';
+  document.body.classList.toggle('sheetmode',sc);
   document.querySelectorAll('#rangeSeg button').forEach(function(b){b.classList.toggle('on',b.dataset.p===S.preset);});
   document.querySelectorAll('#cmpSeg button').forEach(function(b){b.classList.toggle('on',b.dataset.c===S.cmp);});
   document.querySelectorAll('#nav button').forEach(function(b){b.classList.toggle('on',b.dataset.p===S.page);});
@@ -532,6 +560,115 @@ function pgActivations(m){
     +'<div style="overflow-x:auto"><table class="t"><tr><th>Date</th><th>Location</th><th>Activation</th><th>Type</th><th>Owner</th><th class="r">Cost</th><th class="r">Booked</th><th class="r">Net sales</th><th class="r">Baseline</th><th class="r">Lift</th><th class="r">Lift ÷ cost</th><th>Notes</th></tr>'
     +rows.map(function(r){return '<tr><td>'+fdate(r.x.s)+(r.days>1?'–'+fdate(r.x.e):'')+'</td><td>'+esc(r.loc)+'</td><td class="n">'+esc(r.x.name)+'</td><td><span class="pill">'+esc(r.x.type||'')+'</span></td><td>'+esc(r.x.owner||'')+'</td><td class="r">'+(r.x.src==='tripleseat'?'—':fm(r.x.cost))+'</td><td class="r">'+(r.value!=null?fm(r.value):'—')+'</td><td class="r">'+fm(r.net)+'</td><td class="r">'+(r.baseline!=null?fm(r.baseline):'—')+'</td><td class="r"'+(r.lift!=null?' style="color:'+(r.lift>=0?'var(--good)':'var(--bad)')+';font-weight:700"':'')+'>'+(r.lift!=null?(r.lift>=0?'+':'')+fm(r.lift):'—')+'</td><td class="r">'+(r.roi!=null?r.roi.toFixed(1)+'×':'—')+'</td><td style="white-space:normal;max-width:260px">'+esc(r.x.notes||'')+'</td></tr>';}).join('')+'</table></div></div>';
   m.querySelectorAll('[data-as]').forEach(function(b){b.onclick=function(){S.actSrc=b.dataset.as;render();};});
+}
+
+function pgLocations(m){
+  var a=S.d0,b=S.d1,cw=cmpWindow();
+  // A location that opened partway through the window has no comparable prior period: comparing a full range
+  // against days before it existed reports growth that is really just the opening. Suppress the delta instead.
+  var rows=D.locations.map(function(l){ var s=sumRows(rowsIn(l.id,a,b)), p=sumRows(rowsIn(l.id,cw[0],cw[1]));
+    return {l:l,s:s,p:p,partial:(l.first_date&&cw[0]<l.first_date)}; });
+  var anyNew=rows.some(function(r){return r.partial;});
+  m.innerHTML='<div class="panel"><h3>Location scorecard</h3><div class="hint">All locations for the selected range; change vs '+(S.cmp==='ly'?'last year':'prior period')+(anyNew?'. Locations marked <span class="pill">new</span> opened partway through this window, so there is no comparable prior period and their change is shown as —.':'')+'</div><div style="overflow-x:auto"><table class="t"><tr><th>Location</th><th class="r">Net sales</th><th class="r">Δ</th><th class="r">Guests</th><th class="r">Avg check</th><th class="r">PPA</th><th class="r">Labor %</th><th class="r">Purch %</th><th class="r">SPLH</th><th class="r">Discounts</th></tr>'
+    +rows.map(function(r,i){var s=r.s,p=r.p;var d=(p.net&&!r.partial)?(s.net-p.net)/p.net:null;return '<tr><td class="n"><i class="sw" style="background:'+css(LOCCOL[i%8])+'"></i>'+esc(r.l.name)+(r.partial?' <span class="pill" title="Opened '+fdate(r.l.first_date)+' — no comparable prior period">new</span>':'')+'</td><td class="r">'+fm(s.net)+'</td><td class="r" style="color:'+(d>=0?'var(--good)':'var(--bad)')+';font-weight:700">'+(d!=null?(d>=0?'+':'')+fp(d):'—')+'</td><td class="r">'+fn(s.guests)+'</td><td class="r">'+fm(s.checks?s.net/s.checks:null,2)+'</td><td class="r">'+fm(s.guests?s.net/s.guests:null,2)+'</td><td class="r">'+fp(s.net?s.lc/s.net:null)+'</td><td class="r">'+fp(s.net?s.p/s.net:null)+'</td><td class="r">'+fm(s.lh?s.net/s.lh:null,0)+'</td><td class="r">'+fm(s.disc)+'</td></tr>';}).join('')+'</table></div></div>'
+    +'<div class="grid cols2" style="margin-top:14px">'+panel('Net sales by week by location','',chartBox('c_locs',true))+panel('Labor % by week by location','',chartBox('c_loclab',true))+'</div>';
+  var wkAll={}; D.locations.forEach(function(l){rowsIn(l.id,a,b).forEach(function(r){var d=pd(r[0]);d.setDate(d.getDate()-((d.getDay()+6)%7));var w=ds(d);var o=wkAll[w]||(wkAll[w]={_n:0});if(l.id===D.locations[0].id)o._n++;var q=o[l.id]||(o[l.id]={net:0,lc:0});q.net+=r[K.net];q.lc+=r[K.lc];});});
+  var wks=Object.keys(wkAll).sort();
+  var c1=lineCfg(wks.map(function(w){return wkLabel(w,wkAll[w]);}),D.locations.map(function(l,i){return {label:l.name,data:wks.map(function(w){return wkAll[w][l.id]?wkAll[w][l.id].net:null;}),borderColor:css(LOCCOL[i%8])};})); c1.options.plugins.legend={display:true,position:'bottom'}; mk('c_locs',c1);
+  var c2=lineCfg(wks.map(function(w){return wkLabel(w,wkAll[w]);}),D.locations.map(function(l,i){return {label:l.name,data:wks.map(function(w){var q=wkAll[w][l.id];return q&&q.net?q.lc/q.net:null;}),borderColor:css(LOCCOL[i%8]),fmt:'pct'};})); c2.options.plugins.legend={display:true,position:'bottom'}; c2.options.scales.y.ticks.callback=function(v){return fp(v,0);}; mk('c_loclab',c2);
+}
+
+/* ---------- Leadership Scorecard (Google Sheets, shown as the sheet formats it) ---------- */
+function hasScorecard(){ return !!(D.scorecard && (((D.scorecard.metrics||[]).length)||((D.scorecard.tabs||[]).length))); }
+function scTabs(){ return (D.scorecard.tabs||[]); }
+// Tabs other than the headline scorecard have no common shape, so they are rendered as the sheet's own grid:
+// first row as headers, blank-padded columns dropped, numeric-looking cells right-aligned.
+function scGrid(t){
+  var g=t.grid||[]; if(!g.length) return '<div class="empty">This tab has no cell data — it may be chart-only.</div>';
+  var w=0; g.forEach(function(r){ for(var i=r.length-1;i>=0;i--){ if(String(r[i]).trim()){ if(i+1>w)w=i+1; break; } } });
+  if(!w) return '<div class="empty">This tab is empty.</div>';
+  function isNum(v){ return /^[-+(]?[$]?[\d,]+(\.\d+)?[%)]?$/.test(String(v).trim()) && /\d/.test(String(v)); }
+  var head=g[0]||[], body=g.slice(1);
+  var h='<div class="tw"><table class="t"><tr>'+Array.from({length:w}).map(function(_,i){return '<th'+(isNum(body.length&&body[0]?body[0][i]:'')?' class="r"':'')+'>'+esc(head[i]||'')+'</th>';}).join('')+'</tr>';
+  h+=body.map(function(r){
+    var blank=true; for(var i=0;i<w;i++) if(String(r[i]||'').trim()) blank=false;
+    if(blank) return '<tr><td colspan="'+w+'" style="height:6px;border:0"></td></tr>';
+    return '<tr>'+Array.from({length:w}).map(function(_,i){var v=String(r[i]||'');return '<td'+(isNum(v)?' class="r"':(i===0||i===1?' class="n"':''))+'>'+esc(v)+'</td>';}).join('')+'</tr>';
+  }).join('');
+  return h+'</table></div>'+(t.truncated?'<div class="hint" style="margin-top:6px">Showing the first '+fn(g.length)+' of '+fn(t.rows)+' rows and '+fn(Math.min(w,t.cols))+' of '+fn(t.cols)+' columns — this tab was capped so the portal stays quick to load.</div>':'');
+}
+function scWeeks(){ return (D.scorecard.weeks||[]).slice(); }
+
+function pgScorecard(m){
+  if(!hasScorecard()){ m.innerHTML='<div class="panel"><h3>Leadership Scorecard</h3><div class="empty">No scorecard data yet.</div></div>'; return; }
+  var SC=D.scorecard, tabs=scTabs(), primary=SC.sheet||'', cur=S.scTab||primary;
+  if(!tabs.filter(function(t){return t.name===cur;}).length && tabs.length) cur=tabs[0].name;
+
+  var rail='<div class="rail"><h4>'+esc(SC.workbook||'Workbook')+'</h4>'
+    +tabs.map(function(t){return '<button data-t="'+esc(t.name)+'"'+(t.name===cur?' class="on"':'')+'>'+esc(t.name)+'</button>';}).join('')
+    +'</div>';
+
+  var body;
+  if(cur===primary && (SC.metrics||[]).length){ body=scPrimary(SC); }
+  else{
+    var t=tabs.filter(function(x){return x.name===cur;})[0];
+    body='<h2>'+esc(cur)+'</h2><div class="src">Shown as the sheet formats it.</div>'+(t?scGrid(t):'<div class="empty">Tab not found.</div>');
+  }
+
+  m.innerHTML='<div class="wb">'+rail+'<div class="doc">'+body+'</div></div>';
+  if(cur===primary && (SC.metrics||[]).length) scChart(SC);
+  m.querySelectorAll('[data-t]').forEach(function(b){b.onclick=function(){S.scTab=b.dataset.t;S.scMetric=null;render();};});
+  m.querySelectorAll('[data-w]').forEach(function(b){b.onclick=function(){S.scWeeks=+b.dataset.w;render();};});
+  m.querySelectorAll('[data-m]').forEach(function(tr){tr.onclick=function(){S.scMetric=tr.dataset.m;render();};});
+}
+
+// The headline tab is the one with a known shape (owner / metric / goal / weekly cells), so it gets a real
+// reading layout: pick a metric, see it plotted against its goal, with the weekly grid underneath.
+function scPrimary(SC){
+  var weeks=scWeeks(), mets=SC.metrics||[];
+  var shown=Math.min(weeks.length,S.scWeeks||13);
+  var sel=S.scMetric||(mets.filter(function(x){return Object.keys(x.cells||{}).length>2;})[0]||mets[0]).metric;
+  var selM=mets.filter(function(x){return x.metric===sel;})[0]||mets[0];
+  function disp(mt,w){ var c=(mt.cells||{})[w]; return c?c[1]:'—'; }
+  var wk=weeks.slice(0,shown);
+  var h='<h2>'+esc(SC.sheet||'')+'</h2><div class="src">From '+esc(SC.workbook||'Google Sheets')+' · refreshed nightly · figures shown exactly as the sheet formats them</div>'
+    +'<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:8px">'
+    +'<div style="font-weight:700;color:var(--navy)">'+esc(selM.metric)+'</div>'
+    +(selM.goal&&selM.goal[1]?'<div class="hint">goal '+esc(selM.goal[1])+'</div>':'')
+    +'<div class="seg" style="margin-left:auto">'+[13,26,52].map(function(n){return '<button data-w="'+n+'"'+(shown===n?' class="on"':'')+'>'+n+'w</button>';}).join('')+'</div></div>'
+    +chartBox('c_sc',true)
+    +'<div class="hint" style="margin:14px 0 6px">Click a row to plot it. Newest week first, as in the sheet.</div>'
+    +'<div class="tw"><table class="t"><tr><th>Owner</th><th>Metric</th><th class="r">Goal</th>'
+    +wk.map(function(w){return '<th class="r">'+esc(w)+'</th>';}).join('')+'</tr>'
+    +mets.map(function(x){
+        return '<tr data-m="'+esc(x.metric)+'" style="cursor:pointer'+(x.metric===sel?';background:#f4f7ff':'')+'">'
+          +'<td>'+(x.owner?'<span class="pill">'+esc(x.owner)+'</span>':'')+'</td>'
+          +'<td class="n">'+esc(x.metric)+'</td>'
+          +'<td class="r">'+(x.goal&&x.goal[1]?esc(x.goal[1]):'—')+'</td>'
+          +wk.map(function(w){return '<td class="r">'+esc(disp(x,w))+'</td>';}).join('')+'</tr>';
+      }).join('')+'</table></div>';
+  return h;
+}
+
+function scChart(SC){
+  var weeks=scWeeks(), mets=SC.metrics||[];
+  var shown=Math.min(weeks.length,S.scWeeks||13);
+  var sel=S.scMetric||(mets.filter(function(x){return Object.keys(x.cells||{}).length>2;})[0]||mets[0]).metric;
+  var selM=mets.filter(function(x){return x.metric===sel;})[0]||mets[0];
+  function num(mt,w){ var c=(mt.cells||{})[w]; return c&&c[0]!=null?c[0]:null; }
+  function disp(mt,w){ var c=(mt.cells||{})[w]; return c?c[1]:'—'; }
+  // The sheet reads newest-first; a time series has to run forwards to mean anything, so reverse for the chart.
+  var series=weeks.slice().reverse().slice(-shown);
+  var goal=selM.goal&&selM.goal[0]!=null?selM.goal[0]:null;
+  var pct=/%$/.test((disp(selM,series[series.length-1])||'').trim());
+  var sets=[{label:selM.metric,data:series.map(function(w){return num(selM,w);}),borderColor:css('s1'),fill:false}];
+  if(goal!=null) sets.push({label:'Goal',data:series.map(function(){return goal;}),borderColor:css('s3'),borderDash:[5,4],pointRadius:0});
+  var cfg=lineCfg(series,sets);
+  cfg.options.plugins.legend={display:goal!=null,position:'bottom'};
+  if(pct) cfg.options.scales.y.ticks.callback=function(v){return fp(v,1);};
+  cfg.options.plugins.tooltip={callbacks:{label:function(c){var w=series[c.dataIndex];
+    return ' '+(c.dataset.label==='Goal'?('Goal: '+(pct?fp(goal,1):fm(goal))):disp(selM,w));}}};
+  mk('c_sc',cfg);
 }
 
 function pgLocations(m){
