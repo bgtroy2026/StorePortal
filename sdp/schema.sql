@@ -283,3 +283,23 @@ CREATE TABLE IF NOT EXISTS scorecard_tabs (
   truncated INTEGER,            -- 1 when the tab was capped, so the portal can say so rather than imply completeness
   grid      TEXT
 );
+
+-- Every discount applied to a check or an item, kept individually rather than summed.
+-- The aggregate `discounts` column answers "how much did we give away"; this answers "to whom, and why" --
+-- separating loyalty redemptions from manager comps, employee meals and promotional pricing. Toast names the
+-- loyalty provider in appliedDiscounts.loyaltyDetails, which is how Thanx redemptions are identified without
+-- integrating Thanx at all.
+CREATE TABLE IF NOT EXISTS toast_discounts (
+  discount_guid   TEXT,                -- appliedDiscount guid; unique per check/selection application
+  order_guid      TEXT,
+  check_guid      TEXT,
+  location_id     TEXT NOT NULL,
+  business_date   TEXT NOT NULL,
+  name            TEXT,                -- as the restaurant named it in Toast
+  discount_type   TEXT,                -- PERCENT / FIXED / OPEN etc.
+  scope           TEXT,                -- 'check' or 'item'
+  loyalty_vendor  TEXT,                -- from loyaltyDetails.vendor, e.g. the loyalty provider
+  amount          REAL DEFAULT 0,
+  PRIMARY KEY (discount_guid, scope)
+);
+CREATE INDEX IF NOT EXISTS ix_toast_disc_day ON toast_discounts (location_id, business_date);

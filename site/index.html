@@ -394,6 +394,7 @@ function pgSales(m){
     +panel('Hourly heatmap','Average net sales by hour and weekday, last 8 weeks (from item timestamps)',T?'<div id="heat"></div>':needToast('The hourly heatmap'))
     +panel('Top items — last 28 days','Ranked by net sales; category color shown',T?'<div id="topItems"></div>':needToast('Item ranking'))
     +panel('Dining option & tender — last 28 days','How guests ordered and paid',T?'<div id="dining"></div>':needToast('Dining-option and tender mix'))
+    +panel('Discounts & comps — last 28 days','By reason, with loyalty redemptions identified',T?'<div id="disc"></div>':needToast('The discount breakdown'))
     +'</div>';
   m.innerHTML=h;
   var cur=byDate(a,b), wk={}; cur.forEach(function(r){var d=pd(r.d);d.setDate(d.getDate()-((d.getDay()+6)%7));var w=ds(d);var o=wk[w]||(wk[w]={_n:0});o._n++;BUCKETS.forEach(function(bk){o[bk[1]]=(o[bk[1]]||0)+(r[bk[1]]||0);});});
@@ -408,6 +409,20 @@ function pgSales(m){
   var dn=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'], hh='<div class="heat"><div></div>'+hrs.map(function(x){return '<div class="h">'+(x>12?x-12+'p':x===12?'12p':x+'a')+'</div>';}).join('');
   [1,2,3,4,5,6,0].forEach(function(d){ hh+='<div class="h" style="text-align:left;line-height:26px">'+dn[d]+'</div>'+hrs.map(function(x){var v=grid[d+':'+x]||0;var t=max?v/max:0;return '<div class="c" data-t="'+dn[d]+' '+x+':00 — '+fm(v)+'" style="background:rgba(42,120,214,'+(0.08+0.92*t).toFixed(2)+')"></div>';}).join(''); });
   $('heat').innerHTML=hh+'</div>';
+  // Discounts by reason. Toast attributes loyalty redemptions to a provider in the discount record, so the
+  // loyalty share is readable here without integrating the loyalty platform separately.
+  var dd={}; locIds().forEach(function(l){(D.discounts&&D.discounts[l]||[]).forEach(function(r){
+    var k=r[0]+'||'+(r[1]||''); var o=dd[k]||(dd[k]={name:r[0],vendor:r[1],amt:0,n:0}); o.amt+=r[2]; o.n+=r[3];});});
+  var dl=Object.keys(dd).map(function(k){return dd[k];}).sort(function(a,b){return b.amt-a.amt;});
+  var dtot=dl.reduce(function(p,c){return p+c.amt;},0);
+  var loy=dl.filter(function(x){return x.vendor;}).reduce(function(p,c){return p+c.amt;},0);
+  $('disc').innerHTML=dl.length?('<div class="hint" style="margin-bottom:8px">'+fm(dtot)+' total'
+      +(loy?' · <b>'+fm(loy)+'</b> loyalty ('+fp(loy/dtot)+')':' · no discounts attributed to a loyalty provider')+'</div>'
+    +'<div class="tw"><table class="t"><tr><th>Reason</th><th>Source</th><th class="r">Amount</th><th class="r">Count</th><th class="r">Share</th></tr>'
+    +dl.slice(0,20).map(function(x){return '<tr><td class="n">'+esc(x.name)+'</td><td>'+(x.vendor?'<span class="pill" style="background:#e6f4ea;color:var(--good)">'+esc(x.vendor)+'</span>':'<span class="tg">comp / promo</span>')+'</td>'
+      +'<td class="r">'+fm(x.amt)+'</td><td class="r">'+fn(x.n)+'</td><td class="r">'+fp(dtot?x.amt/dtot:null)+'</td></tr>';}).join('')
+    +'</table></div>'):'<div class="empty">No discounts recorded in this window.</div>';
+
   // top items (sum across selected locations)
   var ti={}; locIds().forEach(function(l){(D.top_items[l]||[]).forEach(function(r){var o=ti[r[0]]||(ti[r[0]]={b:r[1],q:0,n:0});o.q+=r[2];o.n+=r[3];});});
   var list=Object.keys(ti).map(function(n){return [n,ti[n]];}).sort(function(x,y){return y[1].n-x[1].n;}).slice(0,20);

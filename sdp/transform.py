@@ -72,6 +72,20 @@ class Buckets:
 
 # ---------------------------------------------------------------- Toast
 
+def _disc_row(d: dict, o: dict, c: dict, slug: str, bd: str, scope: str) -> dict | None:
+    """One applied discount. Toast puts the loyalty provider in loyaltyDetails, which is what lets a Thanx
+    redemption be told apart from a manager comp without integrating Thanx."""
+    g = d.get("guid") or d.get("discountGuid")
+    if not g:
+        return None
+    ld = d.get("loyaltyDetails") or {}
+    return {"discount_guid": str(g), "order_guid": o.get("guid"), "check_guid": c.get("guid"), "location_id": slug,
+            "business_date": bd, "name": d.get("name") or (d.get("discount") or {}).get("name"),
+            "discount_type": d.get("discountType") or d.get("processingState"), "scope": scope,
+            "loyalty_vendor": ld.get("vendor") or ld.get("vendorId"),
+            "amount": round(float(d.get("discountAmount") or 0), 2)}
+
+
 def load_toast(con, bk: Buckets) -> dict:
     stats = {"orders": 0, "items": 0, "payments": 0, "time_entries": 0}
     # menus first: item guid -> (name, group, sales category)
@@ -93,7 +107,7 @@ def load_toast(con, bk: Buckets) -> dict:
         _upsert(con, "toast_jobs", rows)
 
     for slug, ds, p, j in iter_raw("toast", dataset="orders"):
-        orders, items, pays = [], [], []
+        orders, items, pays, discs = [], [], [], []
         for o in j.get("orders", []):
             bd = _bd(o.get("businessDate"))
             net = tax = tips = disc = svc = refunds = 0.0
@@ -102,10 +116,14 @@ def load_toast(con, bk: Buckets) -> dict:
                 if c.get("voided") or c.get("deleted"):
                     continue
                 net += float(c.get("amount") or 0); tax += float(c.get("taxAmount") or 0)
-                disc += sum(float(d.get("discountAmount") or 0) for d in (c.get("appliedDiscounts") or []))
+                for d in (c.get("appliedDiscounts") or []):
+                    disc += float(d.get("discountAmount") or 0)
+                    discs.append(_disc_row(d, o, c, slug, bd, "check"))
                 svc += sum(float(s.get("chargeAmount") or 0) for s in (c.get("appliedServiceCharges") or []))
                 for s in c.get("selections") or []:
-                    disc += sum(float(d.get("discountAmount") or 0) for d in (s.get("appliedDiscounts") or []))
+                    for d in (s.get("appliedDiscounts") or []):
+                        disc += float(d.get("discountAmount") or 0)
+                        discs.append(_disc_row(d, o, c, slug, bd, "item"))
                     meta = item_cat.get((slug, (s.get("item") or {}).get("guid")))
                     sc = (s.get("salesCategory") or {}).get("name") or (meta[2] if meta else None)
                     items.append({"selection_guid": s["guid"], "order_guid": o["guid"], "check_guid": c["guid"], "location_id": slug, "business_date": bd,
@@ -130,9 +148,11 @@ def load_toast(con, bk: Buckets) -> dict:
             con.execute("DELETE FROM toast_order_items WHERE location_id=? AND business_date=?", (slug, orders[0]["business_date"]))
             con.execute("DELETE FROM toast_payments WHERE location_id=? AND business_date=?", (slug, orders[0]["business_date"]))
             con.execute("DELETE FROM toast_orders WHERE location_id=? AND business_date=?", (slug, orders[0]["business_date"]))
+            con.execute("DELETE FROM toast_discounts WHERE location_id=? AND business_date=?", (slug, orders[0]["business_date"]))
         stats["orders"] += _upsert(con, "toast_orders", orders)
         stats["items"] += _upsert(con, "toast_order_items", items)
         stats["payments"] += _upsert(con, "toast_payments", pays)
+        stats["discounts"] = stats.get("discounts", 0) + _upsert(con, "toast_discounts", [d for d in discs if d])
 
     for slug, ds, p, j in iter_raw("toast", dataset="timeEntries"):
         rows = []

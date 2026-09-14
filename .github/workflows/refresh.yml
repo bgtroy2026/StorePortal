@@ -17,6 +17,11 @@ on:
         description: "Only run the connectivity diagnostics (MarginEdge + Toast)"
         type: boolean
         default: false
+      source:
+        description: "Limit the pull to one source (lets Toast be re-pulled without restarting MarginEdge)"
+        type: choice
+        default: all
+        options: [all, toast, marginedge, tripleseat, scorecard]
 
 permissions:
   contents: write     # release asset (warehouse state)
@@ -70,7 +75,7 @@ jobs:
 
       - name: Pull from MarginEdge + Toast
         if: ${{ !inputs.mock && !inputs.diag }}
-        run: python -m sdp pull ${{ inputs.backfill && '--backfill' || '' }}
+        run: python -m sdp pull --source ${{ inputs.source || 'all' }} ${{ inputs.backfill && '--backfill' || '' }}
 
       - name: Pull (mock data)
         if: ${{ inputs.mock && !inputs.diag }}
