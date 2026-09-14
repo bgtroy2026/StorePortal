@@ -41,7 +41,10 @@ concurrency:
 jobs:
   recent:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # 350, not 90: this job also runs a Toast backfill when `backfill` is set, which is hours of paging, and a
+    # 90-minute ceiling would kill it partway. The real limits are the per-source budgets in config/settings.json
+    # (Toast 240 min, MarginEdge 300) — those stop cleanly and resume, whereas a job timeout just loses the work.
+    timeout-minutes: 350
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
