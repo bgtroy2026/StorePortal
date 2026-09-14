@@ -1,12 +1,12 @@
 {
-  "_comment": "One entry per taproom. toast_guid from `python -m sdp toast-diag` (Toast standard-API credentials); marginedge_unit_id optional \u2014 units are matched by me_name. Solon has no toast_guid yet: it was not included in the Toast API credentials, so Toast data is skipped for it until the credentials are edited in Toast Web > Integrations > Toast API access > Manage credentials.",
+  "_comment": "One entry per taproom. toast_guid from `python -m sdp toast-diag` (Toast standard-API credentials); marginedge_unit_id optional \u2014 units are matched by me_name. All six units are on the 'Store Director Portal' Toast credential; Solon's GUID was read from Toast Web (restaurantInfo.restaurantGuid) because it did not appear in /partners/v1/restaurants.",
   "locations": [
     {
       "slug": "solon",
       "name": "Solon",
       "short": "SOL",
       "me_name": "Big Grove Brewpub - Solon",
-      "toast_guid": "",
+      "toast_guid": "d05e7e60-0284-4b74-a083-607ed9dd1d73",
       "marginedge_unit_id": "",
       "timezone": "America/Chicago",
       "opened": "2013-09-01",
