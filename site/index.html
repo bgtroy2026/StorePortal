@@ -185,21 +185,39 @@ function signOut(){
 async function boot(auth){
   try{ if(auth.sid) navigator.sendBeacon(CFG.API_URL, JSON.stringify({a:'ping',s:auth.sid})); }catch(e){}
   $('bar').style.display='block'; setStatus('Loading portal data…');
-  // bundles[0] is the data bundle: 'all' for leadership/admin, else the director's own location (multi-location
-  // directors get 'all', scoped client-side by their roster entry). Any further bundle is an add-on the backend
-  // chose to grant — currently the leadership-only scorecard — and is merged in on top.
-  var b=auth.bundles[0];
-  var buf=await fetchBin('data/'+b.id+'.bin',0,75);
-  setStatus('Decrypting…');
-  var data=JSON.parse(await gunzipText(await decrypt(buf,b.key)));
-  for(var i=1;i<auth.bundles.length;i++){
+  // The backend hands out one bundle per thing this person may see: 'all' for leadership/admin, otherwise one
+  // per taproom they cover, plus the scorecard for admins. They are merged here rather than server-side so a
+  // director's bundles stay the same files everyone else uses.
+  //
+  // Merge rule: 'locations' and 'activations' are lists and concatenate; every other section is keyed by
+  // location id and is assigned key by key. Assigning the whole object would make the last bundle win and a
+  // two-taproom director would silently see only one.
+  var data=null;
+  for(var i=0;i<auth.bundles.length;i++){
     var x=auth.bundles[i];
+    var lo=Math.round(i*(75/auth.bundles.length)), hi=Math.round((i+1)*(75/auth.bundles.length));
     try{
-      var xb=await fetchBin('data/'+x.id+'.bin',75,90);
+      var xb=await fetchBin('data/'+x.id+'.bin',lo,hi);
+      if(i===0) setStatus('Decrypting…');
       var xd=JSON.parse(await gunzipText(await decrypt(xb,x.key)));
-      Object.keys(xd).forEach(function(k){ if(k!=='meta') data[k]=xd[k]; });
-    }catch(e){ /* an add-on that fails to load must never block the portal itself */ }
+      if(!data){ data=xd; continue; }
+      Object.keys(xd).forEach(function(k){
+        if(k==='meta') return;
+        if(Array.isArray(xd[k])){
+          var have={}; (data[k]||[]).forEach(function(v){ have[JSON.stringify(v)]=1; });
+          data[k]=(data[k]||[]).concat(xd[k].filter(function(v){ return !have[JSON.stringify(v)]; }));
+        } else if(xd[k] && typeof xd[k]==='object'){
+          data[k]=data[k]||{};
+          Object.keys(xd[k]).forEach(function(l){ data[k][l]=xd[k][l]; });
+        } else { data[k]=xd[k]; }
+      });
+    }catch(e){
+      // The first bundle failing is fatal — there is no portal without it. A later one is an add-on
+      // (the scorecard, or one taproom of several) and must not stop the rest from opening.
+      if(i===0) throw e;
+    }
   }
+  if(!data) throw new Error('no readable data bundle');
   if(auth.profile.locations && auth.profile.locations!=='all'){
     var allow=String(auth.profile.locations).split(',').map(function(s){return s.trim();});
     data.locations=data.locations.filter(function(l){return allow.indexOf(l.id)>=0;});

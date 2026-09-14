@@ -60,6 +60,7 @@ jobs:
       TRIPLESEAT_REFRESH_TOKEN: ${{ secrets.TRIPLESEAT_REFRESH_TOKEN }}
       TRIPLESEAT_REDIRECT_URI: ${{ vars.TRIPLESEAT_REDIRECT_URI }}
       APPS_SCRIPT_URL: ${{ vars.APPS_SCRIPT_URL }}
+      PORTAL_EPOCH: ${{ vars.PORTAL_EPOCH }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -127,6 +128,7 @@ jobs:
       TOAST_CLIENT_SECRET: ${{ secrets.TOAST_CLIENT_SECRET }}
       TOAST_HOST: ${{ vars.TOAST_HOST }}
       APPS_SCRIPT_URL: ${{ vars.APPS_SCRIPT_URL }}
+      PORTAL_EPOCH: ${{ vars.PORTAL_EPOCH }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

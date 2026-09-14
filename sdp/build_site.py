@@ -19,6 +19,9 @@ OUT_DIR = ROOT / "_site"
 
 def run(secret: str | None = None, dev_json: bool = False) -> dict:
     payload = metrics.run()
+    # The epoch salts every bundle key and file name. Bumping the PORTAL_EPOCH repo variable republishes
+    # everything under new names with new keys, which is what makes a departure actually revocable.
+    epoch = env("PORTAL_EPOCH", "1")
     OUT_DIR.mkdir(exist_ok=True)
     for p in OUT_DIR.iterdir():
         (shutil.rmtree if p.is_dir() else p.unlink)(p)
@@ -44,12 +47,14 @@ def run(secret: str | None = None, dev_json: bool = False) -> dict:
                 obj = {"meta": payload["meta"], "scorecard": scorecard}
             else:
                 obj = payload if label == "all" else metrics.slice_for_location(payload, label.split(":", 1)[1])
-            bid = bundle_id(label)
-            buf = encrypt(obj, derive_key(secret, label))
+            bid = bundle_id(label, epoch)
+            buf = encrypt(obj, derive_key(secret, label, epoch))
             (data / f"{bid}.bin").write_bytes(buf)
             written[label] = {"file": f"data/{bid}.bin", "bytes": len(buf)}
         # a public manifest with only build time + data-through date (no data) so the shell can show freshness pre-login
-    (data / "manifest.json").write_text(json.dumps({"built_at": payload["meta"]["built_at"], "through": payload["meta"]["through"]}))
+    # The epoch is published deliberately: it is a salt, not a secret, and the Apps Script reads it from here
+    # so there is one source of truth rather than two settings that can drift apart.
+    (data / "manifest.json").write_text(json.dumps({"built_at": payload["meta"]["built_at"], "through": payload["meta"]["through"], "epoch": epoch}))
     if dev_json:
         (data / "dev.json").write_text(json.dumps(payload, separators=(",", ":")))
         written["dev.json"] = {"file": "data/dev.json", "bytes": (data / "dev.json").stat().st_size}

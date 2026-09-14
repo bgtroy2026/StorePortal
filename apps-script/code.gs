@@ -36,7 +36,8 @@ var DEFAULTS = {
   CLIENT_ID: '169287489700-t5en62nibhp9ttn24vfimd7k974dgl9i.apps.googleusercontent.com',   // "BG Sales" web client in the Big Grove Portal GCP project
   SHEET_ID:  '1R_W3gWel6rEdQZguf84b7UDJlz5Etn5V4L6AAq6Kg_Q',                                   // "Store Director Roster" sheet
   SCORECARD_SHEET_ID: '1m8aHNL4kmRyKij8aG_4QhgSFUffn2FLT03pTrEtQpZk',                          // "Leadership Scorecard" workbook
-  SCORECARD_TAB: 'All Company Scorecard'
+  SCORECARD_TAB: 'All Company Scorecard',
+  SITE_URL: 'https://bgtroy2026.github.io/StorePortal'   // read for the current bundle epoch (manifest.json)
 };
 function prop(name) { return PropertiesService.getScriptProperties().getProperty(name) || DEFAULTS[name] || null; }
 var SESSION_HOURS = 24;
@@ -165,14 +166,40 @@ function portalAccess(props, role, locs) {
   var all = leadership || locs === 'all' || !locs;
   if (all) return { locations: 'all', bundles: [bundleFor(secret, 'all')].concat(extra) };
   var list = locs.split(',').filter(Boolean);
-  if (list.length === 1) return { locations: list[0], bundles: [bundleFor(secret, 'loc:' + list[0])].concat(extra) };
-  return { locations: list.join(','), bundles: [bundleFor(secret, 'all')].concat(extra) };  // multi-site director: full bundle, client-side allow-list
+  // A director covering several taprooms used to receive the "all" bundle, filtered in the browser. That is
+  // not scoping: anyone who opens devtools sees every location. They now get one bundle PER location they
+  // cover, so the other taprooms' data is absent from what they download rather than merely hidden.
+  var locBundles = list.map(function (l) { return bundleFor(secret, 'loc:' + l); });
+  return { locations: list.join(','), bundles: locBundles.concat(extra) };
+}
+
+/**
+ * Current bundle epoch, read from the published manifest so there is ONE source of truth. Configuring it
+ * separately here would mean two settings that can drift apart, and the failure mode of drift is silent:
+ * keys that decrypt nothing, which looks like a broken portal rather than a misconfiguration.
+ * Cached briefly so a burst of sign-ins does not fetch it repeatedly.
+ */
+function currentEpoch() {
+  var cache = CacheService.getScriptCache();
+  var hit = cache.get('epoch');
+  if (hit) return hit;
+  var ep = '1';
+  try {
+    var url = prop('SITE_URL');
+    if (url) {
+      var r = UrlFetchApp.fetch(url.replace(/\/$/, '') + '/data/manifest.json', { muteHttpExceptions: true });
+      if (r.getResponseCode() === 200) ep = String(JSON.parse(r.getContentText()).epoch || '1');
+    }
+  } catch (ignored) {}
+  cache.put('epoch', ep, 300);
+  return ep;
 }
 
 function bundleFor(secret, label) {
-  var dig = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, label, Utilities.Charset.UTF_8);
+  var salted = label + ':' + currentEpoch();
+  var dig = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, salted, Utilities.Charset.UTF_8);
   var hex = dig.map(function (b) { return ('0' + (b & 255).toString(16)).slice(-2); }).join('');
-  var key = Utilities.base64Encode(Utilities.computeHmacSha256Signature(label, secret, Utilities.Charset.UTF_8));
+  var key = Utilities.base64Encode(Utilities.computeHmacSha256Signature(salted, secret, Utilities.Charset.UTF_8));
   return { label: label, id: hex.slice(0, 16), key: key };
 }
 
