@@ -126,10 +126,27 @@ class Budget:
         return not self.exhausted
 
 
-def pull(locations: list[dict], days_back: int, incremental_days: int = 7, have: dict | None = None, max_minutes: float | None = None) -> dict:
+def pull(locations: list[dict], days_back: int, incremental_days: int = 7, have: dict | None = None,
+         max_minutes: float | None = None, recent_days: int = 35) -> dict:
     """Pull for the given locations.
+
     `have` = {"orders": {(slug, orderId)}, "sales_days": {(slug, date)}, "pnl_days": {(slug, date)}, "inventories": {(slug, inventoryId)}}
-    — what the warehouse already holds, so only the incremental window plus gaps are fetched."""
+    — what the warehouse already holds, so only the incremental window plus gaps are fetched.
+
+    ORDER OF WORK MATTERS HERE. MarginEdge allows 1 request/second per key across all endpoints, so a full
+    backfill (400 days x 6 units of invoices, products, reports and inventories) cannot finish inside one run
+    and stops at the time budget. Two rules keep a partial run useful rather than useless:
+
+      1. Recent first. Days are walked newest -> oldest and invoices are detailed newest-first, because the
+         dashboard opens on the last 28 days. Oldest-first would spend the entire budget on history nobody is
+         looking at and leave every default view empty.
+      2. Breadth before depth. Pass one fetches only the recent window for EVERY location; pass two goes back
+         through the full window. Otherwise one location ends up fully backfilled and the rest untouched, which
+         makes the location comparisons silently wrong rather than merely incomplete.
+
+    Both passes are resumable: anything already in the warehouse is skipped, so successive nightly runs walk
+    steadily further back until the history is complete.
+    """
     me = MarginEdge()
     have = have or {}
     have_orders, have_sales, have_pnl, have_inv = (have.get(k, set()) for k in ("orders", "sales_days", "pnl_days", "inventories"))
@@ -137,13 +154,14 @@ def pull(locations: list[dict], days_back: int, incremental_days: int = 7, have:
     end = today_local() - timedelta(days=1)          # last complete business day
     start = end - timedelta(days=days_back)
     inc_start = end - timedelta(days=incremental_days - 1)
-    summary = {}
+    summary: dict = {}
 
     units = me.restaurant_units()
     write_raw("marginedge", "_all", "restaurantUnits", "units", {"restaurants": units})
     log.info("MarginEdge: %d restaurant units visible to this key: %s", len(units), ", ".join(f"{u.get('id')}={u.get('name')}" for u in units))
 
     by_name = {str(u.get("name", "")).strip().lower(): str(u.get("id")) for u in units}
+    resolved = []
     for loc in locations:
         uid = str(loc.get("marginedge_unit_id") or "").strip()
         slug = loc["slug"]
@@ -154,48 +172,78 @@ def pull(locations: list[dict], days_back: int, incremental_days: int = 7, have:
         if not uid:
             log.warning("MarginEdge: %s has no marginedge_unit_id (and no me_name match) in config/locations.json — skipped", slug)
             continue
-        if not budget.ok():
-            break
-        s = {"window": [iso(start), iso(end)]}
-        cats = me.categories(uid); write_raw("marginedge", slug, "categories", "all", {"categories": cats}); s["categories"] = len(cats)
-        vends = me.vendors(uid);   write_raw("marginedge", slug, "vendors", "all", {"vendors": vends}); s["vendors"] = len(vends)
-        prods = me.products(uid);  write_raw("marginedge", slug, "products", "all", {"products": prods}); s["products"] = len(prods)
+        resolved.append((slug, uid))
 
-        # invoices: headers for the whole window (cheap: paginated), detail only where missing / not yet CLOSED
-        orders = me.orders(uid, start, end)
-        write_raw("marginedge", slug, "orders", f"{iso(start)}_{iso(end)}", {"orders": orders, "window": [iso(start), iso(end)]})
-        s["orders"] = len(orders); s["order_details"] = 0
-        for o in orders:
+    statics_done: set[str] = set()
+
+    def pull_window(slug: str, uid: str, w_start, w_end) -> None:
+        s = summary.setdefault(slug, {"orders": 0, "order_details": 0, "sales_days": 0, "pnl_days": 0,
+                                      "inventories": 0, "inventory_details": 0})
+        prev = s.get("window")
+        earliest = min(w_start, date.fromisoformat(prev[0])) if prev else w_start
+        s["window"] = [iso(earliest), iso(end)]
+
+        # Reference data does not vary by window, so fetch it once per location across both passes.
+        if slug not in statics_done and budget.ok():
+            cats = me.categories(uid); write_raw("marginedge", slug, "categories", "all", {"categories": cats}); s["categories"] = len(cats)
+            vends = me.vendors(uid);   write_raw("marginedge", slug, "vendors", "all", {"vendors": vends}); s["vendors"] = len(vends)
+            prods = me.products(uid);  write_raw("marginedge", slug, "products", "all", {"products": prods}); s["products"] = len(prods)
+            statics_done.add(slug)
+
+        if not budget.ok():
+            return
+
+        # invoices: headers for the window (cheap), detail only where missing / not yet CLOSED, newest first
+        orders = me.orders(uid, w_start, w_end)
+        write_raw("marginedge", slug, "orders", f"{iso(w_start)}_{iso(w_end)}", {"orders": orders, "window": [iso(w_start), iso(w_end)]})
+        s["orders"] = max(s["orders"], len(orders))
+        for o in sorted(orders, key=lambda x: str(x.get("invoiceDate") or x.get("createdDate") or ""), reverse=True):
             if not budget.ok():
                 break
             oid = str(o.get("orderId"))
             if (slug, oid) in have_orders and o.get("status") in FINAL_STATUSES:
                 continue
-            write_raw("marginedge", slug, "orderDetail", oid, me.order_detail(uid, oid)); s["order_details"] += 1
+            write_raw("marginedge", slug, "orderDetail", oid, me.order_detail(uid, oid))
+            have_orders.add((slug, oid)); s["order_details"] += 1
 
-        # daily sales report + daily P&L: incremental window always, older days only if missing
-        s["sales_days"] = s["pnl_days"] = 0
-        d = start
-        while d <= end and budget.ok():
+        # daily sales report + daily P&L, newest day first
+        d = w_end
+        while d >= w_start and budget.ok():
             k = (slug, iso(d))
             if d >= inc_start or k not in have_sales:
-                write_raw("marginedge", slug, "salesReport", iso(d), me.sales_report(uid, d, d)); s["sales_days"] += 1
+                write_raw("marginedge", slug, "salesReport", iso(d), me.sales_report(uid, d, d))
+                have_sales.add(k); s["sales_days"] += 1
             if d >= inc_start or k not in have_pnl:
-                write_raw("marginedge", slug, "pnl", iso(d), me.pnl_report(uid, d, d)); s["pnl_days"] += 1
-            d += timedelta(days=1)
+                write_raw("marginedge", slug, "pnl", iso(d), me.pnl_report(uid, d, d))
+                have_pnl.add(k); s["pnl_days"] += 1
+            d -= timedelta(days=1)
 
         # inventories: list the window, pull detail for new/changed ones
         if budget.ok():
-            invs = me.inventories(uid, start, end)
-            write_raw("marginedge", slug, "inventories", "list", {"inventories": invs, "window": [iso(start), iso(end)]})
-            s["inventories"] = len(invs); s["inventory_details"] = 0
+            invs = me.inventories(uid, w_start, w_end)
+            write_raw("marginedge", slug, "inventories", f"{iso(w_start)}_{iso(w_end)}", {"inventories": invs, "window": [iso(w_start), iso(w_end)]})
+            s["inventories"] = max(s["inventories"], len(invs))
             for inv in invs:
                 if not budget.ok():
                     break
                 iid = str(inv.get("inventoryId"))
-                if (slug, iid, inv.get("savedDate") or inv.get("closedDate") or "") in have_inv:
+                key = (slug, iid, inv.get("savedDate") or inv.get("closedDate") or "")
+                if key in have_inv:
                     continue
-                write_raw("marginedge", slug, "inventoryDetail", iid, me.inventory_detail(uid, iid)); s["inventory_details"] += 1
-        summary[slug] = s
-        log.info("MarginEdge %s: %s", slug, s)
+                write_raw("marginedge", slug, "inventoryDetail", iid, me.inventory_detail(uid, iid))
+                have_inv.add(key); s["inventory_details"] += 1
+
+    recent_start = max(start, end - timedelta(days=recent_days - 1))
+    for label, w_start in (("recent", recent_start), ("history", start)):
+        if not budget.ok():
+            log.warning("MarginEdge: time budget reached before the %s pass — it resumes next run", label)
+            break
+        if label == "history" and w_start >= recent_start:
+            break                                   # the recent pass already covered the whole window
+        log.info("MarginEdge: %s pass (%s .. %s) across %d locations", label, iso(w_start), iso(end), len(resolved))
+        for slug, uid in resolved:
+            if not budget.ok():
+                break
+            pull_window(slug, uid, w_start, end)
+            log.info("MarginEdge %s [%s]: %s", slug, label, summary.get(slug))
     return summary
