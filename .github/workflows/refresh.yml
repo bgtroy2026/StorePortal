@@ -150,8 +150,13 @@ jobs:
         run: |
           test ! -f _site/data/dev.json
           ls -la _site _site/data
+      # A distinct artifact name: `recent` already uploaded one called github-pages in this same run, and
+      # deploy-pages refuses to guess when it finds two ("Multiple artifacts named 'github-pages'").
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
+          name: github-pages-history
       - id: deploy
         uses: actions/deploy-pages@v4
+        with:
+          artifact_name: github-pages-history
