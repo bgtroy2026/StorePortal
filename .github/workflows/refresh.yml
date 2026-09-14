@@ -32,10 +32,16 @@ concurrency:
   group: refresh
   cancel-in-progress: false
 
+# Two jobs, deliberately. The MarginEdge history backfill runs for hours at 1 request/second, and a single job
+# would hold the publish hostage until it finished — the recent data everyone actually looks at would sit
+# unbuilt behind a year of archaeology. So: pull the recent window, publish, THEN walk backwards and publish
+# again. The warehouse is persisted to a release asset between jobs, so history resumes from what recent saved.
+#
+# The env block is repeated rather than shared via a YAML anchor: GitHub Actions does not support anchors.
 jobs:
-  refresh:
+  recent:
     runs-on: ubuntu-latest
-    timeout-minutes: 350
+    timeout-minutes: 90
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
@@ -53,18 +59,15 @@ jobs:
       APPS_SCRIPT_URL: ${{ vars.APPS_SCRIPT_URL }}
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-
       - run: pip install -r requirements.txt
 
       - name: MarginEdge connectivity diagnostic
         if: ${{ inputs.diag }}
         run: python -m sdp me-diag
-
       - name: Toast connectivity diagnostic
         if: ${{ inputs.diag }}
         run: python -m sdp toast-diag
@@ -73,9 +76,9 @@ jobs:
         if: ${{ !inputs.mock && !inputs.diag }}
         run: python -m sdp restore
 
-      - name: Pull from MarginEdge + Toast
+      - name: Pull (recent window + all other sources)
         if: ${{ !inputs.mock && !inputs.diag }}
-        run: python -m sdp pull --source ${{ inputs.source || 'all' }} ${{ inputs.backfill && '--backfill' || '' }}
+        run: python -m sdp pull --source ${{ inputs.source || 'all' }} --phase recent ${{ inputs.backfill && '--backfill' || '' }}
 
       - name: Pull (mock data)
         if: ${{ inputs.mock && !inputs.diag }}
@@ -84,11 +87,9 @@ jobs:
       - name: Transform into warehouse
         if: ${{ !inputs.diag }}
         run: python -m sdp transform
-
       - name: Build site + encrypted bundles
         if: ${{ !inputs.diag }}
         run: python -m sdp build
-
       - name: Persist warehouse state
         if: ${{ !inputs.mock && !inputs.diag }}
         run: python -m sdp persist
@@ -103,7 +104,49 @@ jobs:
         if: ${{ !inputs.diag }}
         with:
           path: _site
-
       - id: deploy
         if: ${{ !inputs.diag }}
+        uses: actions/deploy-pages@v4
+
+  history:
+    needs: recent
+    if: ${{ !inputs.mock && !inputs.diag && (inputs.source == '' || inputs.source == 'all' || inputs.source == 'marginedge') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PORTAL_SECRET: ${{ secrets.PORTAL_SECRET }}
+      MARGINEDGE_API_KEY: ${{ secrets.MARGINEDGE_API_KEY }}
+      TOAST_CLIENT_ID: ${{ secrets.TOAST_CLIENT_ID }}
+      TOAST_CLIENT_SECRET: ${{ secrets.TOAST_CLIENT_SECRET }}
+      TOAST_HOST: ${{ vars.TOAST_HOST }}
+      APPS_SCRIPT_URL: ${{ vars.APPS_SCRIPT_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Restore warehouse state
+        run: python -m sdp restore
+      - name: Pull (history backfill)
+        run: python -m sdp pull --source marginedge --phase history ${{ inputs.backfill && '--backfill' || '' }}
+      - name: Transform into warehouse
+        run: python -m sdp transform
+      - name: Build site + encrypted bundles
+        run: python -m sdp build
+      - name: Persist warehouse state
+        run: python -m sdp persist
+      - name: Sanity check (no plaintext data in the artifact)
+        run: |
+          test ! -f _site/data/dev.json
+          ls -la _site _site/data
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deploy
         uses: actions/deploy-pages@v4

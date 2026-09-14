@@ -73,7 +73,7 @@ def cmd_pull(a):
                 from . import marginedge
                 me_cfg = cfg["marginedge"]
                 marginedge.pull(locs, days_back=cfg["backfill_days"], incremental_days=cfg["incremental_days"], have=({} if a.backfill else _me_have()),
-                                max_minutes=a.max_minutes or me_cfg.get("max_minutes_per_run"))
+                                max_minutes=a.max_minutes or me_cfg.get("max_minutes_per_run"), phase=a.phase)
             except Exception as e:
                 failed.append("marginedge"); log.error("MarginEdge pull failed (%s: %s) — continuing with other sources", type(e).__name__, e)
         else:
@@ -217,6 +217,8 @@ def main(argv=None):
         p.add_argument("--mock-no-toast", action="store_true", help="mock the MarginEdge-only phase (no Toast raw data)")
         p.add_argument("--max-minutes", type=float, default=None, help="stop the MarginEdge pull cleanly after N minutes (default from settings)")
         p.add_argument("--source", choices=["all", "toast", "marginedge", "tripleseat", "scorecard"], default="all")
+        p.add_argument("--phase", choices=["all", "recent", "history"], default="all",
+                       help="MarginEdge only: 'recent' fetches the last few weeks so the site can publish, 'history' walks backwards")
         p.add_argument("--code", default=None, help="Tripleseat authorization code (ts-exchange)")
         p.add_argument("--backfill", action="store_true", help="pull the full backfill window even if a warehouse exists")
         p.add_argument("--dev-json", action="store_true", help="also write site/data/dev.json (unencrypted, local preview)")

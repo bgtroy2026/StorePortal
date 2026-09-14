@@ -127,7 +127,7 @@ class Budget:
 
 
 def pull(locations: list[dict], days_back: int, incremental_days: int = 7, have: dict | None = None,
-         max_minutes: float | None = None, recent_days: int = 35) -> dict:
+         max_minutes: float | None = None, recent_days: int = 35, phase: str = "all") -> dict:
     """Pull for the given locations.
 
     `have` = {"orders": {(slug, orderId)}, "sales_days": {(slug, date)}, "pnl_days": {(slug, date)}, "inventories": {(slug, inventoryId)}}
@@ -234,11 +234,16 @@ def pull(locations: list[dict], days_back: int, incremental_days: int = 7, have:
                 have_inv.add(key); s["inventory_details"] += 1
 
     recent_start = max(start, end - timedelta(days=recent_days - 1))
-    for label, w_start in (("recent", recent_start), ("history", start)):
+    # `phase` lets the two passes run as separate jobs so the site can publish as soon as the recent window
+    # is in, instead of the build waiting hours for history nobody is watching for.
+    phases = [("recent", recent_start), ("history", start)]
+    if phase in ("recent", "history"):
+        phases = [pp for pp in phases if pp[0] == phase]
+    for label, w_start in phases:
         if not budget.ok():
             log.warning("MarginEdge: time budget reached before the %s pass — it resumes next run", label)
             break
-        if label == "history" and w_start >= recent_start:
+        if label == "history" and phase == "all" and w_start >= recent_start:
             break                                   # the recent pass already covered the whole window
         log.info("MarginEdge: %s pass (%s .. %s) across %d locations", label, iso(w_start), iso(end), len(resolved))
         for slug, uid in resolved:
