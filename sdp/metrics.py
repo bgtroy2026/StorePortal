@@ -43,7 +43,7 @@ def build_payload(con, through: date | None = None) -> dict:
                               # site suppresses its change-vs-prior figures instead of dividing by a partial baseline.
                               "first_date": (con.execute("SELECT MIN(business_date) FROM daily_summary WHERE location_id=? AND net_sales>0", (l["slug"],)).fetchone() or [None])[0]}
                              for l in locs],
-               "daily": {}, "hourly": {}, "top_items": {}, "labor_jobs": {}, "vendors": {}, "inventory": {}, "activations": [], "targets": {}, "payments": {}, "dining": {}, "discounts": {}, "pnl": {}, "sources": {}, "events": {}, "leads": {}, "events_monthly": {}, "scorecard": {}}
+               "daily": {}, "hourly": {}, "top_items": {}, "labor_jobs": {}, "vendors": {}, "inventory": {}, "activations": [], "targets": {}, "payments": {}, "dining": {}, "revctr": {}, "discounts": {}, "pnl": {}, "sources": {}, "events": {}, "leads": {}, "events_monthly": {}, "scorecard": {}}
 
     for l in locs:
         lid = l["slug"]
@@ -78,6 +78,13 @@ def build_payload(con, through: date | None = None) -> dict:
             SELECT COALESCE(name,'(unnamed)') name, loyalty_vendor vendor, SUM(amount) amt, COUNT(*) n
             FROM toast_discounts WHERE location_id=? AND business_date>=? AND business_date<=?
             GROUP BY 1,2 ORDER BY amt DESC LIMIT 30""", (lid, w28.isoformat(), through.isoformat()))]
+
+        # Where in the building the sale happened. Same shape as the dining split and published next to it;
+        # a bar-versus-patio mix is one of the few cuts a director can act on the same week.
+        payload["revctr"][lid] = [[r["revenue_center"], _r(r["net"]), r["n"]] for r in _rows(con, """
+            SELECT COALESCE(revenue_center,'(unassigned)') revenue_center, SUM(net_sales) net, COUNT(*) n FROM toast_orders
+            WHERE location_id=? AND voided=0 AND business_date>=? AND business_date<=? GROUP BY 1 ORDER BY net DESC""",
+            (lid, w28.isoformat(), through.isoformat()))]
 
         payload["dining"][lid] = [[r["dining_option"], _r(r["net"]), r["n"]] for r in _rows(con, """
             SELECT COALESCE(dining_option,'?') dining_option, SUM(net_sales) net, COUNT(*) n FROM toast_orders WHERE location_id=? AND voided=0 AND business_date>=? AND business_date<=? GROUP BY 1 ORDER BY net DESC""",

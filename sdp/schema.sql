@@ -102,6 +102,24 @@ CREATE TABLE IF NOT EXISTS toast_menu_items (       -- grain: menu item per loca
   PRIMARY KEY (item_guid, location_id)
 );
 
+-- Guid -> name lookups from config/v2. Orders, checks and selections reference these by guid only, so a
+-- report without them reads as rows of hex. Kept as one generic table rather than one per resource: they all
+-- have the same shape, and a view that needs a new one should not need a new migration.
+CREATE TABLE IF NOT EXISTS toast_config (
+  location_id TEXT NOT NULL, resource TEXT NOT NULL, guid TEXT NOT NULL,
+  name TEXT, extra TEXT,
+  PRIMARY KEY (location_id, resource, guid)
+);
+
+CREATE TABLE IF NOT EXISTS toast_employees (      -- grain: one employee per location
+  employee_guid TEXT NOT NULL, location_id TEXT NOT NULL,
+  first_name TEXT, last_name TEXT, chosen_name TEXT, display_name TEXT,
+  email TEXT, external_id TEXT,
+  deleted INTEGER DEFAULT 0, disabled INTEGER DEFAULT 0,
+  job_guids TEXT,                                 -- JSON array of job guids from jobReferences
+  PRIMARY KEY (employee_guid, location_id)
+);
+
 CREATE TABLE IF NOT EXISTS toast_jobs (
   job_guid TEXT NOT NULL, location_id TEXT NOT NULL, title TEXT, wage_frequency TEXT, default_wage REAL,
   PRIMARY KEY (job_guid, location_id)

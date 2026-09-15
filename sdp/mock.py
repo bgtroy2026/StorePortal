@@ -35,6 +35,8 @@ JOBS = [("Server", 7.25), ("Bartender", 8.0), ("Line Cook", 17.0), ("Prep Cook",
 VENDORS = [("Sysco", "Food"), ("US Foods", "Food"), ("Capital City Fruit", "Food"), ("Big Grove Production", "Beer"),
            ("Johnson Brothers", "Liquor"), ("Southern Glazer's", "Wine"), ("Coca-Cola Bottling", "NA Bev"), ("Ecolab", "Other"), ("Big Grove Merch", "Retail")]
 DINING = ["DINE_IN", "TAKE_OUT", "DINE_IN", "DINE_IN", "ONLINE", "DINE_IN", "BAR"]
+FIRST_NAMES = ["Avery", "Brooke", "Caleb", "Dana", "Eli", "Faith", "Gus", "Hana", "Ivan", "Jules", "Kara", "Liam", "Mia", "Nora"]
+LAST_NAMES = ["Alder", "Boone", "Cruz", "Diaz", "Ellis", "Ford", "Gray", "Hart", "Ingram", "Jansen", "Keller", "Lowe", "Meyer", "Nash"]
 
 
 def _g(seed: str) -> str:
@@ -72,8 +74,28 @@ def gen_toast(loc: dict, loc_idx: int, start: date, end: date, events: dict[str,
         {"name": g, "menuItems": [{"guid": it["guid"], "name": it["name"], "price": it["price"], "salesCategory": it["salesCategory"]} for it in items if it["menuGroup"] == g]}
         for g in sorted({m[1] for m in MENU})]}]}
     W("toast", slug, "menus", "all", menus)
+    # Lookup tables, mirroring config/v2 and labor/v1/employees, so mock mode exercises the same guid ->
+    # name resolution the real pull depends on (the bug that made the portal show raw guids).
+    W("toast", slug, "config-diningOptions", "all",
+      {"diningOptions": [{"guid": _g("do:" + b), "name": b.replace("_", " ").title(), "behavior": b} for b in sorted(set(DINING))]})
+    W("toast", slug, "config-revenueCenters", "all",
+      {"revenueCenters": [{"guid": _g(f"rc:{slug}:{n}"), "name": n} for n in ("Bar", "Dining", "Patio")]})
+    W("toast", slug, "config-salesCategories", "all",
+      {"salesCategories": [{"guid": _g(f"sc:{slug}:{c}"), "name": c} for c in sorted({m[2] for m in MENU})]})
+    W("toast", slug, "config-voidReasons", "all",
+      {"voidReasons": [{"guid": _g(f"vr:{slug}:{n}"), "name": n} for n in ("Server error", "Kitchen error", "Guest changed mind", "Walkout")]})
+    W("toast", slug, "config-discounts", "all",
+      {"discounts": [{"guid": _g(f"dc:{slug}:{n}"), "name": n} for n in ("Happy Hour", "Employee Meal", "Manager Comp", "Loyalty Reward")]})
+    W("toast", slug, "config-serviceAreas", "all",
+      {"serviceAreas": [{"guid": _g(f"sa:{slug}:{n}"), "name": n} for n in ("Main Floor", "Patio", "Upstairs")]})
+
     day_sales, day_labor = {}, {}
     servers = [_g(f"emp:{slug}:{i}") for i in range(14)]
+    W("toast", slug, "employees", "all", {"employees": [
+        {"guid": g, "firstName": FIRST_NAMES[i % len(FIRST_NAMES)], "lastName": LAST_NAMES[i % len(LAST_NAMES)],
+         "email": None, "externalEmployeeId": f"{slug}-{i:03d}", "deleted": False, "disabled": False,
+         "jobReferences": [{"guid": _g(f"job:{slug}:{JOBS[i % len(JOBS)][0]}")}]}
+        for i, g in enumerate(servers)]})
     n_orders_total = 0
     d = start
     while d <= end:
@@ -109,7 +131,7 @@ def gen_toast(loc: dict, loc_idx: int, start: date, end: date, events: dict[str,
             pay = {"guid": _g(f"pay:{og}"), "type": ptype, "cardType": ("VISA" if ptype == "CREDIT" else None), "amount": total, "tipAmount": tip, "paidDate": _ts(d, hour + 0.8),
                    "refundStatus": ("FULL" if refund else "NONE"), "refund": ({"refundAmount": refund, "tipRefundAmount": 0, "refundDate": _ts(d + timedelta(days=1), 10)} if refund else None)}
             orders.append({"guid": og, "entityType": "Order", "businessDate": int(d.strftime("%Y%m%d")), "openedDate": _ts(d, hour), "closedDate": _ts(d, hour + 0.9), "modifiedDate": _ts(d, hour + 1),
-                           "diningOption": {"guid": _g("do:" + rnd.choice(DINING)), "behavior": rnd.choice(DINING)}, "revenueCenter": {"guid": _g(f"rc:{slug}:{'Bar' if hour > 20 else 'Dining'}")},
+                           "diningOption": {"guid": _g("do:" + rnd.choice(DINING)), "behavior": rnd.choice(DINING)}, "revenueCenter": {"guid": _g(f"rc:{slug}:{'Bar' if hour > 20 else rnd.choice(['Dining', 'Dining', 'Patio'])}")},
                            "server": {"guid": rnd.choice(servers)}, "numberOfGuests": guests, "voided": voided, "voidDate": (_ts(d, hour + 0.5) if voided else None),
                            "checks": [{"guid": cg, "entityType": "Check", "amount": amount, "taxAmount": tax, "totalAmount": total, "voided": voided, "paymentStatus": "CLOSED",
                                        "selections": sels, "payments": [pay], "appliedDiscounts": [], "appliedServiceCharges": ([{"chargeAmount": round(amount * 0.18, 2), "gratuity": True, "name": "Auto grat"}] if guests >= 6 else [])}]})

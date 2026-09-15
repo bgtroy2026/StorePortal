@@ -11,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import inputs
+from .toast import CONFIG_RESOURCES
 from .util import DB_PATH, ROOT, iter_raw, load_json, locations, log, settings
 
 SCHEMA = (Path(__file__).parent / "schema.sql").read_text()
@@ -87,7 +88,7 @@ def _disc_row(d: dict, o: dict, c: dict, slug: str, bd: str, scope: str) -> dict
 
 
 def load_toast(con, bk: Buckets) -> dict:
-    stats = {"orders": 0, "items": 0, "payments": 0, "time_entries": 0}
+    stats = {"orders": 0, "items": 0, "payments": 0, "time_entries": 0, "config": 0, "employees": 0}
     # menus first: item guid -> (name, group, sales category)
     item_cat: dict[tuple[str, str], tuple[str, str, str, float]] = {}
     for slug, ds, p, j in iter_raw("toast", dataset="menus"):
@@ -99,16 +100,43 @@ def load_toast(con, bk: Buckets) -> dict:
                     item_cat[(slug, it["guid"])] = (it.get("name"), grp.get("name"), sc, it.get("price"))
                     rows.append({"item_guid": it["guid"], "location_id": slug, "name": it.get("name"), "menu_group": grp.get("name"), "sales_category": sc, "price": it.get("price")})
         _upsert(con, "toast_menu_items", rows)
-    # dining options: guid -> name. Orders only reference the option by guid, so without this the portal shows
-    # "5c2cc414-baf5-..." where it should say "Dine In". Rows already in the warehouse from earlier runs are
-    # renamed in place, so history heals on the first run that has the lookup.
-    dining: dict[tuple[str, str], str] = {}
-    for slug, ds, p, j in iter_raw("toast", dataset="diningOptions"):
-        for d in j.get("diningOptions", []):
-            name = d.get("name") or d.get("behavior")
-            if d.get("guid") and name:
-                dining[(slug, d["guid"])] = name
-                con.execute("UPDATE toast_orders SET dining_option=? WHERE location_id=? AND dining_option=?", (name, slug, d["guid"]))
+    # Guid -> name lookups. Orders reference dining options, revenue centres and sales categories by guid
+    # only, so without these the portal shows "5c2cc414-baf5-..." where it should say "Dine In". Every lookup
+    # is landed in toast_config for later use, and the two that rename columns we already store also update
+    # rows already in the warehouse — so history heals on the first run that has the lookup rather than only
+    # days pulled from here on.
+    lookups: dict[str, dict[tuple[str, str], str]] = {}
+    cfg_rows = []
+    for res in CONFIG_RESOURCES:
+        for slug, ds, p, j in iter_raw("toast", dataset=f"config-{res}"):
+            for d in (j.get(res) or []):
+                guid, name = d.get("guid"), d.get("name") or d.get("behavior")
+                if not guid or not name:
+                    continue
+                lookups.setdefault(res, {})[(slug, guid)] = name
+                extra = {k: v for k, v in d.items() if k not in ("guid", "name", "entityType")}
+                cfg_rows.append({"location_id": slug, "resource": res, "guid": guid, "name": name,
+                                 "extra": json.dumps(extra) if extra else None})
+    stats["config"] = _upsert(con, "toast_config", cfg_rows)
+    for res, col in (("diningOptions", "dining_option"), ("revenueCenters", "revenue_center")):
+        for (slug, guid), name in lookups.get(res, {}).items():
+            con.execute(f"UPDATE toast_orders SET {col}=? WHERE location_id=? AND {col}=?", (name, slug, guid))
+    dining = lookups.get("diningOptions", {})
+    revctr = lookups.get("revenueCenters", {})
+    salescat = lookups.get("salesCategories", {})
+
+    emp_rows = []
+    for slug, ds, p, j in iter_raw("toast", dataset="employees"):
+        for e in j.get("employees", []):
+            first, last = e.get("firstName") or "", e.get("lastName") or ""
+            chosen = e.get("chosenName") or ""
+            disp = (chosen or first) + ((" " + last[:1] + ".") if last else "")
+            emp_rows.append({"employee_guid": e["guid"], "location_id": slug, "first_name": first, "last_name": last,
+                             "chosen_name": chosen or None, "display_name": disp.strip() or None, "email": e.get("email"),
+                             "external_id": e.get("externalEmployeeId"),
+                             "deleted": 1 if e.get("deleted") else 0, "disabled": 1 if e.get("disabled") else 0,
+                             "job_guids": json.dumps([(r or {}).get("guid") for r in (e.get("jobReferences") or [])])})
+    stats["employees"] = _upsert(con, "toast_employees", emp_rows)
     jobs: dict[tuple[str, str], str] = {}
     for slug, ds, p, j in iter_raw("toast", dataset="jobs"):
         rows = [{"job_guid": x["guid"], "location_id": slug, "title": x.get("title"), "wage_frequency": x.get("wageFrequency"), "default_wage": x.get("defaultWage")} for x in j.get("jobs", [])]
@@ -135,7 +163,9 @@ def load_toast(con, bk: Buckets) -> dict:
                         disc += float(d.get("discountAmount") or 0)
                         discs.append(_disc_row(d, o, c, slug, bd, "item"))
                     meta = item_cat.get((slug, (s.get("item") or {}).get("guid")))
-                    sc = (s.get("salesCategory") or {}).get("name") or (meta[2] if meta else None)
+                    sc = ((s.get("salesCategory") or {}).get("name")
+                          or salescat.get((slug, (s.get("salesCategory") or {}).get("guid")))
+                          or (meta[2] if meta else None))
                     items.append({"selection_guid": s["guid"], "order_guid": o["guid"], "check_guid": c["guid"], "location_id": slug, "business_date": bd,
                                   "item_guid": (s.get("item") or {}).get("guid"), "item_name": s.get("displayName") or (meta[0] if meta else None),
                                   "item_group_guid": (s.get("itemGroup") or {}).get("guid"), "sales_category": sc, "bucket": bk.from_toast(sc),
@@ -149,7 +179,7 @@ def load_toast(con, bk: Buckets) -> dict:
                                  "card_type": pm.get("cardType"), "amount": float(pm.get("amount") or 0), "tip_amount": float(pm.get("tipAmount") or 0), "refund_amount": ra, "paid_at": pm.get("paidDate")})
             voided = 1 if o.get("voided") else 0
             orders.append({"order_guid": o["guid"], "location_id": slug, "business_date": bd, "opened_at": o.get("openedDate"), "closed_at": o.get("closedDate"), "modified_at": o.get("modifiedDate"),
-                           "dining_option": dining.get((slug, (o.get("diningOption") or {}).get("guid"))) or (o.get("diningOption") or {}).get("behavior") or (o.get("diningOption") or {}).get("guid"), "revenue_center": (o.get("revenueCenter") or {}).get("guid"),
+                           "dining_option": dining.get((slug, (o.get("diningOption") or {}).get("guid"))) or (o.get("diningOption") or {}).get("behavior") or (o.get("diningOption") or {}).get("guid"), "revenue_center": revctr.get((slug, (o.get("revenueCenter") or {}).get("guid"))) or (o.get("revenueCenter") or {}).get("guid"),
                            "server_guid": (o.get("server") or {}).get("guid"), "guests": int(o.get("numberOfGuests") or 0), "voided": voided, "checks_count": len(checks),
                            "net_sales": 0 if voided else round(net, 2), "tax": 0 if voided else round(tax, 2), "tips": round(tips, 2), "discounts": round(disc, 2), "service_charges": round(svc, 2),
                            "gross_sales": 0 if voided else round(net + disc, 2), "refunds": round(refunds, 2), "source_hash": None})
