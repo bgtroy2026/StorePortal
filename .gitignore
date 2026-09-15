@@ -23,3 +23,6 @@ Thumbs.db
 
 # deploy logs
 _deploy/*.log
+
+# deploy token (kept outside the repo; listed here as belt-and-braces)
+.storeportal-token

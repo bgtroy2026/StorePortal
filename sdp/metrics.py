@@ -43,7 +43,7 @@ def build_payload(con, through: date | None = None) -> dict:
                               # site suppresses its change-vs-prior figures instead of dividing by a partial baseline.
                               "first_date": (con.execute("SELECT MIN(business_date) FROM daily_summary WHERE location_id=? AND net_sales>0", (l["slug"],)).fetchone() or [None])[0]}
                              for l in locs],
-               "daily": {}, "hourly": {}, "top_items": {}, "labor_jobs": {}, "vendors": {}, "inventory": {}, "activations": [], "targets": {}, "payments": {}, "dining": {}, "revctr": {}, "discounts": {}, "pnl": {}, "sources": {}, "events": {}, "leads": {}, "events_monthly": {}, "scorecard": {}}
+               "daily": {}, "hourly": {}, "top_items": {}, "labor_jobs": {}, "vendors": {}, "inventory": {}, "activations": [], "targets": {}, "payments": {}, "dining": {}, "revctr": {}, "labor_hourly": {}, "discounts": {}, "pnl": {}, "sources": {}, "events": {}, "leads": {}, "events_monthly": {}, "scorecard": {}}
 
     for l in locs:
         lid = l["slug"]
@@ -53,6 +53,11 @@ def build_payload(con, through: date | None = None) -> dict:
         payload["hourly"][lid] = [[r["dow"], r["h"], _r(r["net"]), r["n"]] for r in _rows(con, """
             SELECT CAST(strftime('%w', business_date) AS INT) dow, hour_local h, SUM(price)/COUNT(DISTINCT business_date) net, COUNT(DISTINCT business_date) n
             FROM toast_order_items WHERE location_id=? AND voided=0 AND business_date>=? AND business_date<=? AND hour_local IS NOT NULL GROUP BY 1,2""", (lid, w56.isoformat(), through.isoformat()))]
+
+        # Labor spread across the clock, so it can be read against sales by the hour. The portal has had an
+        # hourly sales heatmap and a labor-by-job table on separate pages since the start; neither answers
+        # "are we staffed for the hour we are about to trade", which is the question a director schedules to.
+        payload["labor_hourly"][lid] = _labor_by_hour(con, lid, w56, through)
 
         payload["top_items"][lid] = [[r["item_name"], r["bucket"], _r(r["qty"]), _r(r["net"])] for r in _rows(con, """
             SELECT item_name, bucket, SUM(quantity) qty, SUM(price) net FROM toast_order_items WHERE location_id=? AND voided=0 AND business_date>=? AND business_date<=?
@@ -166,6 +171,67 @@ def build_payload(con, through: date | None = None) -> dict:
         log.info("scorecard: %d tabs, %d rows total", len(payload["scorecard"]["tabs"]), n)
 
     return payload
+
+
+def _labor_by_hour(con, lid: str, since: date, through: date) -> list:
+    """Clock hours and wage cost spread across the hours actually worked.
+
+    A shift is not an event at its clock-in time — it is four or eight hours of cost laid across the evening,
+    so attributing it all to the hour someone punched in would put the labor peak an hour or two before the
+    sales peak and quietly invert the answer. Each entry is therefore sliced at hour boundaries and its wages
+    apportioned by the minutes falling in each slice.
+
+    Two conventions are inherited from the sales side so the two can be divided by each other honestly:
+    the weekday comes from the POS BUSINESS DATE (not the calendar date, so a 1am hour still belongs to the
+    night before), and the hour comes from the local-offset timestamp exactly as `hour_local` does for items.
+    A shift crossing midnight therefore lands on hours 22, 23, 0, 1 of the same business day, matching where
+    the sales from those hours land.
+    """
+    rows = _rows(con, """
+        SELECT business_date, in_at, out_at, regular_hours, overtime_hours, wages
+        FROM toast_time_entries
+        WHERE location_id=? AND business_date>=? AND business_date<=? AND in_at IS NOT NULL AND out_at IS NOT NULL""",
+        (lid, since.isoformat(), through.isoformat()))
+    if not rows:
+        return []
+
+    def parse(ts):
+        # Toast sends local-offset timestamps; the offset is the restaurant's, so the wall-clock reading is
+        # the local one. Take it literally rather than converting, which is what hour_local does for items.
+        try:
+            return datetime.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S")
+        except Exception:
+            return None
+
+    buckets: dict[tuple[int, int], list] = {}
+    days: dict[tuple[int, int], set] = {}
+    for r in rows:
+        a, b = parse(r["in_at"]), parse(r["out_at"])
+        if not a or not b or b <= a:
+            continue
+        total = (b - a).total_seconds() / 3600.0
+        if total <= 0 or total > 24:
+            continue                                    # a punch never closed, or clock nonsense
+        wages = float(r["wages"] or 0)
+        bd = r["business_date"]
+        try:
+            dow = int(date.fromisoformat(bd).strftime("%w"))
+        except Exception:
+            continue
+        cur = a
+        while cur < b:
+            nxt = min((cur + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0), b)
+            if nxt <= cur:
+                break
+            frac = (nxt - cur).total_seconds() / 3600.0
+            k = (dow, cur.hour)
+            o = buckets.setdefault(k, [0.0, 0.0])
+            o[0] += frac                                 # hours worked in this clock hour
+            o[1] += wages * (frac / total)               # wage cost apportioned by time, not by headcount
+            days.setdefault(k, set()).add(bd)
+            cur = nxt
+
+    return [[dow, hr, _r(v[0]), _r(v[1]), len(days[(dow, hr)])] for (dow, hr), v in sorted(buckets.items())]
 
 
 def detail_for_location(con, lid: str, through: date, sheets: int = 12) -> dict:
@@ -328,7 +394,7 @@ def _price_tracking(con, lid: str, through: date, days: int = 180) -> dict:
 def slice_for_location(payload: dict, lid: str) -> dict:
     """A director's bundle: only their location (other locations are not merely hidden — they are absent)."""
     out = {"meta": dict(payload["meta"]), "locations": [l for l in payload["locations"] if l["id"] == lid], "activations": [a for a in payload["activations"] if a["loc"] == lid]}
-    for k in ("daily", "hourly", "top_items", "labor_jobs", "vendors", "inventory", "targets", "payments", "dining", "revctr", "discounts", "pnl", "sources", "events", "leads", "events_monthly"):
+    for k in ("daily", "hourly", "top_items", "labor_jobs", "vendors", "inventory", "targets", "payments", "dining", "revctr", "labor_hourly", "discounts", "pnl", "sources", "events", "leads", "events_monthly"):
         out[k] = {lid: payload[k].get(lid)} if lid in payload[k] else {}
     return out
 
