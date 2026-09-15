@@ -136,7 +136,52 @@ table.t td.n{font-weight:700;color:var(--navy);white-space:normal;min-width:120p
 .empty{padding:26px;text-align:center;color:var(--muted);font-size:13px}
 .legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:var(--ink2);margin-top:8px}
 .tt{position:absolute;pointer-events:none;background:var(--navy);color:#fff;padding:6px 9px;border-radius:7px;font-size:11.5px;white-space:nowrap;display:none;z-index:5;box-shadow:0 4px 14px rgba(0,0,0,.25)}
-@media (max-width:720px){header{height:auto;flex-wrap:wrap;padding:8px 12px}header .who{display:none}header .signout{margin-left:auto}.panel .cw{height:220px}.cols2,.cols3{grid-template-columns:1fr}main{padding:12px}}
+/* ---------- phone ----------
+   The blocker was navigation, not prettiness: at 390px the nav measured 771px inside a 356px box and was
+   simply clipped, so Inventory, Events, Activations, Scorecard and Locations could not be reached at all.
+   It now scrolls horizontally with a fade at the edge so it is visibly scrollable rather than apparently
+   truncated. Everything else here is about getting to the numbers with less thumb: the filter bar was taking
+   most of the first screen before a single figure appeared. */
+@media (max-width:720px){
+  header{height:auto;flex-wrap:wrap;padding:8px 10px;gap:6px}
+  header .who{display:none}
+  header .signout{margin-left:auto}
+  header .brand{font-size:13px;width:100%}
+
+  #nav{display:flex;flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;
+       scrollbar-width:none;width:100%;gap:2px;
+       -webkit-mask-image:linear-gradient(to right,#000 88%,transparent);
+               mask-image:linear-gradient(to right,#000 88%,transparent)}
+  #nav::-webkit-scrollbar{display:none}
+  #nav button{flex:0 0 auto;white-space:nowrap}
+
+  /* The filter bar is controls, not content: it should not own the first screen. */
+  .filters{padding:8px 10px;gap:6px 8px}
+  .filters label{font-size:9.5px;margin-right:0}
+  .filters .seg button{padding:4px 8px;font-size:11.5px}
+  .filters select,.filters input[type=date]{font-size:12px;padding:4px 7px}
+  .filters .fresh{margin-left:0;width:100%;font-size:10.5px}
+
+  main{padding:10px}
+  .grid{gap:10px}
+  .tiles{grid-template-columns:repeat(auto-fit,minmax(132px,1fr))}
+  .tile{padding:10px 12px}
+  .tile .v{font-size:21px}
+  .tile .l{font-size:9.5px}
+  .tile .d{font-size:11px;gap:6px}
+  .panel{padding:12px 12px}
+  .panel .cw{height:200px}
+  .cols2,.cols3{grid-template-columns:1fr}
+
+  /* Filter and CSV are desktop-hover affordances; on a touch screen they are always-on or useless. */
+  .csv,.find{opacity:1}
+  .find{width:84px}
+  .find:focus{width:120px}
+
+  table.t{font-size:12px}
+  table.t th,table.t td{padding:5px 6px}
+  table.t td.n{min-width:96px}
+}
 </style>
 </head>
 <body>
