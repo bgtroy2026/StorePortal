@@ -15,8 +15,19 @@ html,body{height:100%}
 body{font-family:'Brandon Grotesque','Josefin Sans','Avenir Next',Avenir,'Segoe UI',system-ui,sans-serif;background:var(--plane);color:var(--ink);font-size:14px}
 button{font-family:inherit}
 /* ---------- login shell ---------- */
-#login{position:fixed;inset:0;background:var(--navy);display:flex;align-items:center;justify-content:center;z-index:50}
-.card{background:#fff;border-radius:14px;padding:38px 42px;width:min(400px,calc(100vw - 40px));box-shadow:0 20px 60px rgba(0,0,0,.4);text-align:center}
+#login{position:fixed;inset:0;background:var(--navy);display:flex;align-items:center;justify-content:center;z-index:50;overflow:hidden}
+/* Watermark. `screen` blending drops the artwork's near-black background to nothing and leaves only the teal
+   glow, so it reads as part of the navy rather than as a dark square pasted on top. Sized in vmin so it stays
+   a backdrop on a phone instead of crowding the card, and pointer-events:none so it can never eat a click on
+   the sign-in button. */
+#login::before{content:"";position:absolute;inset:0;background:url('images/jargvis.jpg') center/min(620px,80vmin) no-repeat;
+  mix-blend-mode:screen;opacity:.30;pointer-events:none;
+  /* The artwork's background is very dark teal rather than true black, so `screen` lifts it just enough to
+     show the square edge against the navy. Fade the corners out so it reads as a glow, not a pasted tile. */
+  -webkit-mask-image:radial-gradient(circle at center, #000 42%, rgba(0,0,0,.55) 58%, transparent 72%);
+          mask-image:radial-gradient(circle at center, #000 42%, rgba(0,0,0,.55) 58%, transparent 72%)}
+@media (prefers-reduced-motion:no-preference){#login::before{transition:opacity .6s ease}}
+.card{position:relative;z-index:1;background:#fff;border-radius:14px;padding:38px 42px;width:min(400px,calc(100vw - 40px));box-shadow:0 20px 60px rgba(0,0,0,.4);text-align:center}
 .card h1{font-size:19px;color:var(--navy);margin-bottom:4px}
 .card .sub{font-size:12.5px;color:#6b7288;margin-bottom:24px}
 #gbtn{display:flex;justify-content:center;min-height:44px}
@@ -495,6 +506,9 @@ function pgLabor(m){
         +panel('Sales and labor by hour','Average day, last 8 weeks · bars: net sales · line: labor % of sales',chartBox('c_splh',true))
         +panel('Labor % by hour and weekday','Where the schedule and the trade disagree · darker = more of the hour\'s sales spent on labor · shading caps at 60% so one pre-open hour does not flatten the rest','<div id="heatLab"></div>')
       +'</div>':'')
+    +(hasServers()?'<div class="grid" style="margin-top:14px">'
+        +panel('By server — last 28 days','Sales per person · servers with fewer than 20 orders are left out, because an average check on a handful of covers is noise','<div id="servers"></div>')
+      +'</div>':'')
     +(hasSchedule()?'<div class="grid cols2" style="margin-top:14px">'
         +panel('Scheduled vs worked hours','Last 28 days · bars: scheduled · line: actually worked',chartBox('c_sched',true))
         +panel('Schedule adherence','Matched per person, per day, per job','<div id="schedTbl"></div>')
@@ -505,7 +519,7 @@ function pgLabor(m){
   lc.options.scales.y.ticks.callback=function(v){return fp(v,0);}; mk('c_lab',lc);
   if(!T){ $('pnlLabor').innerHTML=pnlSectionTable('labor'); return; }
   mk('c_hrs',{type:'bar',data:{labels:cur.map(function(r){return fdate(r.d);}),datasets:[{label:'Labor hours',data:cur.map(function(r){return r.lh;}),backgroundColor:css('s3'),borderRadius:3,fmt:'int'}]},options:baseOpts({scales:{x:{grid:{display:false},ticks:{maxRotation:0,autoSkip:true,maxTicksLimit:10}},y:{beginAtZero:true,grid:{color:css('grid')},border:{display:false},ticks:{callback:function(v){return fn(v)+' h';}}}}})});
-  hourlyLaborViews(); scheduleViews();
+  hourlyLaborViews(); scheduleViews(); serverPanel();
   var jb={}; locIds().forEach(function(l){(D.labor_jobs[l]||[]).forEach(function(r){var o=jb[r[0]]||(jb[r[0]]={h:0,c:0,s:0});o.h+=r[1];o.c+=r[2];o.s+=r[3];});});
   var jl=Object.keys(jb).sort(function(x,y){return jb[y].c-jb[x].c;}), jt=jl.reduce(function(p,c){return p+jb[c].c;},0);
   $('jobs').innerHTML='<table class="t"><tr><th>Job</th><th class="r">Hours</th><th class="r">Cost</th><th class="r">Avg rate</th><th class="r">Shifts</th><th class="r">Share</th></tr>'+jl.map(function(x){return '<tr><td class="n">'+esc(x)+'</td><td class="r">'+fn(jb[x].h)+'</td><td class="r">'+fm(jb[x].c)+'</td><td class="r">'+fm(jb[x].h?jb[x].c/jb[x].h:null,2)+'</td><td class="r">'+fn(jb[x].s)+'</td><td class="r">'+fp(jb[x].c/jt)+'</td></tr>';}).join('')+'</table>';
@@ -782,6 +796,43 @@ function hourlyLaborViews(){
   }
 }
 function hLabel(x){ return x>12?(x-12)+'p':(x===12?'12p':x+'a'); }
+
+/* ---------- per-server performance ----------
+   Names are the short form the employee directory builds (first name, last initial). Sorted by net sales, but
+   the columns that matter for a conversation are the rates, not the ranking. */
+function hasServers(){ return locIds().some(function(l){ return ((D.servers||{})[l]||[]).length; }); }
+
+function serverPanel(){
+  var box=$('servers'); if(!box) return;
+  var rows=[];
+  locIds().forEach(function(l){
+    var loc=(D.locations.filter(function(x){return x.id===l;})[0]||{name:l});
+    ((D.servers||{})[l]||[]).forEach(function(r){ rows.push({loc:loc.name, name:r[0], orders:r[1], net:r[2], guests:r[3],
+      avg:r[4], perGuest:r[5], hours:r[6], splh:r[7], disc:r[8], tip:r[9], voids:r[10], voidValue:r[11]}); });
+  });
+  if(!rows.length){ box.innerHTML='<div class="empty">No server-level data in this window.</div>'; return; }
+  rows.sort(function(a,b){return b.net-a.net;});
+  var multi=locIds().length>1;
+  // Medians, so a row can be read against the group rather than in isolation.
+  function med(k){ var v=rows.map(function(r){return r[k];}).filter(function(x){return x!=null;}).sort(function(a,b){return a-b;});
+    return v.length?v[Math.floor(v.length/2)]:null; }
+  var mAvg=med('avg'), mSplh=med('splh');
+  box.innerHTML='<div class="tw"><table class="t"><tr>'+(multi?'<th>Location</th>':'')
+    +'<th>Server</th><th class="r">Orders</th><th class="r">Net sales</th><th class="r">Avg check</th>'
+    +'<th class="r">Per guest</th><th class="r">Hours</th><th class="r">Sales / hr</th><th class="r">Comp %</th><th class="r">Tip %</th><th class="r">Voids</th></tr>'
+    +rows.map(function(r){
+      function mark(v,m){ if(v==null||m==null) return ''; return v>=m*1.15?' style="color:var(--good,#2e7d5b)"':(v<=m*0.85?' style="color:var(--bad,#b4413c)"':''); }
+      return '<tr>'+(multi?'<td>'+esc(r.loc)+'</td>':'')
+        +'<td class="n">'+esc(r.name)+'</td><td class="r">'+fn(r.orders)+'</td><td class="r">'+fm(r.net)+'</td>'
+        +'<td class="r"'+mark(r.avg,mAvg)+'>'+fm(r.avg)+'</td><td class="r">'+(r.perGuest!=null?fm(r.perGuest):'—')+'</td>'
+        +'<td class="r">'+(r.hours!=null?fn(r.hours):'—')+'</td>'
+        +'<td class="r"'+mark(r.splh,mSplh)+'>'+(r.splh!=null?fm(r.splh,0):'—')+'</td>'
+        +'<td class="r">'+(r.disc!=null?fp(r.disc):'—')+'</td><td class="r">'+(r.tip!=null?fp(r.tip):'—')+'</td>'
+        +'<td class="r">'+(r.voids?fn(r.voids)+(r.voidValue?' · '+fm(r.voidValue):''):'—')+'</td></tr>';
+    }).join('')+'</table></div>'
+    +'<div class="src">Green and red mark 15% above or below the median for that column, not a target. '
+    +'Average check depends heavily on section and shift, so read it alongside hours rather than on its own.</div>';
+}
 
 /* ---------- schedule vs actual ----------
    Only rendered when Toast actually returned scheduled shifts. A restaurant that does not build its schedule

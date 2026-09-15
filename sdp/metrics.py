@@ -43,7 +43,7 @@ def build_payload(con, through: date | None = None) -> dict:
                               # site suppresses its change-vs-prior figures instead of dividing by a partial baseline.
                               "first_date": (con.execute("SELECT MIN(business_date) FROM daily_summary WHERE location_id=? AND net_sales>0", (l["slug"],)).fetchone() or [None])[0]}
                              for l in locs],
-               "daily": {}, "hourly": {}, "top_items": {}, "labor_jobs": {}, "vendors": {}, "inventory": {}, "activations": [], "targets": {}, "payments": {}, "dining": {}, "revctr": {}, "labor_hourly": {}, "schedule": {}, "tender": {}, "voids": {}, "invoices": {}, "discounts": {}, "pnl": {}, "sources": {}, "events": {}, "leads": {}, "events_monthly": {}, "scorecard": {}}
+               "daily": {}, "hourly": {}, "top_items": {}, "labor_jobs": {}, "vendors": {}, "inventory": {}, "activations": [], "targets": {}, "payments": {}, "dining": {}, "revctr": {}, "labor_hourly": {}, "schedule": {}, "tender": {}, "voids": {}, "invoices": {}, "servers": {}, "discounts": {}, "pnl": {}, "sources": {}, "events": {}, "leads": {}, "events_monthly": {}, "scorecard": {}}
 
     for l in locs:
         lid = l["slug"]
@@ -59,6 +59,7 @@ def build_payload(con, through: date | None = None) -> dict:
         # "are we staffed for the hour we are about to trade", which is the question a director schedules to.
         payload["labor_hourly"][lid] = _labor_by_hour(con, lid, w56, through)
         payload["schedule"][lid] = _schedule_vs_actual(con, lid, w28, through)
+        payload["servers"][lid] = _server_performance(con, lid, w28, through)
 
         payload["top_items"][lid] = [[r["item_name"], r["bucket"], _r(r["qty"]), _r(r["net"])] for r in _rows(con, """
             SELECT item_name, bucket, SUM(quantity) qty, SUM(price) net FROM toast_order_items WHERE location_id=? AND voided=0 AND business_date>=? AND business_date<=?
@@ -285,6 +286,62 @@ def _labor_by_hour(con, lid: str, since: date, through: date) -> list:
             cur = nxt
 
     return [[dow, hr, _r(v[0]), _r(v[1]), len(days[(dow, hr)])] for (dow, hr), v in sorted(buckets.items())]
+
+
+def _server_performance(con, lid: str, since: date, through: date, limit: int = 40) -> list:
+    """Per-server sales performance.
+
+    Two deliberate choices, both about not being unfair to people:
+
+    Names are the SHORT form (first name plus last initial) that the employee directory already builds. A
+    performance table does not need a full legal name to be useful, and the less identifying the published
+    payload is, the better — it is a static file behind a sign-in, not a database with an audit log.
+
+    Servers below a minimum number of orders are dropped rather than ranked. With a handful of orders the
+    average check is noise, and a league table that puts a new starter bottom on four covers is worse than
+    no table: it invites a conversation the data cannot support.
+    """
+    rows = _rows(con, """
+        SELECT COALESCE(o.server_guid,'') g,
+               SUM(CASE WHEN o.voided=0 THEN 1 ELSE 0 END) orders,
+               SUM(CASE WHEN o.voided=0 THEN o.net_sales ELSE 0 END) net,
+               SUM(CASE WHEN o.voided=0 THEN o.guests ELSE 0 END) guests,
+               SUM(CASE WHEN o.voided=0 THEN o.discounts ELSE 0 END) disc,
+               SUM(CASE WHEN o.voided=0 THEN o.tips ELSE 0 END) tips,
+               SUM(CASE WHEN o.voided=1 THEN 1 ELSE 0 END) voids,
+               SUM(COALESCE(o.voided_value,0)) void_value
+        FROM toast_orders o
+        WHERE o.location_id=? AND o.business_date>=? AND o.business_date<=?
+        GROUP BY 1""", (lid, since.isoformat(), through.isoformat()))
+    if not rows:
+        return []
+
+    names = {r["employee_guid"]: (r["display_name"] or "").strip()
+             for r in _rows(con, "SELECT employee_guid, display_name FROM toast_employees WHERE location_id=?", (lid,))}
+    hours = {r["employee_guid"]: float(r["h"] or 0) for r in _rows(con, """
+        SELECT employee_guid, SUM(regular_hours+overtime_hours) h FROM toast_time_entries
+        WHERE location_id=? AND business_date>=? AND business_date<=? GROUP BY 1""",
+        (lid, since.isoformat(), through.isoformat()))}
+
+    out = []
+    for r in rows:
+        n_orders = r["orders"] or 0
+        if n_orders < 20:
+            continue                                  # too few covers for an average to mean anything
+        g = r["g"]
+        net = float(r["net"] or 0)
+        h = hours.get(g, 0.0)
+        out.append([names.get(g) or ("(online / no server)" if not g else "(unnamed)"),
+                    n_orders, _r(net), r["guests"] or 0,
+                    _r(net / n_orders) if n_orders else None,                      # average check
+                    _r(net / r["guests"]) if r["guests"] else None,                # per guest
+                    _r(h, 1) if h else None,
+                    _r(net / h) if h else None,                                    # sales per labor hour
+                    _r(float(r["disc"] or 0) / net, 4) if net else None,            # discount rate
+                    _r(float(r["tips"] or 0) / net, 4) if net else None,            # tip rate
+                    r["voids"] or 0, _r(float(r["void_value"] or 0))])
+    out.sort(key=lambda x: -(x[2] or 0))
+    return out[:limit]
 
 
 def _schedule_vs_actual(con, lid: str, since: date, through: date) -> dict:
@@ -523,7 +580,7 @@ def _price_tracking(con, lid: str, through: date, days: int = 180) -> dict:
 def slice_for_location(payload: dict, lid: str) -> dict:
     """A director's bundle: only their location (other locations are not merely hidden — they are absent)."""
     out = {"meta": dict(payload["meta"]), "locations": [l for l in payload["locations"] if l["id"] == lid], "activations": [a for a in payload["activations"] if a["loc"] == lid]}
-    for k in ("daily", "hourly", "top_items", "labor_jobs", "vendors", "inventory", "targets", "payments", "dining", "revctr", "labor_hourly", "schedule", "tender", "voids", "invoices", "discounts", "pnl", "sources", "events", "leads", "events_monthly"):
+    for k in ("daily", "hourly", "top_items", "labor_jobs", "vendors", "inventory", "targets", "payments", "dining", "revctr", "labor_hourly", "schedule", "tender", "voids", "invoices", "servers", "discounts", "pnl", "sources", "events", "leads", "events_monthly"):
         out[k] = {lid: payload[k].get(lid)} if lid in payload[k] else {}
     return out
 
