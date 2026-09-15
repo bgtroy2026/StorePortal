@@ -2,18 +2,19 @@ name: Nightly refresh
 
 on:
   schedule:
-    # 10:37 UTC = 5:37 AM CDT / 4:37 AM CST — after Toast's 4 AM closeout in BOTH halves of the year, which is
-    # why the hour does not move any earlier: cron is UTC, so an hour that is comfortable in summer is before
-    # closeout in winter.
+    # SAFETY NET ONLY — the primary trigger is external.
     #
-    # The odd minute is deliberate. GitHub's scheduled runs are best-effort and deprioritised under load, and
-    # the top of the hour is the worst slot. Measured on this repo: the runs due at 10:15 UTC actually started
-    # at 13:36, 14:23 and 16:22 UTC on 12-14 Sep — three to six hours late, i.e. mid-morning to lunchtime
-    # Central, for a portal whose whole promise is "open it and see yesterday".
+    # GitHub's scheduled runs are best-effort and deprioritised under load. Measured on this repo: the runs due
+    # at 10:15 UTC actually started at 13:36, 14:23 and 16:22 UTC on 12-14 Sep — three to six hours late, i.e.
+    # mid-morning to lunchtime Central, for a portal whose whole promise is "open it and see yesterday".
     #
-    # Moving off the hour is a nudge, not a cure. The real fix is to stop depending on GitHub's scheduler and
-    # have something external call workflow_dispatch on time; this schedule then becomes the safety net.
-    - cron: "37 10 * * *"
+    # So since 2026-09-15 a scheduled task on Troy's Mac calls workflow_dispatch at 10:20 UTC instead, and it
+    # skips the dispatch if a run already went today. This cron is the fallback for when that does not happen
+    # (Mac offline, token expired) — deliberately late enough that it does not race the primary, and it is
+    # harmless if both fire because the concurrency group serialises them.
+    #
+    # 14:40 UTC = 9:40 AM CDT / 8:40 AM CST — still before most people would give up on the data being fresh.
+    - cron: "40 14 * * *"
   workflow_dispatch:
     inputs:
       backfill:
