@@ -176,15 +176,21 @@ def pull(locations: list[dict], days_back: int, incremental_days: int = 7, have:
 
     statics_done: set[str] = set()
 
-    def pull_window(slug: str, uid: str, w_start, w_end) -> None:
+    def pull_window(slug: str, uid: str, w_start, w_end, label: str = "recent") -> None:
         s = summary.setdefault(slug, {"orders": 0, "order_details": 0, "sales_days": 0, "pnl_days": 0,
                                       "inventories": 0, "inventory_details": 0})
         prev = s.get("window")
         earliest = min(w_start, date.fromisoformat(prev[0])) if prev else w_start
         s["window"] = [iso(earliest), iso(end)]
 
-        # Reference data does not vary by window, so fetch it once per location across both passes.
-        if slug not in statics_done and budget.ok():
+        # Reference data does not vary by window, so fetch it once per location across both passes. When the
+        # history pass runs as its own job it starts a fresh process, so `statics_done` is empty and it would
+        # re-fetch all of it — 1,942 products per location, unchanged since the recent job pulled them minutes
+        # earlier. The recent pass owns this data; history only fetches it if the recent pass did not run.
+        if label == "history" and phase == "history" and not statics_done:
+            log.info("MarginEdge: history pass leaves reference data to the recent pass (fetched earlier this run)")
+            statics_done.add("__skip__")
+        if slug not in statics_done and "__skip__" not in statics_done and budget.ok():
             cats = me.categories(uid); write_raw("marginedge", slug, "categories", "all", {"categories": cats}); s["categories"] = len(cats)
             vends = me.vendors(uid);   write_raw("marginedge", slug, "vendors", "all", {"vendors": vends}); s["vendors"] = len(vends)
             prods = me.products(uid);  write_raw("marginedge", slug, "products", "all", {"products": prods}); s["products"] = len(prods)
@@ -207,13 +213,18 @@ def pull(locations: list[dict], days_back: int, incremental_days: int = 7, have:
             have_orders.add((slug, oid)); s["order_details"] += 1
 
         # daily sales report + daily P&L, newest day first
+        # The last `incremental_days` are re-fetched unconditionally because MarginEdge restates: invoices are
+        # entered late, recategorized, and the P&L moves under them. That refresh is the RECENT pass's job —
+        # when history repeats it, it re-pulls the same seven days the recent job pulled minutes before, for
+        # every location. History fills genuine gaps only.
+        force_recent = (label != "history")
         d = w_end
         while d >= w_start and budget.ok():
             k = (slug, iso(d))
-            if d >= inc_start or k not in have_sales:
+            if (force_recent and d >= inc_start) or k not in have_sales:
                 write_raw("marginedge", slug, "salesReport", iso(d), me.sales_report(uid, d, d))
                 have_sales.add(k); s["sales_days"] += 1
-            if d >= inc_start or k not in have_pnl:
+            if (force_recent and d >= inc_start) or k not in have_pnl:
                 write_raw("marginedge", slug, "pnl", iso(d), me.pnl_report(uid, d, d))
                 have_pnl.add(k); s["pnl_days"] += 1
             d -= timedelta(days=1)
@@ -249,6 +260,6 @@ def pull(locations: list[dict], days_back: int, incremental_days: int = 7, have:
         for slug, uid in resolved:
             if not budget.ok():
                 break
-            pull_window(slug, uid, w_start, end)
+            pull_window(slug, uid, w_start, end, label)
             log.info("MarginEdge %s [%s]: %s", slug, label, summary.get(slug))
     return summary
