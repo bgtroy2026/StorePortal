@@ -168,7 +168,7 @@ def build_payload(con, through: date | None = None) -> dict:
     return payload
 
 
-def detail_for_location(con, lid: str, sheets: int = 12) -> dict:
+def detail_for_location(con, lid: str, through: date, sheets: int = 12) -> dict:
     """The count-sheet level view behind the Inventory page's bucket rollups.
 
     Published as a SEPARATE per-location bundle, fetched only when somebody actually drills in. The headline
@@ -245,7 +245,84 @@ def detail_for_location(con, lid: str, sheets: int = 12) -> dict:
                          _r(woh, 1) if woh is not None else None, dead, _r(o["qty"]), o["unit"]])
         rows.sort(key=lambda x: -(x[5] or 0))
         out["variance"] = rows
+
+    out.update(_price_tracking(con, lid, through))
     return out
+
+
+def _price_tracking(con, lid: str, through: date, days: int = 180) -> dict:
+    """What we are paying per unit, and what has changed.
+
+    Grouped by product AND PACKAGING, never product alone. The same product bought in a different pack size
+    has a different unit price, so pooling them would manufacture price "movement" out of a packaging switch —
+    the most plausible-looking wrong answer this data can give. Credits and zero/negative lines are excluded
+    for the same reason: a credit is not a purchase at a negative price.
+
+    A mover is ranked by IMPACT (price change x recent volume), not by percentage. A 40% jump on something
+    bought twice a year is trivia; a 4% drift on a staple is the money.
+    """
+    since = (through - timedelta(days=days)).isoformat()
+    rows = _rows(con, """
+        SELECT l.product_id pid, COALESCE(l.packaging_id,'') pkg,
+               COALESCE(pr.name, l.vendor_item_name, '(unnamed)') nm, COALESCE(l.bucket,'Other') bucket,
+               COALESCE(i.vendor_name,'(no vendor)') vendor, l.invoice_date d,
+               l.unit_price up, l.quantity qty, l.line_price lp
+        FROM me_invoice_lines l
+        JOIN me_invoices i ON i.order_id=l.order_id AND i.location_id=l.location_id
+        LEFT JOIN me_products pr ON pr.product_id=l.product_id AND pr.location_id=l.location_id
+        WHERE l.location_id=? AND l.invoice_date>=? AND l.invoice_date<=?
+          AND COALESCE(i.is_credit,0)=0 AND l.unit_price>0 AND l.quantity>0
+        ORDER BY l.invoice_date""", (lid, since, through.isoformat()))
+    if not rows:
+        return {"price_movers": [], "price_series": [], "vendor_compare": [], "price_window": None}
+
+    mid = (through - timedelta(days=days // 2)).isoformat()
+    by_key: dict[tuple, dict] = {}
+    by_prod: dict[str, dict] = {}
+    for r in rows:
+        k = (r["pid"], r["pkg"])
+        o = by_key.setdefault(k, {"nm": r["nm"], "bucket": r["bucket"], "vendors": {}, "series": [], "spend": 0.0,
+                                  "old": [0.0, 0.0], "new": [0.0, 0.0]})
+        o["spend"] += float(r["lp"] or 0)
+        o["series"].append([r["d"], round(float(r["up"]), 4)])
+        o["vendors"][r["vendor"]] = o["vendors"].get(r["vendor"], 0) + 1
+        half = "new" if r["d"] > mid else "old"
+        o[half][0] += float(r["up"]) * float(r["qty"])          # volume-weighted, so one odd small order
+        o[half][1] += float(r["qty"])                            # cannot swing the average
+        pv = by_prod.setdefault(r["pid"], {"nm": r["nm"], "bucket": r["bucket"], "v": {}})
+        vv = pv["v"].setdefault(r["vendor"], [0.0, 0.0])
+        vv[0] += float(r["up"]) * float(r["qty"]); vv[1] += float(r["qty"])
+
+    movers = []
+    for (pid, pkg), o in by_key.items():
+        if o["old"][1] <= 0 or o["new"][1] <= 0:
+            continue                                             # no before-and-after: nothing to compare
+        old_up, new_up = o["old"][0] / o["old"][1], o["new"][0] / o["new"][1]
+        if old_up <= 0:
+            continue
+        pct = (new_up - old_up) / old_up
+        impact = (new_up - old_up) * o["new"][1]                  # dollars the change cost over the recent half
+        if abs(pct) < 0.02:
+            continue                                             # sub-2% is rounding and vendor noise
+        vendor = max(o["vendors"], key=lambda v: o["vendors"][v])
+        movers.append([o["nm"], vendor, o["bucket"], _r(old_up, 4), _r(new_up, 4), _r(pct, 4), _r(impact),
+                       len(o["series"]), _r(o["spend"])])
+    movers.sort(key=lambda x: -abs(x[6] or 0))
+
+    top = sorted(by_key.values(), key=lambda o: -o["spend"])[:24]
+    series = [[o["nm"], o["bucket"], o["series"][-40:]] for o in top if len(o["series"]) > 1]
+
+    compare = []
+    for pid, pv in by_prod.items():
+        if len(pv["v"]) < 2:
+            continue
+        vs = sorted(([v, _r(t[0] / t[1], 4), _r(t[1], 2)] for v, t in pv["v"].items() if t[1] > 0), key=lambda x: x[1])
+        if len(vs) > 1 and vs[0][1] > 0:
+            compare.append([pv["nm"], pv["bucket"], vs, _r((vs[-1][1] - vs[0][1]) / vs[0][1], 4)])
+    compare.sort(key=lambda x: -(x[3] or 0))
+
+    return {"price_movers": movers[:40], "price_series": series, "vendor_compare": compare[:25],
+            "price_window": [since, through.isoformat(), mid]}
 
 
 def slice_for_location(payload: dict, lid: str) -> dict:
@@ -261,7 +338,8 @@ def run(through: date | None = None) -> dict:
     p = build_payload(con, through)
     # Detail rides under its own key and is split out into per-location bundles by build_site, never published
     # inside the headline payload.
-    p["detail"] = {l["id"]: detail_for_location(con, l["id"]) for l in p["locations"]}
+    through = date.fromisoformat(p["meta"]["through"])
+    p["detail"] = {l["id"]: detail_for_location(con, l["id"], through) for l in p["locations"]}
     con.close()
     n = sum(len(v) for v in p["daily"].values())
     nd = sum(len(v.get("variance") or []) for v in p["detail"].values())

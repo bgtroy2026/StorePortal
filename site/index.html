@@ -508,7 +508,13 @@ function pgCogs(m){
     +'<div class="hint" style="margin:8px 2px 0;font-size:11.5px;color:var(--muted)">Purchases-based cost % is a proxy; the Inventory page shows count-adjusted actual usage (beginning + purchases − ending) where counts exist.</div>'
     +'<div class="grid cols2" style="margin-top:14px">'+panel('Purchases by category by week','Invoice line totals from MarginEdge',chartBox('c_purch',true))+panel('Category cost % in range','Purchases ÷ category net sales','<div id="catTbl"></div>')
     +panel('Top vendors — last 28 days','Invoice totals by vendor','<div id="vend"></div>')+panel('Purchases vs sales by day','Bars: purchases (invoice date) · line: net sales',chartBox('c_pvs',true))
-    +panel('P&amp;L by month (MarginEdge)','Income, COGS, labor and controllable expenses as MarginEdge reports them','<div id="pnlTbl"></div>')+panel('COGS by P&amp;L category','Inventory-adjusted where MarginEdge has counts','<div id="pnlCogs"></div>')+'</div>';
+    +panel('P&amp;L by month (MarginEdge)','Income, COGS, labor and controllable expenses as MarginEdge reports them','<div id="pnlTbl"></div>')+panel('COGS by P&amp;L category','Inventory-adjusted where MarginEdge has counts','<div id="pnlCogs"></div>')+'</div>'
+    +'<div id="priceDrill" style="margin-top:14px">'+locIds().map(function(l){
+        var loc=(D.locations.filter(function(x){return x.id===l;})[0]||{name:l});
+        if(!DETAIL_KEYS[l]) return '';
+        return panel('Unit prices — '+esc(loc.name),'What we pay per unit, and what has moved',
+          '<div><button class="signout" data-price="'+esc(l)+'">Price movers, history &amp; vendor comparison</button></div><div id="pdrill_'+esc(l)+'"></div>');
+      }).join('')+'</div>';
   var cur=byDate(a,b), wk={}; cur.forEach(function(r){var d=pd(r.d);d.setDate(d.getDate()-((d.getDay()+6)%7));var w=ds(d);var o=wk[w]||(wk[w]={_n:0});o._n++;BUCKETS.forEach(function(bk){if(bk[2])o[bk[2]]=(o[bk[2]]||0)+(r[bk[2]]||0);});});
   var wks=Object.keys(wk).sort();
   mk('c_purch',{type:'bar',data:{labels:wks.map(function(w){return wkLabel(w,wk[w]);}),datasets:BUCKETS.filter(function(bk){return bk[2];}).map(function(bk){return {label:bk[0],data:wks.map(function(w){return wk[w][bk[2]]||0;}),backgroundColor:css(bk[3]),borderWidth:2,borderColor:'#fff',borderSkipped:false};})},
@@ -518,6 +524,8 @@ function pgCogs(m){
   var vl=Object.keys(vd).sort(function(x,y){return vd[y].t-vd[x].t;}).slice(0,15), vt=vl.reduce(function(p,c){return p+vd[c].t;},0);
   $('vend').innerHTML='<table class="t"><tr><th>Vendor</th><th>Mostly</th><th class="r">Invoices</th><th class="r">Total</th><th class="r">Share</th></tr>'+vl.map(function(x){return '<tr><td class="n">'+esc(x)+'</td><td>'+esc(vd[x].b||'')+'</td><td class="r">'+fn(vd[x].n)+'</td><td class="r">'+fm(vd[x].t)+'</td><td class="r">'+fp(vd[x].t/vt)+'</td></tr>';}).join('')+'</table>';
   $('pnlTbl').innerHTML=pnlSummaryTable(); $('pnlCogs').innerHTML=pnlSectionTable('cogs');
+  var pd_=$('priceDrill');
+  if(pd_){ pd_.querySelectorAll('button[data-price]').forEach(function(b){ b.onclick=function(){ priceDrill(b.dataset.price,b); }; }); }
   mk('c_pvs',{data:{labels:cur.map(function(r){return fdate(r.d);}),datasets:[{type:'bar',label:'Purchases',data:cur.map(function(r){return r.p;}),backgroundColor:css('s2'),borderRadius:3},{type:'line',label:'Net sales',data:cur.map(function(r){return r.net;}),borderColor:css('s1'),borderWidth:2,pointRadius:0,tension:.25}]},options:baseOpts()});
 }
 
@@ -599,6 +607,74 @@ function drillHtml(d){
       +d.events.map(function(r){return '<tr><td class="n">'+fdate(r[0])+'</td><td>'+esc(r[1]||'')+'</td><td>'+esc(r[2]||'')+'</td><td class="r">'+fm(r[3])+'</td></tr>';}).join('')+'</table></div>';
   }
   return h;
+}
+
+/* ---------- purchase price tracking (lazy, shares the inventory detail bundle) ---------- */
+function priceDrill(loc, btn){
+  var box=$('pdrill_'+loc);
+  if(!box) return;
+  if(box.dataset.open==='1'){ box.dataset.open='0'; box.innerHTML=''; btn.textContent='Price movers, history & vendor comparison'; return; }
+  box.dataset.open='1'; btn.textContent='Hide price detail';
+  box.innerHTML='<div class="empty">Loading purchase history…</div>';
+  loadDetail(loc).then(function(d){ if(box.dataset.open==='1') box.innerHTML=priceHtml(d); })
+    .catch(function(e){ if(box.dataset.open==='1') box.innerHTML='<div class="empty">Could not load purchase history. '+esc(e.message)+'</div>'; });
+}
+
+function priceHtml(d){
+  if(!d) return '<div class="empty">No purchase history for this location.</div>';
+  var w=d.price_window||[], h='';
+  var mv=d.price_movers||[];
+  if(mv.length){
+    h+='<h3 style="margin-top:14px">Biggest unit-price movers</h3>'
+      +'<div class="src">'+fdate(w[0])+' → '+fdate(w[1])+', split at '+fdate(w[2])+' · volume-weighted average per unit, compared within the same pack size · ranked by dollar impact, not percentage</div>'
+      +'<div class="tw"><table class="t"><tr><th>Product</th><th>Vendor</th><th>Category</th><th class="r">Was</th><th class="r">Now</th><th class="r">Change</th><th class="r">Impact</th><th class="r">Buys</th></tr>'
+      +mv.map(function(r){
+         var bk=BUCKETS.filter(function(z){return z[0]===r[2];})[0], up=r[5]>0;
+         return '<tr><td class="n">'+esc(r[0])+'</td><td>'+esc(r[1])+'</td>'
+           +'<td><i class="sw" style="background:'+css(bk?bk[3]:'sx')+'"></i>'+esc(r[2])+'</td>'
+           +'<td class="r">'+fm(r[3])+'</td><td class="r">'+fm(r[4])+'</td>'
+           +'<td class="r" style="color:'+(up?'var(--bad,#b4413c)':'var(--good,#2e7d5b)')+'">'+(up?'+':'')+fp(r[5])+'</td>'
+           +'<td class="r">'+(up?'+':'')+fm(r[6])+'</td><td class="r">'+fn(r[7])+'</td></tr>';
+       }).join('')+'</table></div>'
+      +'<div class="src">Impact is the price change multiplied by the volume actually bought in the recent half — what the move has already cost or saved, rather than what it looks like as a percentage.</div>';
+  } else {
+    h+='<div class="empty" style="margin-top:14px">No unit-price movement above 2% with a purchase on both sides of the window.</div>';
+  }
+  var vc=d.vendor_compare||[];
+  if(vc.length){
+    h+='<h3 style="margin-top:18px">Same product, different vendors</h3><div class="src">Volume-weighted unit price per vendor over the window</div>'
+      +'<div class="tw"><table class="t"><tr><th>Product</th><th>Category</th><th>Cheapest</th><th class="r">Unit</th><th>Dearest</th><th class="r">Unit</th><th class="r">Gap</th></tr>'
+      +vc.map(function(r){
+         var lo=r[2][0], hi=r[2][r[2].length-1], bk=BUCKETS.filter(function(z){return z[0]===r[1];})[0];
+         return '<tr><td class="n">'+esc(r[0])+'</td><td><i class="sw" style="background:'+css(bk?bk[3]:'sx')+'"></i>'+esc(r[1])+'</td>'
+           +'<td>'+esc(lo[0])+'</td><td class="r">'+fm(lo[1])+'</td><td>'+esc(hi[0])+'</td><td class="r">'+fm(hi[1])+'</td>'
+           +'<td class="r">'+fp(r[3])+'</td></tr>';
+       }).join('')+'</table></div>'
+      +'<div class="src">A gap can be a genuine saving or simply two different pack sizes of the same product — worth checking the invoice before switching vendors.</div>';
+  }
+  var ser=d.price_series||[];
+  if(ser.length){
+    h+='<h3 style="margin-top:18px">Price history</h3><div class="src">Top products by spend · each purchase, oldest first</div>'
+      +'<div class="tw"><table class="t"><tr><th>Product</th><th>Category</th><th class="r">First</th><th class="r">Last</th><th class="r">Change</th><th>Trend</th></tr>'
+      +ser.map(function(r){
+         var pts=r[2], f=pts[0][1], l=pts[pts.length-1][1], ch=f?(l-f)/f:null;
+         var bk=BUCKETS.filter(function(z){return z[0]===r[1];})[0];
+         return '<tr><td class="n">'+esc(r[0])+'</td><td><i class="sw" style="background:'+css(bk?bk[3]:'sx')+'"></i>'+esc(r[1])+'</td>'
+           +'<td class="r">'+fm(f)+'</td><td class="r">'+fm(l)+'</td><td class="r">'+(ch==null?'—':((ch>0?'+':'')+fp(ch)))+'</td>'
+           +'<td>'+spark(pts.map(function(x){return x[1];}))+'</td></tr>';
+       }).join('')+'</table></div>';
+  }
+  return h||'<div class="empty">No purchase history for this location.</div>';
+}
+
+/* A sparkline as inline SVG: enough to see the shape of a price without a chart library or a tooltip. */
+function spark(vals){
+  if(!vals||vals.length<2) return '';
+  var w=110,hh=20,mn=Math.min.apply(null,vals),mx=Math.max.apply(null,vals),rg=(mx-mn)||1;
+  var pts=vals.map(function(v,i){return (i*(w-2)/(vals.length-1)+1).toFixed(1)+','+(hh-1-((v-mn)/rg)*(hh-2)).toFixed(1);}).join(' ');
+  var rising=vals[vals.length-1]>vals[0];
+  return '<svg width="'+w+'" height="'+hh+'" viewBox="0 0 '+w+' '+hh+'" aria-hidden="true" style="vertical-align:middle">'
+    +'<polyline points="'+pts+'" fill="none" stroke="'+(rising?'#b4413c':'#2e7d5b')+'" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg>';
 }
 
 /* ---------- Tripleseat events ---------- */
