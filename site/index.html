@@ -168,8 +168,32 @@ function $(id){return document.getElementById(id);}
 function setStatus(t){$('status').textContent=t;}
 function setErr(t){$('err').textContent=t;setStatus('');$('bar').style.display='none';}
 function ub64(s){var b=atob(s),a=new Uint8Array(b.length);for(var i=0;i<b.length;i++)a[i]=b.charCodeAt(i);return a;}
+/* Publishing the site swaps index.html and the encrypted bundles as separate files, so for a few seconds
+   after a deploy the new page is live while a bundle it asks for is still the old one or briefly absent.
+   Signing in during that window used to hang forever on a 404, which reads to the user as "the login is
+   broken" rather than "the site is mid-update". Retry a few times with backoff instead: a deploy window is
+   seconds long, so waiting it out costs nothing and turns the most alarming failure mode into a short pause. */
+async function fetchOnce(name){
+  var r=await fetch(name,{cache:'no-store'});
+  if(!r.ok) throw new Error(name+' HTTP '+r.status);
+  return r;
+}
+async function fetchWithRetry(name){
+  var waits=[900,2000,3500,5000], last=null;
+  for(var a=0;a<=waits.length;a++){
+    try{ return await fetchOnce(name); }
+    catch(e){
+      last=e;
+      // A 404 or a 5xx here is almost always the deploy window; a hard network error deserves the same patience.
+      if(a===waits.length) break;
+      setStatus('The portal is updating — retrying…');
+      await new Promise(function(r){setTimeout(r,waits[a]);});
+    }
+  }
+  throw last;
+}
 async function fetchBin(name,pct0,pct1){
-  var r=await fetch(name,{cache:'no-store'}); if(!r.ok) throw new Error(name+' HTTP '+r.status);
+  var r=await fetchWithRetry(name);
   var len=+r.headers.get('Content-Length')||0,got=0,chunks=[],rd=r.body.getReader();
   for(;;){var c=await rd.read();if(c.done)break;chunks.push(c.value);got+=c.value.length;if(len)$('barfill').style.width=(pct0+(pct1-pct0)*(got/len))+'%';}
   var buf=new Uint8Array(got),o=0;for(var i=0;i<chunks.length;i++){buf.set(chunks[i],o);o+=chunks[i].length;}return buf;
@@ -260,7 +284,7 @@ async function onCred(resp){
     if(!j.ok){ setErr(j.error==='not on the roster'?'Your account is not on the portal roster — ask Troy to add you.':('Sign-in refused: '+(j.error||'unknown'))); return; }
     try{ sessionStorage.setItem('sdp_auth',JSON.stringify(j)); }catch(e){}
   }catch(e){ setErr('Could not reach the sign-in service. '+e.message); return; }
-  try{ await boot(j); }catch(e){ try{sessionStorage.removeItem('sdp_auth');}catch(_){} setErr('Signed in OK, but the portal data failed to load — refresh and try again. ('+e.message+')'); }
+  try{ await boot(j); }catch(e){ try{sessionStorage.removeItem('sdp_auth');}catch(_){} setErr('Signed in fine, but the portal data would not load. If the site was being updated just now, wait about a minute and refresh. ('+e.message+')'); }
 }
 var gsiOK=false;
 function gsiFail(){ if(gsiOK||$('gbtn').firstChild)return; setErr('The Google sign-in button could not load. Open the portal directly in Chrome or Safari (not inside Gmail/Outlook/Messages) and try again.'); }
