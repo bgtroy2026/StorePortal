@@ -592,7 +592,10 @@ def _cash_management(con, lid: str, since: date, through: date) -> dict:
         return v[m] if len(v) % 2 else (v[m - 1] + v[m]) / 2
 
     consistent = None
-    med_by_drawer = {d: _median(v["shorts"]) for d, v in by_drawer.items() if v["short_n"] >= 2}
+    # Three shortages minimum, not two. At Omaha a drawer with exactly two events had a median twenty times the
+    # others and single-handedly hid a genuine pattern across three nightly drawers whose typical shortages were
+    # within $10 of each other. Two events is not a typical anything.
+    med_by_drawer = {d: _median(v["shorts"]) for d, v in by_drawer.items() if v["short_n"] >= 3}
     if len(med_by_drawer) >= 3:
         meds = sorted(med_by_drawer.values())
         lo, hi = meds[0], meds[-1]

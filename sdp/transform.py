@@ -156,7 +156,12 @@ def load_toast(con, bk: Buckets) -> dict:
     for res in CONFIG_RESOURCES:
         for slug, ds, p, j in iter_raw("toast", dataset=f"config-{res}"):
             for d in (j.get(res) or []):
-                guid, name = d.get("guid"), d.get("name") or d.get("behavior")
+                # Not every config resource calls its label `name` — cash drawers, for one, came through with
+                # no name and left raw guids in the cash view, which is the same failure the dining options had.
+                # Take the first label-ish field that is actually present rather than assuming one.
+                guid = d.get("guid")
+                name = (d.get("name") or d.get("displayName") or d.get("title")
+                        or d.get("label") or d.get("behavior"))
                 if not guid or not name:
                     continue
                 lookups.setdefault(res, {})[(slug, guid)] = name
