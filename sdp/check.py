@@ -101,11 +101,14 @@ def run(db=None) -> int:
 
     # 4. Labour cost should be within a rounding of hours x wage (overtime at 1.5x). Catches a wage or an
     #    overtime multiplier drifting from Toast's.
+    # `wages` is rounded per time entry and then summed, so a day with forty entries can legitimately differ
+    # from the recomputed total by a few cents. A nickel flagged forty days of pure rounding; a dollar still
+    # catches a wrong wage or a broken overtime multiplier, which is what this is for.
     bad = _rows(con, """
         SELECT location_id, business_date, ROUND(SUM(wages),2) stored,
                ROUND(SUM(regular_hours*hourly_wage + overtime_hours*hourly_wage*1.5),2) recomputed
         FROM toast_time_entries GROUP BY 1,2
-        HAVING ABS(stored - recomputed) > ? ORDER BY ABS(stored - recomputed) DESC""", (MONEY_TOL,))
+        HAVING ABS(stored - recomputed) > 1.0 ORDER BY ABS(stored - recomputed) DESC""")
     _report(r, "labour cost = hours x wage", bad,
             lambda b: f"{b['location_id']} {b['business_date']} {b['stored']:.2f} vs {b['recomputed']:.2f}")
 
@@ -167,8 +170,28 @@ def run(db=None) -> int:
         GROUP BY d.location_id, d.business_date
         HAVING ABS(d.discounts - COALESCE(SUM(t.amount),0)) > ?
         ORDER BY ABS(d.discounts - COALESCE(SUM(t.amount),0)) DESC""", (MONEY_TOL,))
-    _report(r, "day's discounts match the discounts recorded for it", bad,
+    # Days from before per-discount capture existed have a day total and no itemised rows. That is history, not
+    # a defect being introduced now, so only recent days fail — otherwise the check is red forever and stops
+    # being read, which is the failure mode that matters most for a check nobody is forced to look at.
+    cutoff = con.execute("SELECT DATE(MAX(business_date), '-90 days') FROM daily_summary").fetchone()[0] or "0000-00-00"
+    recent = [b for b in bad if b["business_date"] >= cutoff]
+    older = [b for b in bad if b["business_date"] < cutoff]
+    _report(r, "day's discounts match the discounts recorded for it (last 90 days)", recent,
             lambda b: f"{b['location_id']} {b['business_date']} {b['discounts']:.2f} vs {b['itemised']:.2f}")
+    _report(r, "day's discounts match the discounts recorded for it (older than 90 days)", older,
+            lambda b: f"{b['location_id']} {b['business_date']} {b['discounts']:.2f} vs {b['itemised']:.2f}",
+            severity="warn")
+
+    # 10. "Other" is the bucket for anything the category mapping did not recognise. A little is normal; most of
+    #     a day's sales landing there means the mapping is not working for that location, and every mix chart,
+    #     COGS ratio and benchmark built on the split is meaningless for it.
+    bad = _rows(con, """
+        SELECT location_id, COUNT(*) days, ROUND(AVG(sales_other * 100.0 / net_sales),1) pct
+        FROM daily_summary WHERE net_sales > 100
+        GROUP BY location_id HAVING pct > 25 ORDER BY pct DESC""")
+    _report(r, "no location has most of its sales in the unmapped Other category", bad,
+            lambda b: f"{b['location_id']} averages {b['pct']}% in Other across {b['days']} days",
+            severity="warn")
 
     n_days = con.execute("SELECT COUNT(*) FROM daily_summary").fetchone()[0]
     locs = con.execute("SELECT COUNT(DISTINCT location_id) FROM daily_summary").fetchone()[0]

@@ -574,7 +574,12 @@ def rebuild_daily_summary(con):
     SELECT d.location_id, d.business_date,
       COALESCE(o.net, ms.net, 0), COALESCE(o.gross, ms.net, 0), COALESCE(o.disc,0), COALESCE(o.tax,0), COALESCE(o.tips,0), COALESCE(o.ref,0), COALESCE(o.orders,0), COALESCE(o.checks,0), COALESCE(o.guests,0),
       COALESCE(i.f, ms.f, 0), COALESCE(i.b, ms.b, 0), COALESCE(i.l, ms.l, 0), COALESCE(i.w, ms.w, 0), COALESCE(i.n, ms.n, 0), COALESCE(i.r, ms.r, 0), COALESCE(i.x, ms.x, 0),
-      COALESCE(o.svc,0),
+      -- Only when the category split came from TOAST ITEMS. MarginEdge's own category totals already contain
+      -- service charges (they land in the unmapped 'Other' bucket), so adding the Toast figure on top of a
+      -- MarginEdge-sourced day counts them twice — which is exactly what happened: 1,471 location-days where
+      -- the split overshot net sales, by $7,392 on the worst one. The split's source has to decide this, and
+      -- it is chosen by the same COALESCE order as the categories themselves.
+      CASE WHEN i.f IS NOT NULL THEN COALESCE(o.svc,0) ELSE 0 END,
       COALESCE(t.hrs,0), COALESCE(t.cost, ml.cost, 0),
       COALESCE(ph.tot,0), COALESCE(p.f,0), COALESCE(p.b,0), COALESCE(p.l,0), COALESCE(p.w,0), COALESCE(p.n,0), COALESCE(p.r,0), COALESCE(p.x,0)
     FROM days d

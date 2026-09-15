@@ -29,6 +29,10 @@ on:
         description: "Only run the connectivity diagnostics (MarginEdge + Toast)"
         type: boolean
         default: false
+      incremental_days:
+        description: "Re-pull this many days even where the warehouse already has them (blank = settings default, 7). Use to heal history after a transform fix."
+        type: string
+        default: ""
       build_only:
         description: "Rebuild and republish the site from the stored warehouse — no API pulls (use for code/design changes)"
         type: boolean
@@ -102,7 +106,7 @@ jobs:
       # pull turns a ~27-minute deploy into about a minute.
       - name: Pull (recent window + all other sources)
         if: ${{ !inputs.mock && !inputs.diag && !inputs.build_only }}
-        run: python -m sdp pull --source ${{ inputs.source || 'all' }} --phase recent ${{ inputs.backfill && '--backfill' || '' }}
+        run: python -m sdp pull --source ${{ inputs.source || 'all' }} --phase recent ${{ inputs.backfill && '--backfill' || '' }} ${{ inputs.incremental_days && format('--incremental-days {0}', inputs.incremental_days) || '' }}
 
       - name: Pull (mock data)
         if: ${{ inputs.mock && !inputs.diag }}

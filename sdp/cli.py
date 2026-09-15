@@ -3,6 +3,7 @@
   python -m sdp pull        [--mock [--mock-no-toast]] [--source toast|marginedge|all] [--backfill] [--max-minutes N]
   python -m sdp transform
   python -m sdp check                               invariant checks against the loaded warehouse (exit 1 on failure)
+  python -m sdp pull --incremental-days N            widen the forced re-pull window for one run (heals recent history)
   python -m sdp build       [--dev-json] [--no-encrypt]
   python -m sdp all         [--mock] ...            pull -> transform -> build
   python -m sdp restore | persist                   warehouse state <-> GitHub release asset
@@ -64,6 +65,12 @@ def cmd_pull(a):
         from . import mock
         mock.generate(locs, days=a.mock_days, toast=not a.mock_no_toast)
         return
+    # A widened window re-pulls days the warehouse already has. That is the point: a transform fix only reaches
+    # a day when that day's raw JSON is read again, so healing history means deliberately re-fetching it.
+    inc_days = a.incremental_days if getattr(a, "incremental_days", None) else cfg["incremental_days"]
+    if inc_days != cfg["incremental_days"]:
+        log.info("incremental window widened to %d days for this run (settings say %d)", inc_days, cfg["incremental_days"])
+
     # Each source is isolated: if one API is down or unauthorized the other still populates the warehouse,
     # and the build goes ahead with whatever arrived. The run fails only if every configured source failed.
     attempted, failed = [], []
@@ -73,7 +80,7 @@ def cmd_pull(a):
             try:
                 from . import marginedge
                 me_cfg = cfg["marginedge"]
-                marginedge.pull(locs, days_back=cfg["backfill_days"], incremental_days=cfg["incremental_days"], have=({} if a.backfill else _me_have()),
+                marginedge.pull(locs, days_back=cfg["backfill_days"], incremental_days=inc_days, have=({} if a.backfill else _me_have()),
                                 max_minutes=a.max_minutes or me_cfg.get("max_minutes_per_run"), phase=a.phase)
             except Exception as e:
                 failed.append("marginedge"); log.error("MarginEdge pull failed (%s: %s) — continuing with other sources", type(e).__name__, e)
@@ -85,7 +92,7 @@ def cmd_pull(a):
             try:
                 from . import toast
                 t_cfg = cfg["toast"]
-                toast.pull(locs, days_back=cfg["backfill_days"], incremental_days=cfg["incremental_days"],
+                toast.pull(locs, days_back=cfg["backfill_days"], incremental_days=inc_days,
                            warehouse_days=(set() if a.backfill else _warehouse_days()),
                            max_minutes=a.max_minutes or t_cfg.get("max_minutes_per_run"))
             except Exception as e:
@@ -229,6 +236,9 @@ def main(argv=None):
         p.add_argument("--backfill", action="store_true", help="pull the full backfill window even if a warehouse exists")
         p.add_argument("--dev-json", action="store_true", help="also write site/data/dev.json (unencrypted, local preview)")
         p.add_argument("--no-encrypt", action="store_true", help="skip bundles; write dev.json only")
+        p.add_argument("--incremental-days", type=int, default=None,
+                       help="override settings.incremental_days for this run — re-pulls that many days even where the "
+                            "warehouse already has them. Use to heal history after a transform fix, then drop back.")
     a = ap.parse_args(argv)
     # A command that returns a non-zero code must fail the process, or a failing check is a green workflow.
     rc = a.fn(a)
