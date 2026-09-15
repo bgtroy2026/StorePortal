@@ -16,16 +16,19 @@ body{font-family:'Brandon Grotesque','Josefin Sans','Avenir Next',Avenir,'Segoe 
 button{font-family:inherit}
 /* ---------- login shell ---------- */
 #login{position:fixed;inset:0;background:var(--navy);display:flex;align-items:center;justify-content:center;z-index:50;overflow:hidden}
-/* Watermark. `screen` blending drops the artwork's near-black background to nothing and leaves only the teal
-   glow, so it reads as part of the navy rather than as a dark square pasted on top. Sized in vmin so it stays
-   a backdrop on a phone instead of crowding the card, and pointer-events:none so it can never eat a click on
-   the sign-in button. */
-#login::before{content:"";position:absolute;inset:0;background:url('images/jargvis.jpg') center/min(620px,80vmin) no-repeat;
-  mix-blend-mode:screen;opacity:.30;pointer-events:none;
-  /* The artwork's background is very dark teal rather than true black, so `screen` lifts it just enough to
-     show the square edge against the navy. Fade the corners out so it reads as a glow, not a pasted tile. */
-  -webkit-mask-image:radial-gradient(circle at center, #000 42%, rgba(0,0,0,.55) 58%, transparent 72%);
-          mask-image:radial-gradient(circle at center, #000 42%, rgba(0,0,0,.55) 58%, transparent 72%)}
+/* Watermark, bottom-right. A watermark should sit in the room rather than in the way, so it is small, tucked
+   into a corner, and faint enough to read as a mark on the surface instead of a picture on the page.
+   `screen` blending drops the artwork's dark background out against the navy; the artwork's ground is a very
+   dark teal rather than true black, so screen still lifts it enough to show a square edge — the radial mask
+   feathers that away well before the image's own border, which is what stops it looking like a pasted tile.
+   pointer-events:none so it can never eat a click on the sign-in button. */
+#login::before{content:"";position:absolute;
+  right:clamp(10px,4vmin,44px);bottom:clamp(10px,4vmin,44px);
+  width:min(190px,30vmin);height:min(190px,30vmin);
+  background:url('images/jargvis.jpg') center/contain no-repeat;
+  mix-blend-mode:screen;opacity:.18;pointer-events:none;
+  -webkit-mask-image:radial-gradient(circle at center, #000 30%, rgba(0,0,0,.45) 50%, transparent 68%);
+          mask-image:radial-gradient(circle at center, #000 30%, rgba(0,0,0,.45) 50%, transparent 68%)}
 @media (prefers-reduced-motion:no-preference){#login::before{transition:opacity .6s ease}}
 .card{position:relative;z-index:1;background:#fff;border-radius:14px;padding:38px 42px;width:min(400px,calc(100vw - 40px));box-shadow:0 20px 60px rgba(0,0,0,.4);text-align:center}
 .card h1{font-size:19px;color:var(--navy);margin-bottom:4px}
