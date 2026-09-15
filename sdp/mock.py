@@ -89,6 +89,9 @@ def gen_toast(loc: dict, loc_idx: int, start: date, end: date, events: dict[str,
     W("toast", slug, "config-serviceAreas", "all",
       {"serviceAreas": [{"guid": _g(f"sa:{slug}:{n}"), "name": n} for n in ("Main Floor", "Patio", "Upstairs")]})
 
+    # One location deliberately has NO schedule in Toast — plenty of restaurants build the rota elsewhere, and
+    # the portal must hide the comparison for them rather than imply perfect adherence.
+    sched = None if slug == "solon" else []
     day_sales, day_labor = {}, {}
     servers = [_g(f"emp:{slug}:{i}") for i in range(14)]
     W("toast", slug, "employees", "all", {"employees": [
@@ -149,13 +152,24 @@ def gen_toast(loc: dict, loc_idx: int, start: date, end: date, events: dict[str,
             hrs = rnd.choice([4, 5, 6, 6.5, 7, 8, 8.5])
             ot = 0.5 if hrs > 8 else 0
             start_h = rnd.choice([9, 10, 11, 14, 15, 16, 17])
+            emp = rnd.choice(servers)
             day_labor[iso(d)] = day_labor.get(iso(d), 0) + (hrs - ot) * wage + ot * wage * 1.5
-            tes.append({"guid": _g(f"te:{slug}:{iso(d)}:{i}"), "employeeReference": {"guid": rnd.choice(servers)}, "jobReference": {"guid": _g(f"job:{slug}:{title}")},
+            tes.append({"guid": _g(f"te:{slug}:{iso(d)}:{i}"), "employeeReference": {"guid": emp}, "jobReference": {"guid": _g(f"job:{slug}:{title}")},
                         "inDate": _ts(d, start_h), "outDate": _ts(d, start_h + hrs), "businessDate": d.strftime("%Y%m%d"),
                         "regularHours": hrs - ot, "overtimeHours": ot, "hourlyWage": wage, "declaredCashTips": (round(rnd.uniform(0, 40), 2) if title in ("Server", "Bartender") else 0),
                         "nonCashTips": (round(rnd.uniform(40, 220), 2) if title in ("Server", "Bartender") else 0), "deleted": False})
+            # The matching SCHEDULED shift: mostly the same, but with the drift a real schedule has — people
+            # clock in a few minutes either side of their start and stay a little past the end.
+            if sched is not None and rnd.random() > 0.05:          # ~5% worked with no shift on the schedule
+                s_start = start_h - rnd.choice([0, 0, 0, 0.25, -0.25, 0.5])
+                s_hrs = hrs - rnd.choice([0, 0, 0, 0.5, -0.5])
+                sched.append({"guid": _g(f"sh:{slug}:{iso(d)}:{i}"), "employeeReference": {"guid": emp},
+                              "jobReference": {"guid": _g(f"job:{slug}:{title}")},
+                              "inDate": _ts(d, s_start), "outDate": _ts(d, s_start + s_hrs), "deleted": False})
         d += timedelta(days=1)
     W("toast", slug, "timeEntries", f"{iso(start)}_{iso(end)}", {"timeEntries": tes, "window": [iso(start), iso(end)]})
+    if sched is not None:
+        W("toast", slug, "shifts", f"{iso(start)}_{iso(end)}", {"shifts": sched, "window": [iso(start), iso(end)]})
     return n_orders_total, len(tes), day_sales, day_labor
 
 

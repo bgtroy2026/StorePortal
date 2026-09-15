@@ -2,7 +2,18 @@ name: Nightly refresh
 
 on:
   schedule:
-    - cron: "15 10 * * *"        # 10:15 UTC = 5:15 AM Central (CDT) — after Toast's 4 AM closeout
+    # 10:37 UTC = 5:37 AM CDT / 4:37 AM CST — after Toast's 4 AM closeout in BOTH halves of the year, which is
+    # why the hour does not move any earlier: cron is UTC, so an hour that is comfortable in summer is before
+    # closeout in winter.
+    #
+    # The odd minute is deliberate. GitHub's scheduled runs are best-effort and deprioritised under load, and
+    # the top of the hour is the worst slot. Measured on this repo: the runs due at 10:15 UTC actually started
+    # at 13:36, 14:23 and 16:22 UTC on 12-14 Sep — three to six hours late, i.e. mid-morning to lunchtime
+    # Central, for a portal whose whole promise is "open it and see yesterday".
+    #
+    # Moving off the hour is a nudge, not a cure. The real fix is to stop depending on GitHub's scheduler and
+    # have something external call workflow_dispatch on time; this schedule then becomes the safety net.
+    - cron: "37 10 * * *"
   workflow_dispatch:
     inputs:
       backfill:

@@ -491,6 +491,10 @@ function pgLabor(m){
     +(T?'<div class="grid cols2" style="margin-top:14px">'
         +panel('Sales and labor by hour','Average day, last 8 weeks · bars: net sales · line: labor % of sales',chartBox('c_splh',true))
         +panel('Labor % by hour and weekday','Where the schedule and the trade disagree · darker = more of the hour\'s sales spent on labor · shading caps at 60% so one pre-open hour does not flatten the rest','<div id="heatLab"></div>')
+      +'</div>':'')
+    +(hasSchedule()?'<div class="grid cols2" style="margin-top:14px">'
+        +panel('Scheduled vs worked hours','Last 28 days · bars: scheduled · line: actually worked',chartBox('c_sched',true))
+        +panel('Schedule adherence','Matched per person, per day, per job','<div id="schedTbl"></div>')
       +'</div>':'');
   var cur=byDate(a,b);
   var lc=lineCfg(cur.map(function(r){return fdate(r.d);}),[{label:'Labor %',data:cur.map(function(r){return r.net?r.lc/r.net:null;}),borderColor:css('s3'),fmt:'pct'}]);
@@ -498,7 +502,7 @@ function pgLabor(m){
   lc.options.scales.y.ticks.callback=function(v){return fp(v,0);}; mk('c_lab',lc);
   if(!T){ $('pnlLabor').innerHTML=pnlSectionTable('labor'); return; }
   mk('c_hrs',{type:'bar',data:{labels:cur.map(function(r){return fdate(r.d);}),datasets:[{label:'Labor hours',data:cur.map(function(r){return r.lh;}),backgroundColor:css('s3'),borderRadius:3,fmt:'int'}]},options:baseOpts({scales:{x:{grid:{display:false},ticks:{maxRotation:0,autoSkip:true,maxTicksLimit:10}},y:{beginAtZero:true,grid:{color:css('grid')},border:{display:false},ticks:{callback:function(v){return fn(v)+' h';}}}}})});
-  hourlyLaborViews();
+  hourlyLaborViews(); scheduleViews();
   var jb={}; locIds().forEach(function(l){(D.labor_jobs[l]||[]).forEach(function(r){var o=jb[r[0]]||(jb[r[0]]={h:0,c:0,s:0});o.h+=r[1];o.c+=r[2];o.s+=r[3];});});
   var jl=Object.keys(jb).sort(function(x,y){return jb[y].c-jb[x].c;}), jt=jl.reduce(function(p,c){return p+jb[c].c;},0);
   $('jobs').innerHTML='<table class="t"><tr><th>Job</th><th class="r">Hours</th><th class="r">Cost</th><th class="r">Avg rate</th><th class="r">Shifts</th><th class="r">Share</th></tr>'+jl.map(function(x){return '<tr><td class="n">'+esc(x)+'</td><td class="r">'+fn(jb[x].h)+'</td><td class="r">'+fm(jb[x].c)+'</td><td class="r">'+fm(jb[x].h?jb[x].c/jb[x].h:null,2)+'</td><td class="r">'+fn(jb[x].s)+'</td><td class="r">'+fp(jb[x].c/jt)+'</td></tr>';}).join('')+'</table>';
@@ -668,6 +672,56 @@ function hourlyLaborViews(){
   }
 }
 function hLabel(x){ return x>12?(x-12)+'p':(x===12?'12p':x+'a'); }
+
+/* ---------- schedule vs actual ----------
+   Only rendered when Toast actually returned scheduled shifts. A restaurant that does not build its schedule
+   in Toast has no schedule to compare against, and an empty panel claiming 100% adherence would be a lie. */
+function hasSchedule(){ return locIds().some(function(l){ var s=(D.schedule||{})[l]; return s && (s.daily||[]).length; }); }
+
+function scheduleViews(){
+  if(!hasSchedule()) return;
+  var day={}, jobs={}, punct={n:0,early:0,on_time:0,late:0,lateSum:0}, unsched=0, noshow=0, worst=[];
+  locIds().forEach(function(l){
+    var s=(D.schedule||{})[l]; if(!s||!s.daily) return;
+    s.daily.forEach(function(r){ var o=day[r[0]]||(day[r[0]]=[0,0]); o[0]+=r[1]; o[1]+=r[2]; });
+    (s.jobs||[]).forEach(function(r){ var o=jobs[r[0]]||(jobs[r[0]]=[0,0,0]); o[0]+=r[1]; o[1]+=r[2]; o[2]+=r[3]; });
+    var p=s.punctuality||{};
+    punct.n+=p.n||0; punct.early+=p.early||0; punct.on_time+=p.on_time||0; punct.late+=p.late||0;
+    if(p.avg_late&&p.late) punct.lateSum+=p.avg_late*p.late;
+    (p.worst||[]).forEach(function(w){ worst.push(w); });
+    unsched+=s.unscheduled_hours||0; noshow+=s.no_show_hours||0;
+  });
+  var ds=Object.keys(day).sort();
+  if($('c_sched')) mk('c_sched',{data:{labels:ds.map(fdate),datasets:[
+      {type:'bar',label:'Scheduled',data:ds.map(function(d){return day[d][0];}),backgroundColor:css('s2'),borderRadius:3,order:2},
+      {type:'line',label:'Worked',data:ds.map(function(d){return day[d][1];}),borderColor:css('s3'),borderWidth:2,pointRadius:0,tension:.25,order:1}]},
+    options:baseOpts({scales:{x:{grid:{display:false},ticks:{maxRotation:0,autoSkip:true,maxTicksLimit:10}},
+      y:{beginAtZero:true,grid:{color:css('grid')},border:{display:false},ticks:{callback:function(v){return fn(v)+' h';}}}},
+      plugins:{legend:{display:true,position:'bottom'},tooltip:{callbacks:{label:function(c){return ' '+c.dataset.label+': '+fn(Math.round(c.parsed.y))+' h';}}}}})});
+
+  if($('schedTbl')){
+    var jl=Object.keys(jobs).sort(function(a,b){return jobs[b][1]-jobs[a][1];});
+    var tS=jl.reduce(function(p,c){return p+jobs[c][0];},0), tA=jl.reduce(function(p,c){return p+jobs[c][1];},0);
+    var avgLate=punct.late?punct.lateSum/punct.late:null;
+    worst.sort(function(a,b){return b[2]-a[2];});
+    $('schedTbl').innerHTML=
+      '<div class="hint" style="margin-bottom:8px">'+fn(Math.round(tS))+' h scheduled · <b>'+fn(Math.round(tA))+' h</b> worked'
+        +(tS?' ('+(tA>tS?'+':'')+fp((tA-tS)/tS)+')':'')+'</div>'
+      +'<table class="t"><tr><th>Job</th><th class="r">Scheduled</th><th class="r">Worked</th><th class="r">Diff</th></tr>'
+      +jl.map(function(j){var v=jobs[j],d=v[1]-v[0];
+        return '<tr><td class="n">'+esc(j)+'</td><td class="r">'+fn(Math.round(v[0]))+' h</td><td class="r">'+fn(Math.round(v[1]))+' h</td>'
+          +'<td class="r" style="color:'+(d>0.5?'var(--bad,#b4413c)':(d<-0.5?'var(--good,#2e7d5b)':'inherit'))+'">'+(d>0?'+':'')+fn(Math.round(d))+' h</td></tr>';}).join('')
+      +'</table>'
+      +'<div class="hint" style="margin-top:12px"><b>Clock-in</b> vs scheduled start, '+fn(punct.n)+' matched shifts: '
+        +fn(punct.on_time)+' on time (±5 min) · '+fn(punct.early)+' early · <b>'+fn(punct.late)+' late</b>'
+        +(avgLate?' averaging '+avgLate.toFixed(0)+' min':'')+'</div>'
+      +(worst.length?'<div class="tw"><table class="t" style="margin-top:8px"><tr><th>Date</th><th>Job</th><th class="r">Minutes late</th></tr>'
+        +worst.slice(0,10).map(function(w){return '<tr><td class="n">'+fdate(w[0])+'</td><td>'+esc(w[1])+'</td><td class="r">'+fn(w[2])+'</td></tr>';}).join('')
+        +'</table></div>':'')
+      +((unsched>0.5||noshow>0.5)?'<div class="src">'+(unsched>0.5?fn(Math.round(unsched))+' h worked with no shift on the schedule. ':'')
+        +(noshow>0.5?fn(Math.round(noshow))+' h scheduled but never worked.':'')+'</div>':'');
+  }
+}
 
 /* ---------- purchase price tracking (lazy, shares the inventory detail bundle) ---------- */
 function priceDrill(loc, btn){

@@ -92,6 +92,19 @@ CREATE TABLE IF NOT EXISTS toast_time_entries (     -- grain: one clock-in/clock
 );
 CREATE INDEX IF NOT EXISTS ix_toast_te_loc_date ON toast_time_entries(location_id, business_date);
 
+-- The SCHEDULE, as distinct from toast_time_entries, which is what was actually worked. Keeping both is the
+-- whole point: the gap between them is the finding.
+CREATE TABLE IF NOT EXISTS toast_shifts (
+  shift_guid     TEXT NOT NULL, location_id TEXT NOT NULL,
+  business_date  TEXT,                            -- derived from the scheduled start, POS-closeout aligned
+  employee_guid  TEXT, job_guid TEXT, job_name TEXT,
+  in_at          TEXT, out_at TEXT,               -- SCHEDULED start/end
+  hours          REAL DEFAULT 0,
+  deleted        INTEGER DEFAULT 0,
+  PRIMARY KEY (shift_guid, location_id)
+);
+CREATE INDEX IF NOT EXISTS ix_toast_shifts_loc_date ON toast_shifts(location_id, business_date);
+
 CREATE TABLE IF NOT EXISTS toast_menu_items (       -- grain: menu item per location (latest published menu)
   item_guid         TEXT NOT NULL,
   location_id       TEXT NOT NULL,

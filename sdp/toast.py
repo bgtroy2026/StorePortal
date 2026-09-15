@@ -10,6 +10,7 @@ Datasets pulled per restaurant:
   restaurants/v1/restaurants/{guid}         -> raw/toast/<loc>/restaurant/info.json   (closeoutHour, tz)
   orders/v2/ordersBulk?businessDate=yyyymmdd -> raw/toast/<loc>/orders/<YYYY-MM-DD>.json  (one file per business day)
   labor/v1/timeEntries?startDate&endDate    -> raw/toast/<loc>/timeEntries/<start>_<end>.json (≤30-day windows)
+  labor/v1/shifts?startDate&endDate         -> raw/toast/<loc>/shifts/<start>_<end>.json (SCHEDULED shifts)
   labor/v1/jobs                             -> raw/toast/<loc>/jobs/all.json
   menus/v2/menus                            -> raw/toast/<loc>/menus/all.json  (item -> sales category names)
   config/v2/<resource>                      -> raw/toast/<loc>/config-<resource>/all.json  (guid -> name lookups)
@@ -91,6 +92,20 @@ class Toast:
             e = min(end, s + timedelta(days=self.labor_window - 1))
             r = self.http.get("/labor/v1/timeEntries",
                               params={"startDate": f"{iso(s)}T00:00:00.000-0600", "endDate": f"{iso(e)}T23:59:59.999-0600", "includeArchived": "true"},
+                              headers=self._h(guid))
+            out.extend(r.json() or [])
+            s = e + timedelta(days=1)
+        return out
+
+    def shifts(self, guid: str, start: date, end: date) -> list[dict]:
+        """SCHEDULED shifts — what the schedule said, as opposed to timeEntries, which is what people actually
+        punched. Same ≤1-month windowing as time entries."""
+        out = []
+        s = start
+        while s <= end:
+            e = min(end, s + timedelta(days=self.labor_window - 1))
+            r = self.http.get("/labor/v1/shifts",
+                              params={"startDate": f"{iso(s)}T00:00:00.000-0600", "endDate": f"{iso(e)}T23:59:59.999-0600"},
                               headers=self._h(guid))
             out.extend(r.json() or [])
             s = e + timedelta(days=1)
@@ -204,6 +219,15 @@ def pull(locations: list[dict], days_back: int, incremental_days: int, warehouse
         lab_start = min(days) if days else end - timedelta(days=incremental_days)
         te = t.time_entries(guid, lab_start, end)
         write_raw("toast", slug, "timeEntries", f"{iso(lab_start)}_{iso(end)}", {"timeEntries": te, "window": [iso(lab_start), iso(end)]})
-        summary[slug] = {"days_pulled": len(days), "orders": n_orders, "time_entries": len(te), "window": [iso(start), iso(end)], "stopped_early": stopped}
+        # Scheduled shifts. Optional in the same way the config lookups are: a credential without the schedule
+        # scope should cost us the schedule-vs-actual view, never the labor data everything else depends on.
+        n_sh = 0
+        try:
+            sh = t.shifts(guid, lab_start, end)
+            write_raw("toast", slug, "shifts", f"{iso(lab_start)}_{iso(end)}", {"shifts": sh, "window": [iso(lab_start), iso(end)]})
+            n_sh = len(sh)
+        except Exception as e:
+            log.warning("Toast: %s shifts not pulled (%s) — schedule-vs-actual unavailable", slug, e)
+        summary[slug] = {"days_pulled": len(days), "orders": n_orders, "time_entries": len(te), "shifts": n_sh, "window": [iso(start), iso(end)], "stopped_early": stopped}
         log.info("Toast %s: %s", slug, summary[slug])
     return summary

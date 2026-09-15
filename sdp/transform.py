@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from . import inputs
@@ -130,7 +130,7 @@ def _disc_row(d: dict, o: dict, c: dict, slug: str, bd: str, scope: str) -> dict
 
 
 def load_toast(con, bk: Buckets) -> dict:
-    stats = {"orders": 0, "items": 0, "payments": 0, "time_entries": 0, "config": 0, "employees": 0}
+    stats = {"orders": 0, "items": 0, "payments": 0, "time_entries": 0, "config": 0, "employees": 0, "shifts": 0}
     # menus first: item guid -> (name, group, sales category)
     item_cat: dict[tuple[str, str], tuple[str, str, str, float]] = {}
     for slug, ds, p, j in iter_raw("toast", dataset="menus"):
@@ -235,6 +235,38 @@ def load_toast(con, bk: Buckets) -> dict:
         stats["items"] += _upsert(con, "toast_order_items", items)
         stats["payments"] += _upsert(con, "toast_payments", pays)
         stats["discounts"] = stats.get("discounts", 0) + _upsert(con, "toast_discounts", [d for d in discs if d])
+
+    # Scheduled shifts. /labor/v1/shifts carries no businessDate (unlike time entries), so it is derived the
+    # way Toast defines a business day: anything before the restaurant's closeout hour belongs to the night
+    # before. Without that, a shift scheduled 10pm-2am would be split across two business dates and the
+    # schedule would never line up with the hours actually worked.
+    closeout: dict[str, int] = {}
+    for slug, ds, p, j in iter_raw("toast", dataset="restaurant"):
+        try:
+            closeout[slug] = int(((j.get("general") or {}).get("closeoutHour")) or 4)
+        except Exception:
+            closeout[slug] = 4
+    sh_rows = []
+    for slug, ds, p, j in iter_raw("toast", dataset="shifts"):
+        co = closeout.get(slug, 4)
+        for x in j.get("shifts", []):
+            if x.get("deleted"):
+                continue
+            a, b = x.get("inDate"), x.get("outDate")
+            if not a:
+                continue
+            try:
+                start = datetime.strptime(a[:19], "%Y-%m-%dT%H:%M:%S")
+                bd = (start - timedelta(days=1)).date().isoformat() if start.hour < co else start.date().isoformat()
+                hrs = ((datetime.strptime(b[:19], "%Y-%m-%dT%H:%M:%S") - start).total_seconds() / 3600.0) if b else 0.0
+            except Exception:
+                continue
+            jg = (x.get("jobReference") or {}).get("guid")
+            sh_rows.append({"shift_guid": x["guid"], "location_id": slug, "business_date": bd,
+                            "employee_guid": (x.get("employeeReference") or {}).get("guid"), "job_guid": jg,
+                            "job_name": jobs.get((slug, jg)), "in_at": a, "out_at": b,
+                            "hours": round(hrs, 2) if 0 < hrs <= 24 else 0.0, "deleted": 0})
+    stats["shifts"] = _upsert(con, "toast_shifts", sh_rows)
 
     for slug, ds, p, j in iter_raw("toast", dataset="timeEntries"):
         rows = []

@@ -43,7 +43,7 @@ def build_payload(con, through: date | None = None) -> dict:
                               # site suppresses its change-vs-prior figures instead of dividing by a partial baseline.
                               "first_date": (con.execute("SELECT MIN(business_date) FROM daily_summary WHERE location_id=? AND net_sales>0", (l["slug"],)).fetchone() or [None])[0]}
                              for l in locs],
-               "daily": {}, "hourly": {}, "top_items": {}, "labor_jobs": {}, "vendors": {}, "inventory": {}, "activations": [], "targets": {}, "payments": {}, "dining": {}, "revctr": {}, "labor_hourly": {}, "discounts": {}, "pnl": {}, "sources": {}, "events": {}, "leads": {}, "events_monthly": {}, "scorecard": {}}
+               "daily": {}, "hourly": {}, "top_items": {}, "labor_jobs": {}, "vendors": {}, "inventory": {}, "activations": [], "targets": {}, "payments": {}, "dining": {}, "revctr": {}, "labor_hourly": {}, "schedule": {}, "discounts": {}, "pnl": {}, "sources": {}, "events": {}, "leads": {}, "events_monthly": {}, "scorecard": {}}
 
     for l in locs:
         lid = l["slug"]
@@ -58,6 +58,7 @@ def build_payload(con, through: date | None = None) -> dict:
         # hourly sales heatmap and a labor-by-job table on separate pages since the start; neither answers
         # "are we staffed for the hour we are about to trade", which is the question a director schedules to.
         payload["labor_hourly"][lid] = _labor_by_hour(con, lid, w56, through)
+        payload["schedule"][lid] = _schedule_vs_actual(con, lid, w28, through)
 
         payload["top_items"][lid] = [[r["item_name"], r["bucket"], _r(r["qty"]), _r(r["net"])] for r in _rows(con, """
             SELECT item_name, bucket, SUM(quantity) qty, SUM(price) net FROM toast_order_items WHERE location_id=? AND voided=0 AND business_date>=? AND business_date<=?
@@ -234,6 +235,71 @@ def _labor_by_hour(con, lid: str, since: date, through: date) -> list:
     return [[dow, hr, _r(v[0]), _r(v[1]), len(days[(dow, hr)])] for (dow, hr), v in sorted(buckets.items())]
 
 
+def _schedule_vs_actual(con, lid: str, since: date, through: date) -> dict:
+    """The schedule against what actually happened.
+
+    Matched at the level of (person, business date, job) TOTALS rather than shift-to-punch. A one-to-one
+    match sounds more precise and is in practice worse: people split shifts, clock out for breaks, get moved
+    between jobs mid-day, and any pairing rule invents a winner for those cases. Totals per person per day
+    per job are unambiguous, and the difference is the number anyone actually acts on.
+
+    Punctuality compares the FIRST scheduled start with the FIRST punch of that person/day/job, which is the
+    only in-time comparison that survives split shifts.
+    """
+    def key(r):
+        return (r["employee_guid"] or "", r["business_date"] or "", r["job_guid"] or "")
+
+    sched, actual = {}, {}
+    for r in _rows(con, """SELECT employee_guid, business_date, job_guid, job_name, SUM(hours) h, MIN(in_at) first_in
+                           FROM toast_shifts WHERE location_id=? AND deleted=0 AND business_date>=? AND business_date<=?
+                           GROUP BY 1,2,3""", (lid, since.isoformat(), through.isoformat())):
+        sched[key(r)] = {"h": float(r["h"] or 0), "in": r["first_in"], "job": r["job_name"]}
+    for r in _rows(con, """SELECT employee_guid, business_date, job_guid, job_name,
+                                  SUM(regular_hours+overtime_hours) h, MIN(in_at) first_in
+                           FROM toast_time_entries WHERE location_id=? AND business_date>=? AND business_date<=?
+                           GROUP BY 1,2,3""", (lid, since.isoformat(), through.isoformat())):
+        actual[key(r)] = {"h": float(r["h"] or 0), "in": r["first_in"], "job": r["job_name"]}
+    if not sched:
+        return {}                                   # no schedule pulled: the view hides itself rather than lying
+
+    daily: dict[str, list] = {}
+    byjob: dict[str, list] = {}
+    late = []
+    unscheduled = worked_off = 0.0
+    for k in set(sched) | set(actual):
+        sh, ac = sched.get(k), actual.get(k)
+        bd = k[1]
+        s_h = sh["h"] if sh else 0.0
+        a_h = ac["h"] if ac else 0.0
+        job = (sh or ac).get("job") or "Unknown"
+        d = daily.setdefault(bd, [0.0, 0.0]); d[0] += s_h; d[1] += a_h
+        b = byjob.setdefault(job, [0.0, 0.0, 0]); b[0] += s_h; b[1] += a_h; b[2] += 1
+        if not sh and a_h:
+            unscheduled += a_h                      # worked without being on the schedule at all
+        if sh and not ac:
+            worked_off += s_h                       # scheduled and never turned up (or was cut)
+        if sh and ac and sh["in"] and ac["in"]:
+            try:
+                sm = datetime.strptime(sh["in"][:19], "%Y-%m-%dT%H:%M:%S")
+                am = datetime.strptime(ac["in"][:19], "%Y-%m-%dT%H:%M:%S")
+                late.append([bd, job, round((am - sm).total_seconds() / 60.0)])
+            except Exception:
+                pass
+
+    mins = [x[2] for x in late]
+    on_time = sum(1 for m in mins if -5 <= m <= 5)
+    early = sum(1 for m in mins if m < -5)
+    tardy = sorted([x for x in late if x[2] > 5], key=lambda x: -x[2])
+    return {
+        "daily": [[bd, _r(v[0]), _r(v[1])] for bd, v in sorted(daily.items())],
+        "jobs": sorted(([j, _r(v[0]), _r(v[1]), v[2]] for j, v in byjob.items()), key=lambda x: -(x[2] or 0)),
+        "punctuality": {"n": len(mins), "early": early, "on_time": on_time, "late": len(tardy),
+                        "avg_late": _r(sum(x[2] for x in tardy) / len(tardy), 1) if tardy else None,
+                        "worst": tardy[:12]},
+        "unscheduled_hours": _r(unscheduled), "no_show_hours": _r(worked_off),
+    }
+
+
 def detail_for_location(con, lid: str, through: date, sheets: int = 12) -> dict:
     """The count-sheet level view behind the Inventory page's bucket rollups.
 
@@ -394,7 +460,7 @@ def _price_tracking(con, lid: str, through: date, days: int = 180) -> dict:
 def slice_for_location(payload: dict, lid: str) -> dict:
     """A director's bundle: only their location (other locations are not merely hidden — they are absent)."""
     out = {"meta": dict(payload["meta"]), "locations": [l for l in payload["locations"] if l["id"] == lid], "activations": [a for a in payload["activations"] if a["loc"] == lid]}
-    for k in ("daily", "hourly", "top_items", "labor_jobs", "vendors", "inventory", "targets", "payments", "dining", "revctr", "labor_hourly", "discounts", "pnl", "sources", "events", "leads", "events_monthly"):
+    for k in ("daily", "hourly", "top_items", "labor_jobs", "vendors", "inventory", "targets", "payments", "dining", "revctr", "labor_hourly", "schedule", "discounts", "pnl", "sources", "events", "leads", "events_monthly"):
         out[k] = {lid: payload[k].get(lid)} if lid in payload[k] else {}
     return out
 
