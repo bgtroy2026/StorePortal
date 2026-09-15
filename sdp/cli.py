@@ -2,6 +2,7 @@
 
   python -m sdp pull        [--mock [--mock-no-toast]] [--source toast|marginedge|all] [--backfill] [--max-minutes N]
   python -m sdp transform
+  python -m sdp check                               invariant checks against the loaded warehouse (exit 1 on failure)
   python -m sdp build       [--dev-json] [--no-encrypt]
   python -m sdp all         [--mock] ...            pull -> transform -> build
   python -m sdp restore | persist                   warehouse state <-> GitHub release asset
@@ -127,6 +128,11 @@ def cmd_transform(a):
     transform.run()
 
 
+def cmd_check(a):
+    from . import check
+    return check.run()
+
+
 def cmd_build(a):
     from . import build_site
     secret = None if a.no_encrypt else env("PORTAL_SECRET")
@@ -209,7 +215,7 @@ def cmd_toast_restaurants(a):
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="sdp", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name, fn in [("pull", cmd_pull), ("transform", cmd_transform), ("build", cmd_build), ("all", cmd_all), ("restore", cmd_restore), ("persist", cmd_persist),
+    for name, fn in [("pull", cmd_pull), ("transform", cmd_transform), ("check", cmd_check), ("build", cmd_build), ("all", cmd_all), ("restore", cmd_restore), ("persist", cmd_persist),
                      ("me-units", cmd_me_units), ("me-diag", cmd_me_diag), ("toast-diag", cmd_toast_diag), ("ts-locations", cmd_ts_locations), ("sc-test", cmd_sc_test), ("ts-auth-url", cmd_ts_auth_url), ("ts-exchange", cmd_ts_exchange), ("toast-restaurants", cmd_toast_restaurants)]:
         p = sub.add_parser(name); p.set_defaults(fn=fn)
         p.add_argument("--mock", action="store_true", help="generate sample raw data instead of calling APIs")
@@ -224,7 +230,10 @@ def main(argv=None):
         p.add_argument("--dev-json", action="store_true", help="also write site/data/dev.json (unencrypted, local preview)")
         p.add_argument("--no-encrypt", action="store_true", help="skip bundles; write dev.json only")
     a = ap.parse_args(argv)
-    a.fn(a)
+    # A command that returns a non-zero code must fail the process, or a failing check is a green workflow.
+    rc = a.fn(a)
+    if rc:
+        raise SystemExit(rc)
 
 
 if __name__ == "__main__":

@@ -111,6 +111,15 @@ jobs:
       - name: Transform into warehouse
         if: ${{ !inputs.diag }}
         run: python -m sdp transform
+      # Invariant checks against the REAL warehouse. They run before the build so a contradiction is visible in
+      # the run that caused it, and continue-on-error so a failed check never blocks publishing — a portal that
+      # is a day stale is worse than one carrying a flagged inconsistency. The run is marked failed at the end.
+      - name: Check warehouse invariants
+        if: ${{ !inputs.diag }}
+        id: checks
+        continue-on-error: true
+        run: python -m sdp check
+
       - name: Build site + encrypted bundles
         if: ${{ !inputs.diag }}
         run: python -m sdp build
@@ -132,6 +141,13 @@ jobs:
       - id: deploy
         if: ${{ !inputs.diag }}
         uses: actions/deploy-pages@v4
+      # Last step in the job, deliberately: publishing must happen first. A flagged inconsistency is worth a
+      # red run so it is not ignored, but it is not worth withholding the day's numbers from six taprooms.
+      - name: Fail the run if an invariant check failed
+        if: ${{ !inputs.diag && steps.checks.outcome == 'failure' }}
+        run: |
+          echo "::error::Warehouse invariant checks failed — the site published, but a figure is inconsistent. See the 'Check warehouse invariants' step."
+          exit 1
 
   history:
     needs: recent

@@ -131,7 +131,7 @@ def gen_toast(loc: dict, loc_idx: int, start: date, end: date, events: dict[str,
                 if not voided: day_sales.setdefault(iso(d), {})[b] = day_sales.setdefault(iso(d), {}).get(b, 0) + line
                 sels.append({"guid": _g(f"sel:{og}:{j}"), "entityType": "MenuItemSelection", "item": {"guid": _g(f"item:{slug}:{name}")}, "itemGroup": {"guid": _g(f"grp:{slug}:{grp}")},
                              "salesCategory": {"guid": _g(f"sc:{slug}:{sc}"), "name": sc}, "displayName": name, "quantity": q, "preDiscountPrice": pre, "price": line, "tax": t,
-                             "voided": False, "createdDate": _ts(d, hour + 0.1 * j), "appliedDiscounts": ([{"discountAmount": disc, "name": "Happy Hour"}] if disc else [])})
+                             "voided": False, "createdDate": _ts(d, hour + 0.1 * j), "appliedDiscounts": ([{"guid": _g(f"disc:{og}:{j}"), "discountAmount": disc, "name": "Happy Hour", "discountType": "PERCENT"}] if disc else [])})
             # Toast includes service charges INSIDE the check amount, so net sales contains them while the
             # category split cannot. Mock used to add the charge alongside the amount instead of into it,
             # which made the mix add up perfectly here and not in production — exactly the kind of
@@ -143,7 +143,7 @@ def gen_toast(loc: dict, loc_idx: int, start: date, end: date, events: dict[str,
                 sels.append({"guid": _g(f"sel:{og}:void"), "entityType": "MenuItemSelection", "item": {"guid": _g(f"item:{slug}:Voided")},
                              "salesCategory": {"guid": _g(f"sc:{slug}:Food"), "name": "Food"}, "displayName": "Rung then voided",
                              "quantity": 1, "preDiscountPrice": 12.0, "price": 0.0, "tax": 0.0, "voided": True,
-                             "createdDate": _ts(d, hour + 0.05), "appliedDiscounts": [{"discountAmount": 12.0, "name": "Void comp"}]})
+                             "createdDate": _ts(d, hour + 0.05), "appliedDiscounts": [{"guid": _g(f"disc:{og}:void"), "discountAmount": 12.0, "name": "Void comp", "discountType": "OPEN"}]})
             amount, tax = round(amount + svc, 2), round(tax, 2)
             total = round(amount + tax, 2)
             tip = round(total * rnd.choice([0, 0.15, 0.18, 0.2, 0.2, 0.22, 0.25]), 2)
