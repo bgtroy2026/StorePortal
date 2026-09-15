@@ -655,10 +655,38 @@ function pgInventory(m){
     if(!inv.length){h+=panel(loc.name,'No inventory counts yet','<div class="empty">Add counts to inputs/inventory_counts.csv or enable the MarginEdge inventory endpoint.</div>');return;}
     var tot=inv.reduce(function(p,c){return p+c.value;},0);
     var canDrill=!!DETAIL_KEYS[l];
-    h+=panel(loc.name+' — on hand '+fk(tot),'Latest count '+fdate(inv[0].date)+(inv[0].prev_date?' vs '+fdate(inv[0].prev_date):''),
-      '<table class="t"><tr><th>Category</th><th class="r">Begin</th><th class="r">Purchases</th><th class="r">End</th><th class="r">Usage</th><th class="r">Sales</th><th class="r">Actual cost %</th><th class="r">Wks on hand</th></tr>'
-      +inv.map(function(r){var days=r.prev_date?(pd(r.date)-pd(r.prev_date))/864e5:null;var woh=(r.usage&&days)?r.value/(r.usage/days*7):null;var bk=BUCKETS.filter(function(z){return z[0]===r.bucket;})[0];
-        return '<tr><td class="n"><i class="sw" style="background:'+css(bk?bk[3]:'sx')+'"></i>'+esc(r.bucket)+'</td><td class="r">'+fm(r.prev_value)+'</td><td class="r">'+fm(r.purchases)+'</td><td class="r">'+fm(r.value)+'</td><td class="r">'+fm(r.usage)+'</td><td class="r">'+fm(r.sales)+'</td><td class="r">'+fp(r.sales?r.usage/r.sales:null)+'</td><td class="r">'+(woh!=null?woh.toFixed(1):'—')+'</td></tr>';}).join('')+'</table>'
+    /* Each bucket is counted on its own cadence, and buckets do get left off a sheet entirely. Two things follow.
+       (1) The window shown must be the ROW's window, not the first row's — Solon's beer was last counted in June
+       while its food is counted weekly, and showing both under one "Sep 14 vs Sep 7" heading made a four-month-old
+       number look current. (2) An ending value of zero under a non-zero beginning is a bucket that was not on the
+       sheet, not a bucket that ran to nothing. Subtracting it yields usage = everything you started with plus
+       everything you bought, which lands at a believable-looking cost percentage and is entirely fictional. The
+       honest output there is no number at all. */
+    var newest=inv.reduce(function(p,c){return c.date>p?c.date:p;},'');
+    var anyGap=inv.some(function(r){return r.date!==newest||r.value===0;});
+    h+=panel(loc.name+' — on hand '+fk(tot),'Most recent count '+fdate(newest)
+        +(anyGap?' · <b>not every category was counted then</b> — each row shows the window it was actually measured over':' · all categories counted together'),
+      '<table class="t"><tr><th>Category</th><th>Counted</th><th class="r">Begin</th><th class="r">Purchases</th><th class="r">End</th><th class="r">Usage</th><th class="r">Sales</th><th class="r">Actual cost %</th><th class="r">Wks on hand</th></tr>'
+      +inv.map(function(r){
+        // An ending value of exactly zero for a whole category is never a real state in a taproom that stocks it;
+        // it means the category had no lines on the sheet. Treated as uncounted whether or not there is a prior.
+        var missing=(r.value===0);
+        var stale=(r.date!==newest);                     // counted on an older date than the rest
+        var days=r.prev_date?(pd(r.date)-pd(r.prev_date))/864e5:null;
+        var woh=(!missing&&r.usage&&days)?r.value/(r.usage/days*7):null;
+        var bk=BUCKETS.filter(function(z){return z[0]===r.bucket;})[0];
+        var win=r.prev_date?(fdate(r.prev_date)+' → '+fdate(r.date)):('first count '+fdate(r.date));
+        var warn='color:var(--bad);font-weight:700';
+        return '<tr><td class="n"><i class="sw" style="background:'+css(bk?bk[3]:'sx')+'"></i>'+esc(r.bucket)+'</td>'
+          +'<td style="font-size:11.5px'+(stale?';color:var(--bad);font-weight:700':';color:var(--muted)')+'">'+win
+            +(stale?' <span title="Older than this location\'s most recent count">stale</span>':'')+'</td>'
+          +'<td class="r">'+fm(r.prev_value)+'</td><td class="r">'+fm(r.purchases)+'</td>'
+          +(missing?'<td class="r" style="'+warn+'" title="This category had no lines on the count sheet, so there is no ending value to subtract">not counted</td>'
+                   :'<td class="r">'+fm(r.value)+'</td>')
+          +(missing?'<td class="r">—</td><td class="r">'+fm(r.sales)+'</td><td class="r">—</td><td class="r">—</td>'
+                   :'<td class="r">'+fm(r.usage)+'</td><td class="r">'+fm(r.sales)+'</td><td class="r">'+fp(r.sales?r.usage/r.sales:null)+'</td><td class="r">'+(woh!=null?woh.toFixed(1):'—')+'</td>')
+          +'</tr>';}).join('')+'</table>'
+      +(anyGap?'<div class="hint" style="margin-top:8px">A category reading <b style="color:var(--bad)">not counted</b> was missing from the latest sheet, so its usage and cost cannot be worked out — begin plus purchases with nothing subtracted would produce a plausible-looking number that means nothing. A <b style="color:var(--bad)">stale</b> window was measured over different dates than the rest of this table and is not comparable to them.</div>':'')
       +(canDrill?'<div style="margin-top:10px"><button class="signout" data-drill="'+esc(l)+'">Count sheet &amp; per-product variance</button></div><div id="drill_'+esc(l)+'"></div>'
                 :'<div class="hint" style="margin-top:10px;font-size:11.5px;color:var(--muted)">Per-product detail is unavailable for this location.</div>'));
   });

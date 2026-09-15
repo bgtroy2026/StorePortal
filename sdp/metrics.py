@@ -62,7 +62,6 @@ def build_payload(con, through: date | None = None) -> dict:
         payload["servers"][lid] = _server_performance(con, lid, w28, through)
         payload["cash"][lid] = _cash_management(con, lid, w28, through)
         payload["pacing"][lid] = _pacing(con, lid, through)
-        payload["digest"][lid] = _digest(con, lid, payload, w28, through)
 
         payload["top_items"][lid] = [[r["item_name"], r["bucket"], _r(r["qty"]), _r(r["net"])] for r in _rows(con, """
             SELECT item_name, bucket, SUM(quantity) qty, SUM(price) net FROM toast_order_items WHERE location_id=? AND voided=0 AND business_date>=? AND business_date<=?
@@ -170,6 +169,12 @@ def build_payload(con, through: date | None = None) -> dict:
             inv.append({"bucket": b, "date": last["count_date"], "value": _r(last["value"]), "prev_date": prev["count_date"] if prev else None, "prev_value": _r(prev["value"]) if prev else None,
                         "purchases": _r(purch) if purch is not None else None, "usage": _r(usage) if usage is not None else None, "sales": _r(sales) if sales is not None else None})
         payload["inventory"][lid] = inv
+
+        # The digest reads back sections of the payload rather than re-querying, so it can never disagree with
+        # the page a director opens to check it. That means it has to run LAST: it previously sat above, where
+        # inventory, invoices, voids and discounts were all still empty for this location, and its rules over
+        # those sections could never fire at all.
+        payload["digest"][lid] = _digest(con, lid, payload, w28, through)
 
         # which source feeds this location (drives the dashboard's "needs Toast" states)
         t_days = con.execute("SELECT COUNT(DISTINCT business_date) FROM toast_orders WHERE location_id=? AND business_date>=?", (lid, w28.isoformat())).fetchone()[0]
@@ -391,7 +396,20 @@ def _digest(con, lid: str, payload: dict, w28: date, through: date) -> list:
         add("warn" if n < 0 else "info", "Cash",
             f"Drawers net {'short' if n < 0 else 'over'} {abs(n):,.0f} across 28 days")
 
-    for r in payload["inventory"].get(lid) or []:
+    # A bucket missing from the latest count sheet is a data gap, not a finding about the food. It stays silent
+    # in every other view by design, which is exactly why the digest has to say it out loud — an uncounted
+    # category is the one thing here a director can actually fix before the next count.
+    _inv = payload["inventory"].get(lid) or []
+    _newest = max((r["date"] for r in _inv if r.get("date")), default=None)
+    for r in _inv:
+        if r.get("prev_value") and not r.get("value"):
+            add("warn", "Inventory", f"{r['bucket']} was not on the count sheet dated {r['date']}",
+                "usage and cost cannot be calculated for it")
+        elif _newest and r.get("date") and r["date"] != _newest:
+            add("info", "Inventory", f"{r['bucket']} last counted {r['date']}",
+                f"other categories were counted {_newest}")
+
+    for r in _inv:
         if r.get("usage") and r.get("value") and r.get("prev_date"):
             days = (date.fromisoformat(r["date"]) - date.fromisoformat(r["prev_date"])).days or 1
             weekly = r["usage"] / days * 7
