@@ -490,8 +490,6 @@ function pgOverview(m){
    +(hasToast()?tile('Sales / labor hour',fm(k.splh,0),delta(k.splh,kp&&kp.splh))+tile('Discounts',fk(k.disc),delta(k.disc,kp&&kp.disc,true),'<span class="tg">'+fp(k.gross?k.disc/k.gross:null)+' of gross</span>'):tile('Prime cost %',fp(k.net?(k.labor+k.purch)/k.net:null),delta(k.net?(k.labor+k.purch)/k.net:null,kp&&kp.net?(kp.labor+kp.purch)/kp.net:null,true),'<span class="tg">labor + purchases</span>'))
    +(hasEvents()?tile('Event revenue',fk(evRows().filter(function(e){return evIsDef(e.status)&&e.d>=a&&e.d<=b;}).reduce(function(p,c){return p+evValue(c);},0)),'','<span class="tg">private events (Tripleseat)</span>'):'')
    +'</div>';
-  var db=digestBlock();
-  if(db) h+='<div class="grid" style="margin-top:14px">'+db+'</div>';
   var pb=pacingBlock();
   if(pb) h+='<div class="grid" style="margin-top:14px">'+pb+'</div>';
   h+='<div class="grid cols2" style="margin-top:14px">'
@@ -500,6 +498,10 @@ function pgOverview(m){
    +panel('Labor % and purchases % by week','Weekly ratios against targets',chartBox('c_ratio'))
    +panel('Day of week','Average net sales per weekday in range',chartBox('c_dow'))
    +'</div>';
+  // The digest closes the Overview rather than interrupting it: the numbers and charts read as one block, and
+  // "what changed" is the thing you leave the page with.
+  var db=digestBlock();
+  if(db) h+='<div class="grid" style="margin-top:14px">'+db+'</div>';
   m.innerHTML=h;
   // trend
   var cur=byDate(a,b), prev=kp?byDate(cw[0],cw[1]):[];
