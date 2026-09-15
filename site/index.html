@@ -99,6 +99,13 @@ body.sheetmode #main{background:#f2f1ec}
 .panel h3{font-size:13px;color:var(--navy);margin-bottom:2px}
 .ph{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
 /* Present but quiet: a director should notice it when they want it, not before. */
+.pt{display:flex;align-items:center;gap:6px;flex:none}
+.find{width:96px;border:1px solid var(--border);background:transparent;border-radius:6px;font-size:11px;
+  padding:3px 7px;color:var(--ink);opacity:.45;transition:opacity .15s ease,width .15s ease}
+.panel:hover .find{opacity:1}
+.find:focus{opacity:1;width:150px;outline:none;border-color:var(--navy)}
+.findnote{font-size:11px;margin-top:6px}
+@media print{.find,.findnote{display:none}}
 .csv{flex:none;border:1px solid var(--border);background:transparent;color:var(--muted);border-radius:6px;
   font-size:10.5px;font-weight:700;letter-spacing:.06em;padding:2px 7px;cursor:pointer;opacity:.45;
   transition:opacity .15s ease,color .15s ease}
@@ -412,8 +419,12 @@ function tile(label,val,dl,extra){ return '<div class="tile"><div class="l">'+la
    hide the button at render time. */
 function panel(title,hint,body,cls){
   var id='p'+(panel._n=(panel._n||0)+1);
+  var plain=esc(String(title).replace(/<[^>]*>/g,''));
   return '<div class="panel '+(cls||'')+'" id="'+id+'"><div class="ph"><h3>'+title+'</h3>'
-    +'<button class="csv" data-csv="'+id+'" title="Download this table as CSV" aria-label="Download '+esc(String(title).replace(/<[^>]*>/g,''))+' as CSV">CSV</button></div>'
+    +'<div class="pt">'
+      +'<input class="find" type="search" data-find="'+id+'" placeholder="Filter…" aria-label="Filter '+plain+'">'
+      +'<button class="csv" data-csv="'+id+'" title="Download this table as CSV" aria-label="Download '+plain+' as CSV">CSV</button>'
+    +'</div></div>'
     +'<div class="hint">'+(hint||'')+'</div>'+body+'</div>';
 }
 function csvCell(v){
@@ -433,6 +444,9 @@ function panelCsv(pid){
   var tbl=el.querySelector('table'); if(!tbl) return;
   var lines=[];
   tbl.querySelectorAll('tr').forEach(function(tr){
+    // A row hidden by the filter is not on screen, so it is not in the export. The button says "download this
+    // table"; if it quietly included rows the director had filtered out, the file would not be the table.
+    if(tr.hidden) return;
     var cells=[...tr.children].map(function(c){return csvCell(c.textContent);});
     if(cells.length) lines.push(cells.join(','));
   });
@@ -449,11 +463,49 @@ document.addEventListener('click',function(e){
   var b=e.target&&e.target.closest&&e.target.closest('button[data-csv]');
   if(b){ e.preventDefault(); panelCsv(b.dataset.csv); }
 });
-/* A panel whose body is a chart or an empty state has nothing to export; hide rather than disappoint. */
+/* Filter rows by what is typed. Header rows stay put — a table whose headings vanish is unreadable — and the
+   match is over the row's whole text, because someone looking for "Rob" or for "IPA" does not know or care
+   which column it lives in. */
+function panelFind(pid, q){
+  var el=$(pid); if(!el) return;
+  var tbl=el.querySelector('table'); if(!tbl) return;
+  q=(q||'').trim().toLowerCase();
+  var shown=0, total=0;
+  tbl.querySelectorAll('tr').forEach(function(tr){
+    var isHead=!tr.querySelector('td');
+    if(isHead){ tr.hidden=false; return; }
+    total++;
+    var hit=!q || (tr.textContent||'').toLowerCase().indexOf(q)>=0;
+    tr.hidden=!hit;
+    if(hit) shown++;
+  });
+  var note=el.querySelector('.findnote');
+  if(!note){ note=document.createElement('div'); note.className='findnote hint'; tbl.parentNode.insertBefore(note, tbl.nextSibling); }
+  note.textContent = q ? ('Showing '+shown+' of '+total+' rows') : '';
+  note.hidden = !q;
+}
+var _findT=null;
+document.addEventListener('input',function(e){
+  var i=e.target&&e.target.matches&&e.target.matches('input[data-find]')?e.target:null;
+  if(!i) return;
+  clearTimeout(_findT);
+  // A short debounce: these tables are small enough to filter on every keystroke, but not so small that
+  // doing it mid-keystroke on a slow machine feels good.
+  _findT=setTimeout(function(){ panelFind(i.dataset.find, i.value); }, 90);
+});
+
+/* A panel whose body is a chart or an empty state has nothing to export; hide rather than disappoint. The
+   filter earns its place only once a table is long enough that scanning it is a chore. */
 function syncCsvButtons(){
   document.querySelectorAll('button[data-csv]').forEach(function(b){
     var p=$(b.dataset.csv);
     b.hidden = !(p && p.querySelector('table') && p.querySelectorAll('table tr').length>1);
+  });
+  document.querySelectorAll('input[data-find]').forEach(function(i){
+    var p=$(i.dataset.find);
+    var rows=p?p.querySelectorAll('table tr').length:0;
+    i.hidden = rows<9;
+    if(i.hidden && i.value){ i.value=''; panelFind(i.dataset.find,''); }
   });
 }
 function chartBox(id,tall){ return '<div class="cw'+(tall?' tall':'')+'"><canvas id="'+id+'"></canvas></div>'; }
