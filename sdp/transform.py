@@ -6,6 +6,7 @@ Idempotent: every table is upserted on its natural key, so re-pulling a business
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -17,10 +18,51 @@ from .util import DB_PATH, ROOT, iter_raw, load_json, locations, log, settings
 SCHEMA = (Path(__file__).parent / "schema.sql").read_text()
 
 
+_CREATE_RE = re.compile(r"CREATE TABLE IF NOT EXISTS\s+(\w+)\s*\((.*?)\)\s*;", re.S)
+
+
+def _migrate(con) -> list[str]:
+    """Add columns that schema.sql has gained since the persisted warehouse was written.
+
+    The warehouse survives between nightly runs as an encrypted release asset, and CREATE TABLE IF NOT EXISTS
+    silently leaves an older table shaped exactly as it was. So adding a column to schema.sql works perfectly
+    on a fresh database and then fails on every real run with "table X has no column named Y" — which is a
+    deploy-time break rather than a test-time one, and therefore worth handling once, here, rather than
+    remembering to hand-write a migration each time.
+
+    SQLite does the parsing: the new definition is built as a throwaway probe table and its columns compared
+    against the live one, so this never has to understand column syntax itself.
+    """
+    added = []
+    have = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    for name, body in _CREATE_RE.findall(SCHEMA):
+        if name not in have:
+            continue                                    # brand-new table: the schema script just created it
+        cols = {r[1] for r in con.execute(f"PRAGMA table_info({name})")}
+        probe = f"__probe_{name}"
+        con.execute(f"DROP TABLE IF EXISTS {probe}")
+        try:
+            con.execute(f"CREATE TABLE {probe} ({body})")
+            want = [(r[1], r[2] or "") for r in con.execute(f"PRAGMA table_info({probe})")]
+        except sqlite3.Error:
+            continue                                    # unparseable for any reason: leave the table alone
+        finally:
+            con.execute(f"DROP TABLE IF EXISTS {probe}")
+        for col, typ in want:
+            if col not in cols:
+                con.execute(f"ALTER TABLE {name} ADD COLUMN {col} {typ}")
+                added.append(f"{name}.{col}")
+    if added:
+        con.commit()
+        log.info("warehouse migration: added %s", ", ".join(added))
+    return added
+
+
 def connect(path: Path = DB_PATH) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(path)
     con.executescript(SCHEMA)
+    _migrate(con)
     return con
 
 
