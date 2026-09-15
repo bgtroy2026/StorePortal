@@ -292,9 +292,13 @@ CREATE TABLE IF NOT EXISTS daily_summary (             -- grain: location × bus
   orders INTEGER DEFAULT 0, checks INTEGER DEFAULT 0, guests INTEGER DEFAULT 0,
   sales_food REAL DEFAULT 0, sales_beer REAL DEFAULT 0, sales_liquor REAL DEFAULT 0, sales_wine REAL DEFAULT 0,
   sales_nabev REAL DEFAULT 0, sales_retail REAL DEFAULT 0, sales_other REAL DEFAULT 0,
-  -- Service charges are inside net sales but belong to no menu category, so without their own column the
-  -- category split silently fails to add up to net (Solon 2026-09-05: $433.81, 2.7% of the day).
-  sales_svc REAL DEFAULT 0,
+  -- Everything inside net sales that no menu category accounts for: service charges, check-level discounts,
+  -- and anything the category mapping did not recognise. Defined as the RESIDUAL (net minus the categories)
+  -- rather than sourced from any one field, because sourcing it was wrong twice: Toast's service-charge
+  -- figure explains the gap on only 608 of 2,088 location-days, and on some days exceeds it twenty-fold.
+  -- As a residual it is correct by construction, cannot double-count, and was non-negative on all 2,088 days.
+  sales_svc REAL DEFAULT 0,          -- Toast's own service-charge total, kept for reference
+  sales_unattr REAL DEFAULT 0,       -- the residual; this is what the sales mix displays
   labor_hours REAL DEFAULT 0, labor_cost REAL DEFAULT 0,
   purchases REAL DEFAULT 0, purch_food REAL DEFAULT 0, purch_beer REAL DEFAULT 0, purch_liquor REAL DEFAULT 0,
   purch_wine REAL DEFAULT 0, purch_nabev REAL DEFAULT 0, purch_retail REAL DEFAULT 0, purch_other REAL DEFAULT 0,

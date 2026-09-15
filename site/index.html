@@ -315,10 +315,11 @@ window.addEventListener('load',function(){
    ========================================================================================= */
 var D=null, P=null, S={loc:'all', preset:'l28', d0:null, d1:null, cmp:'prior', page:'overview', actSrc:'all'};
 var K=null; // daily key index
-/* Service charges sit inside net sales but belong to no menu category, so leaving them out made the sales mix
-   quietly add up to less than net (Solon 2026-09-05: $433.81, 2.7% of the day). They have no purchase side —
-   nothing is bought to produce them — hence the null purchase key. */
-var BUCKETS=[['Food','f','pf','s1'],['Beer','b','pb','s2'],['Liquor','l','pl','s3'],['Wine','w','pw','s4'],['NA Bev','n','pn','s5'],['Retail','r',null,'s6'],['Other','x','po','sx'],['Service charges','sv',null,'s7']];
+/* Everything in net sales that no menu category accounts for — service charges, check-level discounts, and
+   anything the mapping did not recognise. It is the residual rather than any single field: Toast's
+   service-charge figure explained the gap on only 608 of 2,088 days and overshot badly on the rest. Nothing is
+   bought to produce it, hence the null purchase key. */
+var BUCKETS=[['Food','f','pf','s1'],['Beer','b','pb','s2'],['Liquor','l','pl','s3'],['Wine','w','pw','s4'],['NA Bev','n','pn','s5'],['Retail','r',null,'s6'],['Other','x','po','sx'],['Unattributed','sv',null,'s7']];
 var LOCCOL=['s1','s2','s3','s4','s5','s6','s7','s8'];
 var PAGES=[['overview','Overview'],['sales','Sales'],['labor','Labor'],['cogs','COGS & Purchasing'],['inventory','Inventory'],['events','Events'],['activations','Activations'],['scorecard','Scorecard'],['locations','Locations']];
 var charts=[];

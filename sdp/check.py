@@ -77,18 +77,33 @@ def run(db=None) -> int:
         ORDER BY ABS(gross_sales - (net_sales + discounts)) DESC""", (MONEY_TOL,))
     _report(r, "gross = net + discounts", bad, lambda b: f"{b['location_id']} {b['business_date']} off by {b['gap']:.2f}")
 
-    # 2. The category split must reconcile to net sales. Service charges live inside net but belong to no menu
-    #    category, which is exactly how 2.7% of a day went missing from the sales mix unnoticed.
+    # 2. The split now reconciles by construction (the unattributed slice is the residual), so the meaningful
+    #    question is no longer "does it add up" but "how much could we not attribute". A day that is mostly
+    #    unattributed means the category mapping has failed for it, and every mix, COGS ratio and benchmark
+    #    built on the split is meaningless for that day — which is worth saying out loud rather than papering
+    #    over with a slice that always makes the arithmetic work.
+    bad = _rows(con, """
+        SELECT location_id, business_date, net_sales, sales_unattr,
+               ROUND(sales_unattr * 100.0 / net_sales, 1) pct
+        FROM daily_summary
+        WHERE net_sales > 100 AND sales_unattr * 100.0 / net_sales > 25
+        ORDER BY sales_unattr * 100.0 / net_sales DESC""")
+    _report(r, "no day is mostly unattributed sales", bad,
+            lambda b: f"{b['location_id']} {b['business_date']} {b['pct']}% unattributed (${b['sales_unattr']:,.0f})",
+            severity="warn")
+
+    # 2b. The residual is clamped at zero, so a day where the categories EXCEED net sales would be silently
+    #     truncated. That would mean sales counted twice somewhere, which is worth a failure, not a shrug.
     bad = _rows(con, """
         SELECT location_id, business_date, net_sales,
-               net_sales - (sales_food+sales_beer+sales_liquor+sales_wine+sales_nabev+sales_retail+sales_other+sales_svc) gap
+               (sales_food+sales_beer+sales_liquor+sales_wine+sales_nabev+sales_retail+sales_other) cats
         FROM daily_summary
         WHERE net_sales > 0
-          AND ABS(net_sales - (sales_food+sales_beer+sales_liquor+sales_wine+sales_nabev+sales_retail+sales_other+sales_svc)) > ?
-        ORDER BY ABS(net_sales - (sales_food+sales_beer+sales_liquor+sales_wine+sales_nabev+sales_retail+sales_other+sales_svc)) DESC""",
+          AND (sales_food+sales_beer+sales_liquor+sales_wine+sales_nabev+sales_retail+sales_other) - net_sales > ?
+        ORDER BY (sales_food+sales_beer+sales_liquor+sales_wine+sales_nabev+sales_retail+sales_other) - net_sales DESC""",
                  (MONEY_TOL,))
-    _report(r, "category split reconciles to net sales", bad,
-            lambda b: f"{b['location_id']} {b['business_date']} {b['gap']:.2f} unaccounted")
+    _report(r, "no day's categories exceed its net sales", bad,
+            lambda b: f"{b['location_id']} {b['business_date']} categories {b['cats']:.2f} > net {b['net_sales']:.2f}")
 
     # 3. No non-labour job may contribute hours. Labour cost stayed correct while hours ran 5% high, because
     #    the offending job carries no wage — so cost agreeing with Toast proved nothing about hours.

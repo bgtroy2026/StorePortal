@@ -12,9 +12,9 @@ from .transform import connect
 from .util import locations, log, settings
 
 DAILY_COLS = ["business_date", "net_sales", "gross_sales", "discounts", "tax", "tips", "refunds", "orders", "checks", "guests",
-              "sales_food", "sales_beer", "sales_liquor", "sales_wine", "sales_nabev", "sales_retail", "sales_other", "sales_svc",
+              "sales_food", "sales_beer", "sales_liquor", "sales_wine", "sales_nabev", "sales_retail", "sales_other", "sales_svc", "sales_unattr",
               "labor_hours", "labor_cost", "purchases", "purch_food", "purch_beer", "purch_liquor", "purch_wine", "purch_nabev", "purch_retail", "purch_other"]
-DAILY_KEYS = ["d", "net", "gross", "disc", "tax", "tips", "ref", "orders", "checks", "guests", "f", "b", "l", "w", "n", "r", "x", "sv", "lh", "lc", "p", "pf", "pb", "pl", "pw", "pn", "pr", "po"]
+DAILY_KEYS = ["d", "net", "gross", "disc", "tax", "tips", "ref", "orders", "checks", "guests", "f", "b", "l", "w", "n", "r", "x", "svc", "sv", "lh", "lc", "p", "pf", "pb", "pl", "pw", "pn", "pr", "po"]
 
 
 def _rows(con, sql, args=()):
