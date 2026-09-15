@@ -1095,6 +1095,17 @@ function pgEvents(m){
     :'<div class="empty">No leads in this window.</div>';
 }
 
+/* Does [a,b] at this location overlap any activation other than `except`? Used to keep a promo's baseline
+   weeks clean of other promos. */
+function actOverlaps(loc, a, b, except){
+  return (D.activations||[]).some(function(z){
+    if(z.loc!==loc || z===except) return false;
+    if(except && z.s===except.s && z.name===except.name) return false;
+    var zs=z.s, ze=z.e||z.s;
+    return !(ze<a || zs>b);
+  });
+}
+
 function pgActivations(m){
   var acts=D.activations.filter(function(x){return locIds().indexOf(x.loc)>=0;}).map(function(x){
     return {loc:x.loc,s:x.s,e:x.e,name:x.name,type:x.type||'Promo',cost:x.cost,owner:x.owner,notes:x.notes,src:'csv'};});
@@ -1114,12 +1125,36 @@ function pgActivations(m){
     // for a marketing promo. A booked private event is different: its revenue is already inside the day's net
     // sales, so a day-over-day delta measures the rest of the taproom, not the event. Events report their
     // contracted value instead; only marketing activations get a baseline.
-    var baseline=null, lift=null;
+    var baseline=null, lift=null, bn=0, noisy=false, spread=null;
     if(x.src!=='tripleseat'){
-      var base=0,bn=0; for(var w=1;w<=4;w++){var r=sumRows(rowsIn(x.loc,addDays(x.s,-7*w),addDays(e,-7*w)));if(r.days){base+=r.net;bn++;}}
-      baseline=bn?base/bn:null; lift=baseline!=null?ev.net-baseline:null;
+      // Two corrections to a naive baseline:
+      //
+      // 1. Skip any comparison week that overlaps ANOTHER activation at this location. A promo that runs every
+      //    fortnight would otherwise be measured partly against itself, which drags the baseline up and makes
+      //    a real lift look like nothing.
+      // 2. Keep the per-week figures, not just their mean, so the spread between ordinary weeks is known. A
+      //    lift smaller than the normal week-to-week variation is not evidence of anything, and saying so is
+      //    the difference between a measurement and a number that flatters whoever ran the promo.
+      var weeks=[];
+      for(var w=1;w<=4;w++){
+        var bs=addDays(x.s,-7*w), be=addDays(e,-7*w);
+        if(actOverlaps(x.loc,bs,be,x)) continue;
+        var r=sumRows(rowsIn(x.loc,bs,be));
+        if(r.days) weeks.push(r.net);
+      }
+      bn=weeks.length;
+      if(bn){
+        baseline=weeks.reduce(function(p,c){return p+c;},0)/bn;
+        lift=ev.net-baseline;
+        if(bn>1){
+          var mu=baseline, va=weeks.reduce(function(p,c){return p+(c-mu)*(c-mu);},0)/(bn-1);
+          spread=Math.sqrt(va);
+          noisy=spread>0&&Math.abs(lift)<spread;
+        }
+      }
     }
-    return {x:x,loc:loc?loc.name:x.loc,days:n,net:ev.net,guests:ev.guests,baseline:baseline,lift:lift,
+    return {x:x,loc:loc?loc.name:x.loc,days:n,net:ev.net,guests:ev.guests,baseline:baseline,lift:lift,bn:bn,
+            noisy:noisy,spread:spread,
             value:(x.src==='tripleseat'?(x.value||0):null), roi:(lift!=null&&x.cost)?lift/x.cost:null};
   });
   var mk_=rows.filter(function(r){return r.x.src!=='tripleseat';}), evs=rows.filter(function(r){return r.x.src==='tripleseat';});
@@ -1132,9 +1167,14 @@ function pgActivations(m){
     +tile('Marketing lift',fk(tl),'<span class="tg">vs 4-week same-weekday baseline</span>')
     +tile('Lift ÷ cost',tc?(tl/tc).toFixed(1)+'×':'—','<span class="tg">marketing only</span>')
     +(nEv?tile('Event revenue',fk(evVal),'<span class="tg">contracted value, already in net sales</span>'):'')+'</div>'
-    +'<div class="panel" style="margin-top:14px"><div style="display:flex;align-items:center;gap:10px"><h3 style="margin:0">Activation log</h3>'+seg+'</div><div class="hint">Lift = net sales on activation days minus the average of the same weekdays in the prior 4 weeks. Marketing promos come from inputs/activations.csv and are measured against that baseline; private events come from Tripleseat and show their contracted value, which is already counted inside net sales.</div>'
-    +'<div style="overflow-x:auto"><table class="t"><tr><th>Date</th><th>Location</th><th>Activation</th><th>Type</th><th>Owner</th><th class="r">Cost</th><th class="r">Booked</th><th class="r">Net sales</th><th class="r">Baseline</th><th class="r">Lift</th><th class="r">Lift ÷ cost</th><th>Notes</th></tr>'
-    +rows.map(function(r){return '<tr><td>'+fdate(r.x.s)+(r.days>1?'–'+fdate(r.x.e):'')+'</td><td>'+esc(r.loc)+'</td><td class="n">'+esc(r.x.name)+'</td><td><span class="pill">'+esc(r.x.type||'')+'</span></td><td>'+esc(r.x.owner||'')+'</td><td class="r">'+(r.x.src==='tripleseat'?'—':fm(r.x.cost))+'</td><td class="r">'+(r.value!=null?fm(r.value):'—')+'</td><td class="r">'+fm(r.net)+'</td><td class="r">'+(r.baseline!=null?fm(r.baseline):'—')+'</td><td class="r"'+(r.lift!=null?' style="color:'+(r.lift>=0?'var(--good)':'var(--bad)')+';font-weight:700"':'')+'>'+(r.lift!=null?(r.lift>=0?'+':'')+fm(r.lift):'—')+'</td><td class="r">'+(r.roi!=null?r.roi.toFixed(1)+'×':'—')+'</td><td style="white-space:normal;max-width:260px">'+esc(r.x.notes||'')+'</td></tr>';}).join('')+'</table></div></div>';
+    +'<div class="panel" style="margin-top:14px"><div style="display:flex;align-items:center;gap:10px"><h3 style="margin:0">Activation log</h3>'+seg+'</div><div class="hint">Lift = net sales on activation days minus the average of the same weekdays in the prior 4 weeks, ignoring any week that overlapped another activation here. Marketing promos come from inputs/activations.csv and are measured against that baseline; private events come from Tripleseat and show their contracted value, which is already counted inside net sales. <b>Lift is a comparison, not proof of cause</b> — weather, holidays and anything else happening that week land in it too, which is why a lift smaller than the ordinary week-to-week spread is marked as within normal variation.</div>'
+    +'<div style="overflow-x:auto"><table class="t"><tr><th>Date</th><th>Location</th><th>Activation</th><th>Type</th><th>Owner</th><th class="r">Cost</th><th class="r">Booked</th><th class="r">Net sales</th><th class="r">Baseline</th><th class="r">Lift</th><th class="r">Lift ÷ cost</th><th>Confidence</th><th>Notes</th></tr>'
+    +rows.map(function(r){return '<tr><td>'+fdate(r.x.s)+(r.days>1?'–'+fdate(r.x.e):'')+'</td><td>'+esc(r.loc)+'</td><td class="n">'+esc(r.x.name)+'</td><td><span class="pill">'+esc(r.x.type||'')+'</span></td><td>'+esc(r.x.owner||'')+'</td><td class="r">'+(r.x.src==='tripleseat'?'—':fm(r.x.cost))+'</td><td class="r">'+(r.value!=null?fm(r.value):'—')+'</td><td class="r">'+fm(r.net)+'</td><td class="r">'+(r.baseline!=null?fm(r.baseline):'—')+'</td><td class="r"'+(r.lift!=null?' style="color:'+(r.lift>=0?'var(--good)':'var(--bad)')+';font-weight:700"':'')+'>'+(r.lift!=null?(r.lift>=0?'+':'')+fm(r.lift):'—')+'</td><td class="r">'+(r.roi!=null?r.roi.toFixed(1)+'×':'—')+'</td>'
+      +'<td style="white-space:normal;max-width:190px">'+(r.x.src==='tripleseat'?'<span class="tg">booked value</span>'
+        :(r.bn===0?'<span class="tg">no clean baseline weeks</span>'
+        :(r.noisy?'<span class="pill" style="background:#fdf1e7;color:#8a5a2b">within normal variation</span>'
+        :'<span class="tg">'+r.bn+' baseline week'+(r.bn===1?'':'s')+(r.spread?' · ±'+fk(r.spread)+' typical':'')+'</span>')))+'</td>'
+      +'<td style="white-space:normal;max-width:260px">'+esc(r.x.notes||'')+'</td></tr>';}).join('')+'</table></div></div>';
   m.querySelectorAll('[data-as]').forEach(function(b){b.onclick=function(){S.actSrc=b.dataset.as;render();};});
 }
 
