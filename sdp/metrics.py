@@ -43,7 +43,7 @@ def build_payload(con, through: date | None = None) -> dict:
                               # site suppresses its change-vs-prior figures instead of dividing by a partial baseline.
                               "first_date": (con.execute("SELECT MIN(business_date) FROM daily_summary WHERE location_id=? AND net_sales>0", (l["slug"],)).fetchone() or [None])[0]}
                              for l in locs],
-               "daily": {}, "hourly": {}, "top_items": {}, "labor_jobs": {}, "vendors": {}, "inventory": {}, "activations": [], "targets": {}, "payments": {}, "dining": {}, "revctr": {}, "labor_hourly": {}, "schedule": {}, "tender": {}, "voids": {}, "invoices": {}, "servers": {}, "cash": {}, "pacing": {}, "discounts": {}, "pnl": {}, "sources": {}, "events": {}, "leads": {}, "events_monthly": {}, "scorecard": {}}
+               "daily": {}, "hourly": {}, "top_items": {}, "labor_jobs": {}, "vendors": {}, "inventory": {}, "activations": [], "targets": {}, "payments": {}, "dining": {}, "revctr": {}, "labor_hourly": {}, "schedule": {}, "tender": {}, "voids": {}, "invoices": {}, "servers": {}, "cash": {}, "pacing": {}, "digest": {}, "discounts": {}, "pnl": {}, "sources": {}, "events": {}, "leads": {}, "events_monthly": {}, "scorecard": {}}
 
     for l in locs:
         lid = l["slug"]
@@ -62,6 +62,7 @@ def build_payload(con, through: date | None = None) -> dict:
         payload["servers"][lid] = _server_performance(con, lid, w28, through)
         payload["cash"][lid] = _cash_management(con, lid, w28, through)
         payload["pacing"][lid] = _pacing(con, lid, through)
+        payload["digest"][lid] = _digest(con, lid, payload, w28, through)
 
         payload["top_items"][lid] = [[r["item_name"], r["bucket"], _r(r["qty"]), _r(r["net"])] for r in _rows(con, """
             SELECT item_name, bucket, SUM(quantity) qty, SUM(price) net FROM toast_order_items WHERE location_id=? AND voided=0 AND business_date>=? AND business_date<=?
@@ -288,6 +289,134 @@ def _labor_by_hour(con, lid: str, since: date, through: date) -> list:
             cur = nxt
 
     return [[dow, hr, _r(v[0]), _r(v[1]), len(days[(dow, hr)])] for (dow, hr), v in sorted(buckets.items())]
+
+
+# An exception is something worth ACTING on, not everything that moved. Every rule below carries a threshold,
+# and a rule that does not clear its threshold produces nothing at all — a digest that lists every change is
+# just the dashboard again, and one that cries wolf gets ignored within a week.
+DIGEST_RULES = {
+    "sales_change": 0.05,        # net sales vs the prior equal-length period
+    "pct_points": 0.02,          # labor % / purchase % moves, in percentage points
+    "pace": 0.05,                # forecast vs target
+    "bucket_change": 0.12,       # a category's own movement...
+    "bucket_material": 0.05,     # ...but only if the category is at least this share of net
+    "comp_points": 0.01,
+    "void_rate": 0.02,
+    "cash_net": 100.0,
+    "weeks_on_hand": 8.0,
+    "dead_stock": 3,
+    "open_invoices": 10,
+    "schedule_gap": 0.05,
+}
+
+
+def _digest(con, lid: str, payload: dict, w28: date, through: date) -> list:
+    """A short "what changed" list for one location.
+
+    Ordered worst-first and capped, because the value is in being readable at a glance. Everything here is
+    derived from figures already computed for the other views, so the digest can never disagree with the page
+    a director opens to check it.
+    """
+    R = DIGEST_RULES
+    out = []
+    def add(sev, area, head, detail=""):
+        out.append([sev, area, head, detail])
+
+    prior_start = (w28 - timedelta(days=28)).isoformat()
+    cur = con.execute("""SELECT COALESCE(SUM(net_sales),0), COALESCE(SUM(labor_cost),0), COALESCE(SUM(purchases),0),
+                                COALESCE(SUM(sales_food),0), COALESCE(SUM(sales_beer),0), COALESCE(SUM(sales_liquor),0),
+                                COALESCE(SUM(sales_wine),0), COALESCE(SUM(sales_nabev),0), COALESCE(SUM(discounts),0)
+                         FROM daily_summary WHERE location_id=? AND business_date>=? AND business_date<=?""",
+                      (lid, w28.isoformat(), through.isoformat())).fetchone()
+    prv = con.execute("""SELECT COALESCE(SUM(net_sales),0), COALESCE(SUM(labor_cost),0), COALESCE(SUM(purchases),0),
+                                COALESCE(SUM(sales_food),0), COALESCE(SUM(sales_beer),0), COALESCE(SUM(sales_liquor),0),
+                                COALESCE(SUM(sales_wine),0), COALESCE(SUM(sales_nabev),0), COALESCE(SUM(discounts),0)
+                         FROM daily_summary WHERE location_id=? AND business_date>=? AND business_date<?""",
+                      (lid, prior_start, w28.isoformat())).fetchone()
+    if not cur or not cur[0]:
+        return []
+    net, labor, purch, disc = float(cur[0]), float(cur[1]), float(cur[2]), float(cur[8])
+    pnet = float(prv[0]) if prv else 0.0
+
+    if pnet:
+        ch = (net - pnet) / pnet
+        if abs(ch) >= R["sales_change"]:
+            add("warn" if ch < 0 else "good", "Sales",
+                f"Net sales {'down' if ch < 0 else 'up'} {abs(ch) * 100:.0f}% on the previous 28 days",
+                f"{_r(net):,.0f} vs {_r(pnet):,.0f}")
+        # Category movers, but only ones big enough to matter.
+        for name, i in (("Food", 3), ("Beer", 4), ("Liquor", 5), ("Wine", 6), ("NA Bev", 7)):
+            c, p = float(cur[i]), float(prv[i])
+            if p and c / net >= R["bucket_material"]:
+                d = (c - p) / p
+                if abs(d) >= R["bucket_change"]:
+                    add("warn" if d < 0 else "good", "Mix",
+                        f"{name} sales {'down' if d < 0 else 'up'} {abs(d) * 100:.0f}%",
+                        f"{_r(c):,.0f} vs {_r(p):,.0f}")
+
+    lab_pct = labor / net if net else None
+    if lab_pct is not None and prv and prv[0] and float(prv[1]):
+        d = lab_pct - (float(prv[1]) / float(prv[0]))
+        if d >= R["pct_points"]:
+            add("warn", "Labor", f"Labor up {d * 100:.1f} points to {lab_pct * 100:.1f}% of sales")
+    tg = payload["targets"].get(lid, {}).get(through.strftime("%Y-%m"))
+    if tg and tg[2] and lab_pct and lab_pct - tg[2] >= R["pct_points"]:
+        add("warn", "Labor", f"Labor {(lab_pct - tg[2]) * 100:.1f} points over the {tg[2] * 100:.0f}% target")
+    if tg and tg[1] and net and (purch / net) - tg[1] >= R["pct_points"]:
+        add("warn", "COGS", f"Purchases {((purch / net) - tg[1]) * 100:.1f} points over the {tg[1] * 100:.0f}% target")
+
+    pac = payload["pacing"].get(lid) or {}
+    if pac.get("forecast_pct") is not None:
+        d = pac["forecast_pct"] - 1
+        if abs(d) >= R["pace"]:
+            add("warn" if d < 0 else "good", "Pacing",
+                f"Forecast to land {abs(d) * 100:.0f}% {'under' if d < 0 else 'over'} the month's target",
+                f"{_r(pac['forecast']):,.0f} vs {_r(pac['target']):,.0f}")
+
+    if net and pnet and float(prv[8]):
+        d = (disc / net) - (float(prv[8]) / pnet)
+        if d >= R["comp_points"]:
+            add("warn", "Comps", f"Discounts up {d * 100:.1f} points to {disc / net * 100:.1f}% of sales")
+
+    v = payload["voids"].get(lid) or {}
+    if v.get("orders") and v.get("orders_ok"):
+        rate = v["orders"] / (v["orders"] + v["orders_ok"])
+        if rate >= R["void_rate"]:
+            add("warn", "Voids", f"{rate * 100:.1f}% of orders voided",
+                f"{v['orders']} orders" + (f", {_r(v['value']):,.0f}" if v.get("valued") else ""))
+
+    c = payload["cash"].get(lid) or {}
+    if c.get("totals") and abs(c["totals"].get("net") or 0) >= R["cash_net"]:
+        n = c["totals"]["net"]
+        add("warn" if n < 0 else "info", "Cash",
+            f"Drawers net {'short' if n < 0 else 'over'} {abs(n):,.0f} across 28 days")
+
+    for r in payload["inventory"].get(lid) or []:
+        if r.get("usage") and r.get("value") and r.get("prev_date"):
+            days = (date.fromisoformat(r["date"]) - date.fromisoformat(r["prev_date"])).days or 1
+            weekly = r["usage"] / days * 7
+            if weekly > 0:
+                woh = r["value"] / weekly
+                if woh >= R["weeks_on_hand"]:
+                    add("info", "Inventory", f"{r['bucket']} at {woh:.1f} weeks on hand",
+                        f"{_r(r['value']):,.0f} counted")
+
+    inv = payload["invoices"].get(lid) or {}
+    if len(inv.get("open") or []) >= R["open_invoices"]:
+        add("info", "Invoices", f"{len(inv['open'])} invoices not in a finished state")
+
+    sc = payload["schedule"].get(lid) or {}
+    if sc.get("daily"):
+        ts = sum(r[1] for r in sc["daily"]); ta = sum(r[2] for r in sc["daily"])
+        if ts and abs(ta - ts) / ts >= R["schedule_gap"]:
+            d = (ta - ts) / ts
+            add("warn" if d > 0 else "info", "Schedule",
+                f"{abs(d) * 100:.0f}% {'more' if d > 0 else 'fewer'} hours worked than scheduled",
+                f"{ta:,.0f}h vs {ts:,.0f}h")
+
+    order = {"warn": 0, "info": 1, "good": 2}
+    out.sort(key=lambda x: order.get(x[0], 3))
+    return out[:12]
 
 
 def _pacing(con, lid: str, through: date) -> dict:
@@ -699,7 +828,7 @@ def _price_tracking(con, lid: str, through: date, days: int = 180) -> dict:
 def slice_for_location(payload: dict, lid: str) -> dict:
     """A director's bundle: only their location (other locations are not merely hidden — they are absent)."""
     out = {"meta": dict(payload["meta"]), "locations": [l for l in payload["locations"] if l["id"] == lid], "activations": [a for a in payload["activations"] if a["loc"] == lid]}
-    for k in ("daily", "hourly", "top_items", "labor_jobs", "vendors", "inventory", "targets", "payments", "dining", "revctr", "labor_hourly", "schedule", "tender", "voids", "invoices", "servers", "cash", "pacing", "discounts", "pnl", "sources", "events", "leads", "events_monthly"):
+    for k in ("daily", "hourly", "top_items", "labor_jobs", "vendors", "inventory", "targets", "payments", "dining", "revctr", "labor_hourly", "schedule", "tender", "voids", "invoices", "servers", "cash", "pacing", "digest", "discounts", "pnl", "sources", "events", "leads", "events_monthly"):
         out[k] = {lid: payload[k].get(lid)} if lid in payload[k] else {}
     return out
 

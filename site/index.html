@@ -391,6 +391,36 @@ function render(){
   ({overview:pgOverview,sales:pgSales,labor:pgLabor,cogs:pgCogs,inventory:pgInventory,events:pgEvents,activations:pgActivations,scorecard:pgScorecard,locations:pgLocations})[S.page](m);
 }
 
+/* ---------- exception digest ----------
+   Deliberately short. Every line cleared a threshold in metrics.py, so an empty digest means "nothing needs
+   you", which is a useful answer rather than an empty panel. */
+function digestBlock(){
+  var groups=[];
+  locIds().forEach(function(l){
+    var d=(D.digest||{})[l]; if(!d||!d.length) return;
+    var loc=(D.locations.filter(function(x){return x.id===l;})[0]||{name:l});
+    groups.push({name:loc.name, items:d});
+  });
+  var multi=locIds().length>1;
+  if(!groups.length){
+    return panel('What changed','Nothing crossed a threshold in the last 28 days',
+      '<div class="empty">No exceptions — sales, labor, COGS, comps, voids, cash and inventory are all within their normal ranges.</div>');
+  }
+  var warn=groups.reduce(function(p,g){return p+g.items.filter(function(i){return i[0]==='warn';}).length;},0);
+  var ico={warn:'▲', info:'•', good:'▲'};
+  var col={warn:'var(--bad,#b4413c)', info:'var(--muted,#6b7280)', good:'var(--good,#2e7d5b)'};
+  return panel('What changed', (warn?warn+' thing'+(warn===1?'':'s')+' worth a look':'Nothing urgent')+' · last 28 days vs the 28 before',
+    groups.map(function(g){
+      return (multi?'<div class="hint" style="margin-top:10px"><b>'+esc(g.name)+'</b></div>':'')
+        +'<table class="t">'+g.items.map(function(i){
+          return '<tr><td style="width:18px;color:'+col[i[0]]+'">'+(i[0]==='good'?'▼':ico[i[0]])+'</td>'
+            +'<td style="width:74px"><span class="pill">'+esc(i[1])+'</span></td>'
+            +'<td class="n" style="white-space:normal">'+esc(i[2])+'</td>'
+            +'<td class="r" style="color:var(--muted)">'+esc(i[3]||'')+'</td></tr>';
+        }).join('')+'</table>';
+    }).join(''));
+}
+
 /* ---------- month-to-date pacing ----------
    Weighted by each location's own weekday profile on both sides, so "ahead" and "behind" compare like with
    like. A straight run-rate in a taproom is wrong in a predictable direction: it understates with a weekend
@@ -436,6 +466,8 @@ function pgOverview(m){
    +(hasToast()?tile('Sales / labor hour',fm(k.splh,0),delta(k.splh,kp&&kp.splh))+tile('Discounts',fk(k.disc),delta(k.disc,kp&&kp.disc,true),'<span class="tg">'+fp(k.gross?k.disc/k.gross:null)+' of gross</span>'):tile('Prime cost %',fp(k.net?(k.labor+k.purch)/k.net:null),delta(k.net?(k.labor+k.purch)/k.net:null,kp&&kp.net?(kp.labor+kp.purch)/kp.net:null,true),'<span class="tg">labor + purchases</span>'))
    +(hasEvents()?tile('Event revenue',fk(evRows().filter(function(e){return evIsDef(e.status)&&e.d>=a&&e.d<=b;}).reduce(function(p,c){return p+evValue(c);},0)),'','<span class="tg">private events (Tripleseat)</span>'):'')
    +'</div>';
+  var db=digestBlock();
+  if(db) h+='<div class="grid" style="margin-top:14px">'+db+'</div>';
   var pb=pacingBlock();
   if(pb) h+='<div class="grid" style="margin-top:14px">'+pb+'</div>';
   h+='<div class="grid cols2" style="margin-top:14px">'
