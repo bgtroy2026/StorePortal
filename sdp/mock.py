@@ -235,7 +235,11 @@ def gen_marginedge(loc: dict, loc_idx: int, start: date, end: date, day_sales: d
                 total = -round(total * 0.2, 2)
                 for l in lines: l["linePrice"] = -abs(round(l["linePrice"] * 0.2, 2))
             hdr = {"orderId": oid, "invoiceNumber": f"INV{rnd.randint(100000, 999999)}", "vendorId": vid, "vendorName": vname, "customerNumber": f"BG-{loc_idx}",
-                   "invoiceDate": iso(d), "createdDate": iso(d + timedelta(days=rnd.randint(0, 3))), "paymentAccount": "Operating", "orderTotal": total, "status": rnd.choice(["CLOSED", "CLOSED", "CLOSED", "APPROVED"])}
+                   "invoiceDate": iso(d), "createdDate": iso(d + timedelta(days=rnd.randint(0, 3))), "paymentAccount": rnd.choices(["Operating", "Operating", "Amex", "Petty cash"], weights=[70, 15, 10, 5])[0],
+                   "orderTotal": total,
+                   # A realistic spread: most invoices finish, a tail sits in review or unreviewed. The hygiene
+                   # panel exists precisely for that tail, so mock has to produce one.
+                   "status": rnd.choices(["CLOSED", "APPROVED", "REVIEW", "NEW"], weights=[70, 16, 9, 5])[0]}
             orders.append(hdr)
             details.append(dict(hdr, tax=0.0, deliveryCharges=0.0, otherCharges=0.0, creditAmount=(abs(total) if is_credit else 0.0), isCredit=is_credit, inputTaxCredits=0.0, attachments=[], lineItems=lines))
         d += timedelta(days=1)

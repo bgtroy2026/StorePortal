@@ -43,7 +43,7 @@ def build_payload(con, through: date | None = None) -> dict:
                               # site suppresses its change-vs-prior figures instead of dividing by a partial baseline.
                               "first_date": (con.execute("SELECT MIN(business_date) FROM daily_summary WHERE location_id=? AND net_sales>0", (l["slug"],)).fetchone() or [None])[0]}
                              for l in locs],
-               "daily": {}, "hourly": {}, "top_items": {}, "labor_jobs": {}, "vendors": {}, "inventory": {}, "activations": [], "targets": {}, "payments": {}, "dining": {}, "revctr": {}, "labor_hourly": {}, "schedule": {}, "discounts": {}, "pnl": {}, "sources": {}, "events": {}, "leads": {}, "events_monthly": {}, "scorecard": {}}
+               "daily": {}, "hourly": {}, "top_items": {}, "labor_jobs": {}, "vendors": {}, "inventory": {}, "activations": [], "targets": {}, "payments": {}, "dining": {}, "revctr": {}, "labor_hourly": {}, "schedule": {}, "tender": {}, "voids": {}, "invoices": {}, "discounts": {}, "pnl": {}, "sources": {}, "events": {}, "leads": {}, "events_monthly": {}, "scorecard": {}}
 
     for l in locs:
         lid = l["slug"]
@@ -76,6 +76,58 @@ def build_payload(con, through: date | None = None) -> dict:
         payload["payments"][lid] = [[r["type"], _r(r["amt"]), _r(r["tips"]), r["n"]] for r in _rows(con, """
             SELECT COALESCE(type,'OTHER') type, SUM(amount) amt, SUM(tip_amount) tips, COUNT(*) n FROM toast_payments WHERE location_id=? AND business_date>=? AND business_date<=? GROUP BY 1 ORDER BY amt DESC""",
             (lid, w28.isoformat(), through.isoformat()))]
+
+        # Tender detail. `payments` already gives the type split; this adds the card brand, the tip rate that
+        # goes with it, and refunds — the three things a manager reconciling a drawer actually asks about.
+        payload["tender"][lid] = [[r["type"], r["card"], _r(r["amt"]), _r(r["tips"]), _r(r["refunds"]), r["n"]] for r in _rows(con, """
+            SELECT COALESCE(type,'OTHER') type, COALESCE(NULLIF(card_type,''),'—') card, SUM(amount) amt,
+                   SUM(tip_amount) tips, SUM(refund_amount) refunds, COUNT(*) n
+            FROM toast_payments WHERE location_id=? AND business_date>=? AND business_date<=?
+            GROUP BY 1,2 ORDER BY amt DESC""", (lid, w28.isoformat(), through.isoformat()))]
+
+        # Voids. Deliberately counted separately from discounts: a comp is a decision to give something away,
+        # a void is a correction, and rolling them together hides both. Value is the gross that was rung and
+        # then removed, which is why it comes from gross_sales rather than net.
+        vd = _rows(con, """
+            SELECT business_date d, COUNT(*) n, SUM(COALESCE(voided_value,0)) v,
+                   SUM(CASE WHEN COALESCE(voided_value,0)>0 THEN 1 ELSE 0 END) valued
+            FROM toast_orders WHERE location_id=? AND voided=1 AND business_date>=? AND business_date<=?
+            GROUP BY 1 ORDER BY 1""", (lid, w28.isoformat(), through.isoformat()))
+        vi = con.execute("""SELECT COUNT(*), COALESCE(SUM(pre_discount_price),0) FROM toast_order_items
+                            WHERE location_id=? AND voided=1 AND business_date>=? AND business_date<=?""",
+                         (lid, w28.isoformat(), through.isoformat())).fetchone()
+        tot = con.execute("""SELECT COUNT(*), COALESCE(SUM(net_sales),0) FROM toast_orders
+                             WHERE location_id=? AND voided=0 AND business_date>=? AND business_date<=?""",
+                          (lid, w28.isoformat(), through.isoformat())).fetchone()
+        # `valued` says how many of those voids actually carry a value. Days pulled before voided_value existed
+        # have the count but not the money, and the page says so rather than implying the voids were free.
+        payload["voids"][lid] = {"by_day": [[r["d"], r["n"], _r(r["v"])] for r in vd],
+                                 "orders": sum(r["n"] for r in vd), "value": _r(sum(float(r["v"] or 0) for r in vd)),
+                                 "valued": sum(r["valued"] for r in vd),
+                                 "items": vi[0], "item_value": _r(vi[1]),
+                                 "orders_ok": tot[0], "net_ok": _r(tot[1])}
+
+        # Invoice hygiene: what is sitting unprocessed, what credits are outstanding, and which payment account
+        # the spend ran through. All three are in the invoice header and none of them were surfaced anywhere.
+        payload["invoices"][lid] = {
+            "by_status": [[r["s"], r["n"], _r(r["t"])] for r in _rows(con, """
+                SELECT COALESCE(NULLIF(status,''),'(none)') s, COUNT(*) n, SUM(order_total) t FROM me_invoices
+                WHERE location_id=? AND invoice_date>=? GROUP BY 1 ORDER BY n DESC""", (lid, w56.isoformat(),))],
+            "by_account": [[r["a"], r["n"], _r(r["t"])] for r in _rows(con, """
+                SELECT COALESCE(NULLIF(payment_account,''),'(unassigned)') a, COUNT(*) n, SUM(order_total) t
+                FROM me_invoices WHERE location_id=? AND invoice_date>=? GROUP BY 1 ORDER BY t DESC LIMIT 12""",
+                (lid, w56.isoformat(),))],
+            "credits": [[r["v"], r["n"], _r(r["t"])] for r in _rows(con, """
+                SELECT COALESCE(vendor_name,'(no vendor)') v, COUNT(*) n, SUM(COALESCE(credit_amount, order_total)) t
+                FROM me_invoices WHERE location_id=? AND is_credit=1 AND invoice_date>=? GROUP BY 1 ORDER BY t DESC LIMIT 12""",
+                (lid, w56.isoformat(),))],
+            "open": [[r["v"], r["num"], r["d"], _r(r["t"]), r["s"]] for r in _rows(con, """
+                SELECT COALESCE(vendor_name,'(no vendor)') v, invoice_number num, invoice_date d, order_total t, status s
+                FROM me_invoices
+                WHERE location_id=? AND invoice_date>=? AND COALESCE(is_credit,0)=0
+                  AND LOWER(COALESCE(status,'')) NOT IN ('exported','processed','complete','completed','closed','approved')
+                ORDER BY invoice_date DESC LIMIT 25""", (lid, w56.isoformat(),))],
+        }
 
         # Discounts broken out by name and loyalty provider. Loyalty redemptions arrive through Toast as
         # discounts, so this is the loyalty picture without a second integration; `vendor` is non-null only
@@ -379,6 +431,17 @@ def detail_for_location(con, lid: str, through: date, sheets: int = 12) -> dict:
         out["variance"] = rows
 
     out.update(_price_tracking(con, lid, through))
+
+    # P&L at the line-item level. The headline page shows category totals because `metrics` filters to
+    # item_name='' — the individual lines beneath each category were collected all along and never published.
+    # They ride in the detail bundle rather than the main one because there are a few hundred per location.
+    out["pnl_items"] = [[r["m"], r["section"], r["cat"], r["item"], _r(r["t"])] for r in _rows(con, """
+        SELECT substr(business_date,1,7) m, section, COALESCE(category_name,'(uncategorised)') cat,
+               item_name item, SUM(total) t
+        FROM me_pnl_daily
+        WHERE location_id=? AND business_date>=? AND COALESCE(item_name,'')!=''
+        GROUP BY 1,2,3,4 HAVING ABS(SUM(total))>0.005 ORDER BY 1 DESC, 2, 5 DESC""",
+        (lid, (through.replace(day=1) - timedelta(days=95)).replace(day=1).isoformat()))]
     return out
 
 
@@ -460,7 +523,7 @@ def _price_tracking(con, lid: str, through: date, days: int = 180) -> dict:
 def slice_for_location(payload: dict, lid: str) -> dict:
     """A director's bundle: only their location (other locations are not merely hidden — they are absent)."""
     out = {"meta": dict(payload["meta"]), "locations": [l for l in payload["locations"] if l["id"] == lid], "activations": [a for a in payload["activations"] if a["loc"] == lid]}
-    for k in ("daily", "hourly", "top_items", "labor_jobs", "vendors", "inventory", "targets", "payments", "dining", "revctr", "labor_hourly", "schedule", "discounts", "pnl", "sources", "events", "leads", "events_monthly"):
+    for k in ("daily", "hourly", "top_items", "labor_jobs", "vendors", "inventory", "targets", "payments", "dining", "revctr", "labor_hourly", "schedule", "tender", "voids", "invoices", "discounts", "pnl", "sources", "events", "leads", "events_monthly"):
         out[k] = {lid: payload[k].get(lid)} if lid in payload[k] else {}
     return out
 

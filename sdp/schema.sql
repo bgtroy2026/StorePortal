@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS toast_orders (           -- grain: one order (may hol
   discounts         REAL DEFAULT 0,               -- sum(appliedDiscounts.discountAmount) across checks + items
   service_charges   REAL DEFAULT 0,
   gross_sales       REAL DEFAULT 0,               -- net_sales + discounts
+  voided_value      REAL DEFAULT 0,               -- what a voided order had rung before it was voided; 0 otherwise.
+                                                  -- net_sales/gross_sales stay 0 for voids so sales math is unaffected.
   refunds           REAL DEFAULT 0,
   source_hash       TEXT
 );

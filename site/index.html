@@ -437,6 +437,8 @@ function pgSales(m){
     +panel('Dining option & tender — last 28 days','How guests ordered and paid',T?'<div id="dining"></div>':needToast('Dining-option and tender mix'))
     +panel('Discounts & comps — last 28 days','By reason, with loyalty redemptions identified',T?'<div id="disc"></div>':needToast('The discount breakdown'))
     +panel('Revenue centre — last 28 days','Where in the building the sale happened',T?'<div id="revctr"></div>':needToast('The revenue-centre split'))
+    +panel('Tender detail — last 28 days','By card brand, with tip rate and refunds',T?'<div id="tender"></div>':needToast('Tender detail'))
+    +panel('Voids — last 28 days','Rung and then removed · counted apart from comps, which are a different decision',T?'<div id="voids"></div>':needToast('The void audit'))
     +'</div>';
   m.innerHTML=h;
   var cur=byDate(a,b), wk={}; cur.forEach(function(r){var d=pd(r.d);d.setDate(d.getDate()-((d.getDay()+6)%7));var w=ds(d);var o=wk[w]||(wk[w]={_n:0});o._n++;BUCKETS.forEach(function(bk){o[bk[1]]=(o[bk[1]]||0)+(r[bk[1]]||0);});});
@@ -473,6 +475,7 @@ function pgSales(m){
   var rc={}; locIds().forEach(function(l){(D.revctr&&D.revctr[l]||[]).forEach(function(r){var o=rc[r[0]]||(rc[r[0]]={n:0,c:0});o.n+=r[1];o.c+=r[2];});});
   var rl=Object.keys(rc).sort(function(x,y){return rc[y].n-rc[x].n;}), rt=rl.reduce(function(p,c){return p+rc[c].n;},0);
   if($('revctr')) $('revctr').innerHTML=rl.length?('<table class="t"><tr><th>Revenue centre</th><th class="r">Net</th><th class="r">Orders</th><th class="r">Share</th></tr>'+rl.map(function(x){return '<tr><td class="n">'+esc(x)+'</td><td class="r">'+fm(rc[x].n)+'</td><td class="r">'+fn(rc[x].c)+'</td><td class="r">'+fp(rc[x].n/rt)+'</td></tr>';}).join('')+'</table>'):'<div class="empty">No revenue centres configured in Toast for this location.</div>';
+  tenderAndVoids();
   var dg={},pay={}; locIds().forEach(function(l){(D.dining[l]||[]).forEach(function(r){var o=dg[r[0]]||(dg[r[0]]={n:0,c:0});o.n+=r[1];o.c+=r[2];});(D.payments[l]||[]).forEach(function(r){var o=pay[r[0]]||(pay[r[0]]={a:0,t:0,c:0});o.a+=r[1];o.t+=r[2];o.c+=r[3];});});
   var dl=Object.keys(dg).sort(function(x,y){return dg[y].n-dg[x].n;}), dt=dl.reduce(function(p,c){return p+dg[c].n;},0);
   var pl=Object.keys(pay).sort(function(x,y){return pay[y].a-pay[x].a;}), pt=pl.reduce(function(p,c){return p+pay[c].a;},0);
@@ -518,6 +521,10 @@ function pgCogs(m){
     +'<div class="grid cols2" style="margin-top:14px">'+panel('Purchases by category by week','Invoice line totals from MarginEdge',chartBox('c_purch',true))+panel('Category cost % in range','Purchases ÷ category net sales','<div id="catTbl"></div>')
     +panel('Top vendors — last 28 days','Invoice totals by vendor','<div id="vend"></div>')+panel('Purchases vs sales by day','Bars: purchases (invoice date) · line: net sales',chartBox('c_pvs',true))
     +panel('P&amp;L by month (MarginEdge)','Income, COGS, labor and controllable expenses as MarginEdge reports them','<div id="pnlTbl"></div>')+panel('COGS by P&amp;L category','Inventory-adjusted where MarginEdge has counts','<div id="pnlCogs"></div>')+'</div>'
+    +'<div class="grid cols2" style="margin-top:14px">'
+      +panel('Invoice hygiene — last 8 weeks','What is still open, what is credited, and which account paid','<div id="invHyg"></div>')
+      +panel('P&amp;L line items','The individual lines beneath each category','<div id="pnlItems"></div>')
+    +'</div>'
     +'<div id="priceDrill" style="margin-top:14px">'+locIds().map(function(l){
         var loc=(D.locations.filter(function(x){return x.id===l;})[0]||{name:l});
         if(!DETAIL_KEYS[l]) return '';
@@ -533,6 +540,7 @@ function pgCogs(m){
   var vl=Object.keys(vd).sort(function(x,y){return vd[y].t-vd[x].t;}).slice(0,15), vt=vl.reduce(function(p,c){return p+vd[c].t;},0);
   $('vend').innerHTML='<table class="t"><tr><th>Vendor</th><th>Mostly</th><th class="r">Invoices</th><th class="r">Total</th><th class="r">Share</th></tr>'+vl.map(function(x){return '<tr><td class="n">'+esc(x)+'</td><td>'+esc(vd[x].b||'')+'</td><td class="r">'+fn(vd[x].n)+'</td><td class="r">'+fm(vd[x].t)+'</td><td class="r">'+fp(vd[x].t/vt)+'</td></tr>';}).join('')+'</table>';
   $('pnlTbl').innerHTML=pnlSummaryTable(); $('pnlCogs').innerHTML=pnlSectionTable('cogs');
+  invoiceHygiene(); pnlItemsPanel();
   var pd_=$('priceDrill');
   if(pd_){ pd_.querySelectorAll('button[data-price]').forEach(function(b){ b.onclick=function(){ priceDrill(b.dataset.price,b); }; }); }
   mk('c_pvs',{data:{labels:cur.map(function(r){return fdate(r.d);}),datasets:[{type:'bar',label:'Purchases',data:cur.map(function(r){return r.p;}),backgroundColor:css('s2'),borderRadius:3},{type:'line',label:'Net sales',data:cur.map(function(r){return r.net;}),borderColor:css('s1'),borderWidth:2,pointRadius:0,tension:.25}]},options:baseOpts()});
@@ -616,6 +624,108 @@ function drillHtml(d){
       +d.events.map(function(r){return '<tr><td class="n">'+fdate(r[0])+'</td><td>'+esc(r[1]||'')+'</td><td>'+esc(r[2]||'')+'</td><td class="r">'+fm(r[3])+'</td></tr>';}).join('')+'</table></div>';
   }
   return h;
+}
+
+/* ---------- tender detail + voids ---------- */
+function tenderAndVoids(){
+  if($('tender')){
+    var t={}; locIds().forEach(function(l){(D.tender&&D.tender[l]||[]).forEach(function(r){
+      var k=r[0]+'||'+r[1]; var o=t[k]||(t[k]={type:r[0],card:r[1],amt:0,tips:0,ref:0,n:0});
+      o.amt+=r[2]; o.tips+=r[3]; o.ref+=r[4]; o.n+=r[5];});});
+    var tl=Object.keys(t).map(function(k){return t[k];}).sort(function(a,b){return b.amt-a.amt;});
+    var tt=tl.reduce(function(p,c){return p+c.amt;},0), tr=tl.reduce(function(p,c){return p+c.ref;},0);
+    $('tender').innerHTML=tl.length?('<div class="tw"><table class="t"><tr><th>Tender</th><th>Card</th><th class="r">Amount</th><th class="r">Share</th><th class="r">Tips</th><th class="r">Tip rate</th><th class="r">Refunds</th></tr>'
+      +tl.map(function(x){return '<tr><td class="n">'+esc(x.type)+'</td><td>'+esc(x.card)+'</td><td class="r">'+fm(x.amt)+'</td>'
+        +'<td class="r">'+fp(tt?x.amt/tt:null)+'</td><td class="r">'+fm(x.tips)+'</td><td class="r">'+fp(x.amt?x.tips/x.amt:null)+'</td>'
+        +'<td class="r">'+(x.ref?fm(x.ref):'—')+'</td></tr>';}).join('')+'</table></div>'
+      +(tr?'<div class="src">'+fm(tr)+' refunded over the period.</div>':'')):'<div class="empty">No payments in this window.</div>';
+  }
+  if($('voids')){
+    var v={orders:0,value:0,items:0,item_value:0,orders_ok:0,net_ok:0,valued:0,by:{}};
+    locIds().forEach(function(l){ var x=(D.voids||{})[l]; if(!x) return;
+      v.orders+=x.orders||0; v.value+=x.value||0; v.items+=x.items||0; v.item_value+=x.item_value||0;
+      v.orders_ok+=x.orders_ok||0; v.net_ok+=x.net_ok||0; v.valued+=x.valued||0;
+      (x.by_day||[]).forEach(function(r){ var o=v.by[r[0]]||(v.by[r[0]]=[0,0]); o[0]+=r[1]; o[1]+=r[2]; }); });
+    if(!v.orders && !v.items){ $('voids').innerHTML='<div class="empty">No voids in this window — worth a glance at whether voids are being recorded at all.</div>'; }
+    else{
+      var days=Object.keys(v.by).sort(), rate=v.orders_ok?v.orders/(v.orders+v.orders_ok):null;
+      var worst=days.map(function(d){return [d,v.by[d][0],v.by[d][1]];}).sort(function(a,b){return b[2]-a[2];}).slice(0,8);
+      // Value is only known for orders pulled since voided_value was added. Where it is missing, say so —
+      // showing $0.00 would read as "these voids cost nothing", which is the opposite of the truth.
+      var partial = v.orders && v.valued < v.orders;
+      $('voids').innerHTML='<div class="hint" style="margin-bottom:8px"><b>'+fn(v.orders)+'</b> voided orders'
+        +(v.valued?' worth '+fm(v.value):'')+(rate!=null?' · '+fp(rate)+' of orders':'')
+        +(v.items?' · '+fn(v.items)+' voided items worth '+fm(v.item_value):'')+'</div>'
+        +(worst.length?'<table class="t"><tr><th>Heaviest days</th><th class="r">Voids</th><th class="r">Value</th></tr>'
+          +worst.map(function(x){return '<tr><td class="n">'+fdate(x[0])+'</td><td class="r">'+fn(x[1])+'</td><td class="r">'+(x[2]?fm(x[2]):'—')+'</td></tr>';}).join('')
+          +'</table>':'')
+        +(partial?'<div class="src">Void values are recorded from '+esc(D.meta.through)+' backwards only as far as the data has been re-pulled — '
+          +fn(v.orders-v.valued)+' of these voids predate that and show a count without a value.</div>':'');
+    }
+  }
+}
+
+/* ---------- invoice hygiene ---------- */
+function invoiceHygiene(){
+  if(!$('invHyg')) return;
+  var st={}, acct={}, cred={}, open_=[];
+  locIds().forEach(function(l){ var x=(D.invoices||{})[l]; if(!x) return;
+    (x.by_status||[]).forEach(function(r){ var o=st[r[0]]||(st[r[0]]=[0,0]); o[0]+=r[1]; o[1]+=r[2]; });
+    (x.by_account||[]).forEach(function(r){ var o=acct[r[0]]||(acct[r[0]]=[0,0]); o[0]+=r[1]; o[1]+=r[2]; });
+    (x.credits||[]).forEach(function(r){ var o=cred[r[0]]||(cred[r[0]]=[0,0]); o[0]+=r[1]; o[1]+=r[2]; });
+    (x.open||[]).forEach(function(r){ open_.push(r); }); });
+  var sl=Object.keys(st).sort(function(a,b){return st[b][0]-st[a][0];});
+  if(!sl.length){ $('invHyg').innerHTML='<div class="empty">No invoices in this window.</div>'; return; }
+  var cl=Object.keys(cred).sort(function(a,b){return cred[b][1]-cred[a][1];});
+  var al=Object.keys(acct).sort(function(a,b){return acct[b][1]-acct[a][1];});
+  open_.sort(function(a,b){return a[2]<b[2]?1:-1;});
+  $('invHyg').innerHTML=
+    '<table class="t"><tr><th>Status</th><th class="r">Invoices</th><th class="r">Total</th></tr>'
+    +sl.map(function(x){return '<tr><td class="n">'+esc(x)+'</td><td class="r">'+fn(st[x][0])+'</td><td class="r">'+fm(st[x][1])+'</td></tr>';}).join('')+'</table>'
+    +(open_.length?'<div class="hint" style="margin-top:12px"><b>'+fn(open_.length)+'</b> not yet in a finished state</div>'
+      +'<div class="tw"><table class="t"><tr><th>Vendor</th><th>Invoice</th><th>Date</th><th class="r">Total</th><th>Status</th></tr>'
+      +open_.slice(0,12).map(function(r){return '<tr><td class="n">'+esc(r[0])+'</td><td>'+esc(r[1]||'')+'</td><td>'+fdate(r[2])+'</td><td class="r">'+fm(r[3])+'</td><td>'+esc(r[4]||'')+'</td></tr>';}).join('')
+      +'</table></div>':'')
+    +(cl.length?'<div class="hint" style="margin-top:12px">Credits</div><table class="t"><tr><th>Vendor</th><th class="r">Credits</th><th class="r">Value</th></tr>'
+      +cl.map(function(x){return '<tr><td class="n">'+esc(x)+'</td><td class="r">'+fn(cred[x][0])+'</td><td class="r">'+fm(cred[x][1])+'</td></tr>';}).join('')+'</table>':'')
+    +(al.length>1?'<div class="hint" style="margin-top:12px">By payment account</div><table class="t"><tr><th>Account</th><th class="r">Invoices</th><th class="r">Total</th></tr>'
+      +al.map(function(x){return '<tr><td class="n">'+esc(x)+'</td><td class="r">'+fn(acct[x][0])+'</td><td class="r">'+fm(acct[x][1])+'</td></tr>';}).join('')+'</table>':'');
+}
+
+/* ---------- P&L line items (lazy — they live in the detail bundle) ---------- */
+function pnlItemsPanel(){
+  var box=$('pnlItems'); if(!box) return;
+  var avail=locIds().filter(function(l){return DETAIL_KEYS[l];});
+  if(!avail.length){ box.innerHTML='<div class="empty">Line-item detail is unavailable for this location.</div>'; return; }
+  box.innerHTML='<div><button class="signout" id="pnlItemsBtn">Show line items</button></div><div id="pnlItemsBody"></div>';
+  $('pnlItemsBtn').onclick=function(){
+    var body=$('pnlItemsBody'), btn=$('pnlItemsBtn');
+    if(body.dataset.open==='1'){ body.dataset.open='0'; body.innerHTML=''; btn.textContent='Show line items'; return; }
+    body.dataset.open='1'; btn.textContent='Hide line items'; body.innerHTML='<div class="empty">Loading…</div>';
+    Promise.all(avail.map(function(l){ return loadDetail(l).then(function(d){return d.pnl_items||[];}).catch(function(){return [];}); }))
+      .then(function(all){
+        if(body.dataset.open!=='1') return;
+        var agg={};
+        all.forEach(function(rows){ rows.forEach(function(r){
+          var k=r[0]+'||'+r[1]+'||'+r[2]+'||'+r[3];
+          agg[k]=(agg[k]||0)+r[4]; }); });
+        var keys=Object.keys(agg);
+        if(!keys.length){ body.innerHTML='<div class="empty">MarginEdge returned no line-level P&amp;L rows for this period.</div>'; return; }
+        var months={}; keys.forEach(function(k){ months[k.split('||')[0]]=1; });
+        var m=Object.keys(months).sort().reverse()[0];
+        var rows=keys.filter(function(k){return k.indexOf(m+'||')===0;})
+          .map(function(k){var p=k.split('||');return [p[1],p[2],p[3],agg[k]];})
+          .sort(function(a,b){return Math.abs(b[3])-Math.abs(a[3]);}).slice(0,60);
+        var sec=null, h='<div class="src">'+esc(m)+' · largest lines first, within each section</div><div class="tw"><table class="t">'
+          +'<tr><th>Category</th><th>Line item</th><th class="r">Total</th></tr>';
+        rows.sort(function(a,b){return a[0]===b[0]?Math.abs(b[3])-Math.abs(a[3]):(a[0]<b[0]?-1:1);});
+        rows.forEach(function(r){
+          if(r[0]!==sec){ sec=r[0]; h+='<tr><td colspan="3" class="n" style="padding-top:12px"><strong>'+esc(sec)+'</strong></td></tr>'; }
+          h+='<tr><td class="n">'+esc(r[1])+'</td><td>'+esc(r[2])+'</td><td class="r">'+fm(r[3])+'</td></tr>';
+        });
+        body.innerHTML=h+'</table></div>';
+      });
+  };
 }
 
 /* ---------- sales vs labor by hour ----------

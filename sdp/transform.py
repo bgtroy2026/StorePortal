@@ -192,6 +192,9 @@ def load_toast(con, bk: Buckets) -> dict:
             bd = _bd(o.get("businessDate"))
             net = tax = tips = disc = svc = refunds = 0.0
             checks = o.get("checks") or []
+            # Rung-then-removed. Computed across every check including the voided ones, because that is the
+            # whole point of the number, and kept in its own column so it can never leak into sales.
+            voided_value = round(sum(float(c.get("amount") or 0) for c in checks), 2) if o.get("voided") else 0.0
             for c in checks:
                 if c.get("voided") or c.get("deleted"):
                     continue
@@ -224,7 +227,7 @@ def load_toast(con, bk: Buckets) -> dict:
                            "dining_option": dining.get((slug, (o.get("diningOption") or {}).get("guid"))) or (o.get("diningOption") or {}).get("behavior") or (o.get("diningOption") or {}).get("guid"), "revenue_center": revctr.get((slug, (o.get("revenueCenter") or {}).get("guid"))) or (o.get("revenueCenter") or {}).get("guid"),
                            "server_guid": (o.get("server") or {}).get("guid"), "guests": int(o.get("numberOfGuests") or 0), "voided": voided, "checks_count": len(checks),
                            "net_sales": 0 if voided else round(net, 2), "tax": 0 if voided else round(tax, 2), "tips": round(tips, 2), "discounts": round(disc, 2), "service_charges": round(svc, 2),
-                           "gross_sales": 0 if voided else round(net + disc, 2), "refunds": round(refunds, 2), "source_hash": None})
+                           "gross_sales": 0 if voided else round(net + disc, 2), "voided_value": voided_value, "refunds": round(refunds, 2), "source_hash": None})
         # replace the whole business day for this location so deleted orders disappear
         if orders:
             con.execute("DELETE FROM toast_order_items WHERE location_id=? AND business_date=?", (slug, orders[0]["business_date"]))
