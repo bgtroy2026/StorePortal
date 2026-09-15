@@ -181,8 +181,23 @@ function signOut(){
   try{ if(window.google&&google.accounts&&google.accounts.id) google.accounts.id.disableAutoSelect(); }catch(e){}
   location.replace(location.pathname);
 }
-/* auth = {ok, profile:{email,name,role,locations}, bundles:[{label,id,key}], sid} */
+/* ---------- detail bundles (lazy) ----------
+   The headline bundle is deliberately small; count-sheet level data lives in one bundle per location that is
+   fetched the first time somebody actually opens a drilldown, then kept in memory for the session. A failure
+   here must degrade to "detail unavailable" rather than breaking the page that is already on screen. */
+var DETAIL_KEYS = {}, DETAIL = {}, DETAIL_ERR = {};
+async function loadDetail(loc){
+  if(DETAIL[loc]) return DETAIL[loc];
+  var k=DETAIL_KEYS[loc];
+  if(!k) throw new Error('no detail bundle for this location');
+  var buf=await fetchBin('data/'+k.id+'.bin',0,0);
+  DETAIL[loc]=JSON.parse(await gunzipText(await decrypt(buf,k.key))).detail;
+  return DETAIL[loc];
+}
+
+/* auth = {ok, profile:{email,name,role,locations}, bundles:[{label,id,key}], detail:{loc:{id,key}}, sid} */
 async function boot(auth){
+  DETAIL_KEYS = auth.detail || {};
   try{ if(auth.sid) navigator.sendBeacon(CFG.API_URL, JSON.stringify({a:'ping',s:auth.sid})); }catch(e){}
   $('bar').style.display='block'; setStatus('Loading portal data…');
   // The backend hands out one bundle per thing this person may see: 'all' for leadership/admin, otherwise one
@@ -247,7 +262,7 @@ function initGsi(){
 window.addEventListener('load',function(){
   fetch('data/manifest.json',{cache:'no-store'}).then(function(r){return r.json();}).then(function(m){ $('stamp').textContent='Data through '+m.through; }).catch(function(){});
   if(/[?&]dev=1/.test(location.search)){ // local preview of an unencrypted build (python -m sdp build --no-encrypt)
-    fetch('data/dev.json',{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){ startApp(d,{name:'Dev preview',role:'Admin',email:''}); }).catch(function(e){ setErr('dev.json not found — run: python -m sdp build --no-encrypt'); });
+    fetch('data/dev.json',{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){ DETAIL=d.detail||{}; DETAIL_KEYS={}; Object.keys(DETAIL).forEach(function(k){DETAIL_KEYS[k]={id:'dev',key:'dev'};}); startApp(d,{name:'Dev preview',role:'Admin',email:''}); }).catch(function(e){ setErr('dev.json not found — run: python -m sdp build --no-encrypt'); });
     return;
   }
   try{ var s=sessionStorage.getItem('sdp_auth'); if(s){ boot(JSON.parse(s)).catch(function(e){ try{sessionStorage.removeItem('sdp_auth');}catch(_){} setErr('Session reload failed — sign in again. '+e.message); }); return; } }catch(e){}
@@ -527,12 +542,63 @@ function pgInventory(m){
     var loc=D.locations.filter(function(x){return x.id===l;})[0], inv=D.inventory[l]||[];
     if(!inv.length){h+=panel(loc.name,'No inventory counts yet','<div class="empty">Add counts to inputs/inventory_counts.csv or enable the MarginEdge inventory endpoint.</div>');return;}
     var tot=inv.reduce(function(p,c){return p+c.value;},0);
+    var canDrill=!!DETAIL_KEYS[l];
     h+=panel(loc.name+' — on hand '+fk(tot),'Latest count '+fdate(inv[0].date)+(inv[0].prev_date?' vs '+fdate(inv[0].prev_date):''),
       '<table class="t"><tr><th>Category</th><th class="r">Begin</th><th class="r">Purchases</th><th class="r">End</th><th class="r">Usage</th><th class="r">Sales</th><th class="r">Actual cost %</th><th class="r">Wks on hand</th></tr>'
       +inv.map(function(r){var days=r.prev_date?(pd(r.date)-pd(r.prev_date))/864e5:null;var woh=(r.usage&&days)?r.value/(r.usage/days*7):null;var bk=BUCKETS.filter(function(z){return z[0]===r.bucket;})[0];
-        return '<tr><td class="n"><i class="sw" style="background:'+css(bk?bk[3]:'sx')+'"></i>'+esc(r.bucket)+'</td><td class="r">'+fm(r.prev_value)+'</td><td class="r">'+fm(r.purchases)+'</td><td class="r">'+fm(r.value)+'</td><td class="r">'+fm(r.usage)+'</td><td class="r">'+fm(r.sales)+'</td><td class="r">'+fp(r.sales?r.usage/r.sales:null)+'</td><td class="r">'+(woh!=null?woh.toFixed(1):'—')+'</td></tr>';}).join('')+'</table>');
+        return '<tr><td class="n"><i class="sw" style="background:'+css(bk?bk[3]:'sx')+'"></i>'+esc(r.bucket)+'</td><td class="r">'+fm(r.prev_value)+'</td><td class="r">'+fm(r.purchases)+'</td><td class="r">'+fm(r.value)+'</td><td class="r">'+fm(r.usage)+'</td><td class="r">'+fm(r.sales)+'</td><td class="r">'+fp(r.sales?r.usage/r.sales:null)+'</td><td class="r">'+(woh!=null?woh.toFixed(1):'—')+'</td></tr>';}).join('')+'</table>'
+      +(canDrill?'<div style="margin-top:10px"><button class="signout" data-drill="'+esc(l)+'">Count sheet &amp; per-product variance</button></div><div id="drill_'+esc(l)+'"></div>'
+                :'<div class="hint" style="margin-top:10px;font-size:11.5px;color:var(--muted)">Per-product detail is unavailable for this location.</div>'));
   });
   m.innerHTML=h+'</div>';
+  m.querySelectorAll('button[data-drill]').forEach(function(b){ b.onclick=function(){ drill(b.dataset.drill, b); }; });
+}
+
+/* ---------- inventory drilldown ---------- */
+function drill(loc, btn){
+  var box=$('drill_'+loc);
+  if(!box) return;
+  if(box.dataset.open==='1'){ box.dataset.open='0'; box.innerHTML=''; btn.textContent='Count sheet & per-product variance'; return; }
+  box.dataset.open='1'; btn.textContent='Hide detail';
+  box.innerHTML='<div class="empty">Loading count sheet…</div>';
+  loadDetail(loc).then(function(d){ if(box.dataset.open==='1') box.innerHTML=drillHtml(d); })
+    .catch(function(e){ DETAIL_ERR[loc]=e.message; if(box.dataset.open==='1') box.innerHTML='<div class="empty">Could not load the count sheet. '+esc(e.message)+'</div>'; });
+}
+
+function drillHtml(d){
+  if(!d || !(d.dates||[]).length) return '<div class="empty">No counted inventories for this location yet.</div>';
+  var h='';
+  if((d.variance||[]).length){
+    var w=d.window||[], dead=d.variance.filter(function(r){return r[7];});
+    h+='<h3 style="margin-top:14px">Per-product variance</h3>'
+      +'<div class="src">'+fdate(w[0])+' → '+fdate(w[1])+' · '+w[2]+' days · begin + purchases − end, valued in dollars because counted units and purchase units are not the same thing</div>'
+      +'<div class="tw"><table class="t"><tr><th>Product</th><th>Category</th><th class="r">Begin</th><th class="r">Purchases</th><th class="r">End</th><th class="r">Usage</th><th class="r">Wks on hand</th><th class="r">On hand</th></tr>'
+      +d.variance.slice(0,150).map(function(r){
+         var bk=BUCKETS.filter(function(z){return z[0]===r[1];})[0];
+         return '<tr'+(r[7]?' style="opacity:.75"':'')+'><td class="n">'+esc(r[0])+(r[7]?' <span class="tg">no movement</span>':'')+'</td>'
+           +'<td><i class="sw" style="background:'+css(bk?bk[3]:'sx')+'"></i>'+esc(r[1]||'')+'</td>'
+           +'<td class="r">'+fm(r[2])+'</td><td class="r">'+fm(r[3])+'</td><td class="r">'+fm(r[4])+'</td><td class="r">'+fm(r[5])+'</td>'
+           +'<td class="r">'+(r[6]!=null?r[6].toFixed(1):'—')+'</td><td class="r">'+(r[8]!=null?fn(r[8])+' '+esc(r[9]||''):'—')+'</td></tr>';
+       }).join('')+'</table></div>'
+      +(dead.length?'<div class="src">'+dead.length+' product'+(dead.length===1?'':'s')+' counted with no depletion over the period.</div>':'')
+      +(function(){var c=d.coverage; if(!c||!c[1]) return ''; var pct=c[0]/c[1];
+         return pct>0.995?'':'<div class="src">Covers '+fp(pct)+' of purchases in this window — the rest was spent on products that are not on a count sheet, so it shows in the category totals above but cannot be attributed to a product here.</div>';})();
+  }
+  if((d.sheet||[]).length){
+    var sec=null;
+    h+='<h3 style="margin-top:18px">Latest count sheet</h3><div class="src">As counted, by storage section</div>'
+      +'<div class="tw"><table class="t"><tr><th>Product</th><th class="r">Qty</th><th>Unit</th><th class="r">Unit price</th><th class="r">Value</th></tr>'
+      +d.sheet.map(function(r){
+         var head='';
+         if(r[0]!==sec){ sec=r[0]; head='<tr><td colspan="5" class="n" style="padding-top:12px"><strong>'+esc(sec||'(no section)')+'</strong></td></tr>'; }
+         return head+'<tr><td class="n">'+esc(r[1])+'</td><td class="r">'+fn(r[3])+'</td><td>'+esc(r[4]||'')+'</td><td class="r">'+fm(r[5])+'</td><td class="r">'+fm(r[6])+'</td></tr>';
+       }).join('')+'</table></div>';
+  }
+  if((d.events||[]).length>1){
+    h+='<h3 style="margin-top:18px">Count history</h3><div class="tw"><table class="t"><tr><th>Date</th><th>Count sheet</th><th>Status</th><th class="r">Total value</th></tr>'
+      +d.events.map(function(r){return '<tr><td class="n">'+fdate(r[0])+'</td><td>'+esc(r[1]||'')+'</td><td>'+esc(r[2]||'')+'</td><td class="r">'+fm(r[3])+'</td></tr>';}).join('')+'</table></div>';
+  }
+  return h;
 }
 
 /* ---------- Tripleseat events ---------- */

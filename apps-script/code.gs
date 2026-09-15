@@ -23,7 +23,8 @@
  *   When | Email | Name | Role | Event
  *
  * Request protocol (POST body, Content-Type text/plain to avoid CORS preflight):
- *   {"a":"signin","t":<id token>}  → sign-in → { ok, profile:{email,name,role,locations}, bundles:[{label,id,key}], sid }
+ *   {"a":"signin","t":<id token>}  → sign-in → { ok, profile:{...}, bundles:[{label,id,key}], detail:{loc:{id,key}}, sid }
+ *                                    `detail` keys are for the per-location drilldown bundles, fetched lazily
  *                                    bundles[0] is the data bundle; leadership/admin also get the "scorecard" bundle
  *   {"a":"ping","s":<sid>}         → log a portal open
  *   {"a":"scorecard","k":<key>}    → the Leadership Scorecard tab, for the nightly pipeline (no user session)
@@ -150,7 +151,8 @@ function doSignin(token) {
   var locs = String(hit[3] || '').toLowerCase().replace(/\s+/g, '');
   var access = portalAccess(props, role, locs);
   logEvent(email, name, role, 'signin');
-  return { ok: true, profile: { email: email, name: name, role: role, locations: access.locations }, bundles: access.bundles, sid: makeSid(email, name, role) };
+  return { ok: true, profile: { email: email, name: name, role: role, locations: access.locations },
+           bundles: access.bundles, detail: access.detail || {}, sid: makeSid(email, name, role) };
 }
 
 // ---- which bundle(s) this person may open, and the keys (derived, never stored) --------------------------
@@ -164,13 +166,30 @@ function portalAccess(props, role, locs) {
   var leadership = /^(leadership|admin)/i.test(role);
   var extra = leadership ? [bundleFor(secret, 'scorecard')] : [];
   var all = leadership || locs === 'all' || !locs;
-  if (all) return { locations: 'all', bundles: [bundleFor(secret, 'all')].concat(extra) };
+  if (all) {
+    var every = manifest().locations || [];
+    return { locations: 'all', bundles: [bundleFor(secret, 'all')].concat(extra), detail: detailBundles(secret, every) };
+  }
   var list = locs.split(',').filter(Boolean);
   // A director covering several taprooms used to receive the "all" bundle, filtered in the browser. That is
   // not scoping: anyone who opens devtools sees every location. They now get one bundle PER location they
   // cover, so the other taprooms' data is absent from what they download rather than merely hidden.
   var locBundles = list.map(function (l) { return bundleFor(secret, 'loc:' + l); });
-  return { locations: list.join(','), bundles: locBundles.concat(extra) };
+  return { locations: list.join(','), bundles: locBundles.concat(extra), detail: detailBundles(secret, list) };
+}
+
+/**
+ * Keys for the per-location DETAIL bundles (count sheets and the like). Handed out at sign-in but kept in
+ * their own map rather than in `bundles`, because the portal must not download them to open the front page --
+ * they are fetched only when somebody drills in. Same derivation, same epoch, so revocation covers them too.
+ */
+function detailBundles(secret, locs) {
+  var out = {};
+  (locs || []).forEach(function (l) {
+    var b = bundleFor(secret, 'loc:' + l + ':detail');
+    out[l] = { id: b.id, key: b.key };
+  });
+  return out;
 }
 
 /**
@@ -179,21 +198,26 @@ function portalAccess(props, role, locs) {
  * keys that decrypt nothing, which looks like a broken portal rather than a misconfiguration.
  * Cached briefly so a burst of sign-ins does not fetch it repeatedly.
  */
-function currentEpoch() {
+function manifest() {
   var cache = CacheService.getScriptCache();
-  var hit = cache.get('epoch');
-  if (hit) return hit;
-  var ep = '1';
+  var hit = cache.get('manifest');
+  if (hit) { try { return JSON.parse(hit); } catch (ignored) {} }
+  var m = { epoch: '1', locations: [] };
   try {
     var url = prop('SITE_URL');
     if (url) {
       var r = UrlFetchApp.fetch(url.replace(/\/$/, '') + '/data/manifest.json', { muteHttpExceptions: true });
-      if (r.getResponseCode() === 200) ep = String(JSON.parse(r.getContentText()).epoch || '1');
+      if (r.getResponseCode() === 200) {
+        var j = JSON.parse(r.getContentText());
+        m = { epoch: String(j.epoch || '1'), locations: j.locations || [] };
+      }
     }
   } catch (ignored) {}
-  cache.put('epoch', ep, 300);
-  return ep;
+  cache.put('manifest', JSON.stringify(m), 300);
+  return m;
 }
+
+function currentEpoch() { return manifest().epoch; }
 
 function bundleFor(secret, label) {
   var salted = label + ':' + currentEpoch();

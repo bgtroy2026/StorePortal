@@ -39,12 +39,18 @@ def run(secret: str | None = None, dev_json: bool = False) -> dict:
         # handed them exec compensation and per-manager audit scores. Splitting it into its own label means the
         # data is absent unless the sign-in backend hands out that bundle's key, rather than merely hidden.
         scorecard = payload.pop("scorecard", None)
+        # Detail is published as one bundle PER LOCATION, fetched on demand rather than at sign-in. Keeping it
+        # out of "all" is what stops an admin's first paint from carrying every counted line in the company.
+        detail = payload.pop("detail", None) or {}
         labels = ["all"] + [f"loc:{l['id']}" for l in payload["locations"]]
         if scorecard:
             labels.append("scorecard")
+        labels += [f"loc:{lid}:detail" for lid in detail]
         for label in labels:
             if label == "scorecard":
                 obj = {"meta": payload["meta"], "scorecard": scorecard}
+            elif label.endswith(":detail"):
+                obj = {"meta": payload["meta"], "detail": detail[label.split(":", 2)[1]]}
             else:
                 obj = payload if label == "all" else metrics.slice_for_location(payload, label.split(":", 1)[1])
             bid = bundle_id(label, epoch)
@@ -54,8 +60,15 @@ def run(secret: str | None = None, dev_json: bool = False) -> dict:
         # a public manifest with only build time + data-through date (no data) so the shell can show freshness pre-login
     # The epoch is published deliberately: it is a salt, not a secret, and the Apps Script reads it from here
     # so there is one source of truth rather than two settings that can drift apart.
-    (data / "manifest.json").write_text(json.dumps({"built_at": payload["meta"]["built_at"], "through": payload["meta"]["through"], "epoch": epoch}))
+    # `locations` is published alongside the epoch so the sign-in backend can mint detail-bundle keys without a
+    # second copy of the location list to keep in step with this one.
+    (data / "manifest.json").write_text(json.dumps({"built_at": payload["meta"]["built_at"], "through": payload["meta"]["through"], "epoch": epoch,
+                                                    "locations": [l["id"] for l in payload["locations"]]}))
     if dev_json:
+        # dev.json is the whole picture including detail, so ?dev=1 exercises the drilldown too. (When a secret
+        # was given the detail was popped out into its own bundles above — put it back for the preview only.)
+        if "detail" not in payload and "detail" in locals() and detail:
+            payload["detail"] = detail
         (data / "dev.json").write_text(json.dumps(payload, separators=(",", ":")))
         written["dev.json"] = {"file": "data/dev.json", "bytes": (data / "dev.json").stat().st_size}
     log.info("site: %s", {k: v["bytes"] for k, v in written.items()})

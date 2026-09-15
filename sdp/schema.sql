@@ -259,7 +259,7 @@ CREATE TABLE IF NOT EXISTS daily_summary (             -- grain: location × bus
   sales_nabev REAL DEFAULT 0, sales_retail REAL DEFAULT 0, sales_other REAL DEFAULT 0,
   labor_hours REAL DEFAULT 0, labor_cost REAL DEFAULT 0,
   purchases REAL DEFAULT 0, purch_food REAL DEFAULT 0, purch_beer REAL DEFAULT 0, purch_liquor REAL DEFAULT 0,
-  purch_wine REAL DEFAULT 0, purch_nabev REAL DEFAULT 0, purch_other REAL DEFAULT 0,
+  purch_wine REAL DEFAULT 0, purch_nabev REAL DEFAULT 0, purch_retail REAL DEFAULT 0, purch_other REAL DEFAULT 0,
   PRIMARY KEY (location_id, business_date)
 );
 

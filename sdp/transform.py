@@ -410,7 +410,7 @@ def rebuild_daily_summary(con):
     con.execute("""
     INSERT INTO daily_summary (location_id, business_date, net_sales, gross_sales, discounts, tax, tips, refunds, orders, checks, guests,
       sales_food, sales_beer, sales_liquor, sales_wine, sales_nabev, sales_retail, sales_other, labor_hours, labor_cost,
-      purchases, purch_food, purch_beer, purch_liquor, purch_wine, purch_nabev, purch_other)
+      purchases, purch_food, purch_beer, purch_liquor, purch_wine, purch_nabev, purch_retail, purch_other)
     WITH days AS (
       SELECT location_id, business_date FROM toast_orders
       UNION SELECT location_id, business_date FROM toast_time_entries
@@ -436,14 +436,15 @@ def rebuild_daily_summary(con):
     p AS (SELECT location_id, invoice_date business_date,
                  SUM(CASE WHEN bucket='Food' THEN line_price ELSE 0 END) f, SUM(CASE WHEN bucket='Beer' THEN line_price ELSE 0 END) b, SUM(CASE WHEN bucket='Liquor' THEN line_price ELSE 0 END) l,
                  SUM(CASE WHEN bucket='Wine' THEN line_price ELSE 0 END) w, SUM(CASE WHEN bucket='NA Bev' THEN line_price ELSE 0 END) n,
-                 SUM(CASE WHEN bucket NOT IN ('Food','Beer','Liquor','Wine','NA Bev') THEN line_price ELSE 0 END) x
+                 SUM(CASE WHEN bucket='Retail' THEN line_price ELSE 0 END) r,
+                 SUM(CASE WHEN bucket NOT IN ('Food','Beer','Liquor','Wine','NA Bev','Retail') THEN line_price ELSE 0 END) x
           FROM me_invoice_lines GROUP BY 1,2),
     ph AS (SELECT location_id, invoice_date business_date, SUM(order_total) tot FROM me_invoices GROUP BY 1,2)
     SELECT d.location_id, d.business_date,
       COALESCE(o.net, ms.net, 0), COALESCE(o.gross, ms.net, 0), COALESCE(o.disc,0), COALESCE(o.tax,0), COALESCE(o.tips,0), COALESCE(o.ref,0), COALESCE(o.orders,0), COALESCE(o.checks,0), COALESCE(o.guests,0),
       COALESCE(i.f, ms.f, 0), COALESCE(i.b, ms.b, 0), COALESCE(i.l, ms.l, 0), COALESCE(i.w, ms.w, 0), COALESCE(i.n, ms.n, 0), COALESCE(i.r, ms.r, 0), COALESCE(i.x, ms.x, 0),
       COALESCE(t.hrs,0), COALESCE(t.cost, ml.cost, 0),
-      COALESCE(ph.tot,0), COALESCE(p.f,0), COALESCE(p.b,0), COALESCE(p.l,0), COALESCE(p.w,0), COALESCE(p.n,0), COALESCE(p.x,0)
+      COALESCE(ph.tot,0), COALESCE(p.f,0), COALESCE(p.b,0), COALESCE(p.l,0), COALESCE(p.w,0), COALESCE(p.n,0), COALESCE(p.r,0), COALESCE(p.x,0)
     FROM days d
     LEFT JOIN o  ON o.location_id=d.location_id  AND o.business_date=d.business_date
     LEFT JOIN i  ON i.location_id=d.location_id  AND i.business_date=d.business_date

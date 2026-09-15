@@ -13,8 +13,8 @@ from .util import locations, log, settings
 
 DAILY_COLS = ["business_date", "net_sales", "gross_sales", "discounts", "tax", "tips", "refunds", "orders", "checks", "guests",
               "sales_food", "sales_beer", "sales_liquor", "sales_wine", "sales_nabev", "sales_retail", "sales_other",
-              "labor_hours", "labor_cost", "purchases", "purch_food", "purch_beer", "purch_liquor", "purch_wine", "purch_nabev", "purch_other"]
-DAILY_KEYS = ["d", "net", "gross", "disc", "tax", "tips", "ref", "orders", "checks", "guests", "f", "b", "l", "w", "n", "r", "x", "lh", "lc", "p", "pf", "pb", "pl", "pw", "pn", "po"]
+              "labor_hours", "labor_cost", "purchases", "purch_food", "purch_beer", "purch_liquor", "purch_wine", "purch_nabev", "purch_retail", "purch_other"]
+DAILY_KEYS = ["d", "net", "gross", "disc", "tax", "tips", "ref", "orders", "checks", "guests", "f", "b", "l", "w", "n", "r", "x", "lh", "lc", "p", "pf", "pb", "pl", "pw", "pn", "pr", "po"]
 
 
 def _rows(con, sql, args=()):
@@ -100,7 +100,7 @@ def build_payload(con, through: date | None = None) -> dict:
             last = cs[-1]; prev = cs[-2] if len(cs) > 1 else None
             purch = usage = sales = None
             if prev:
-                col = {"Food": "purch_food", "Beer": "purch_beer", "Liquor": "purch_liquor", "Wine": "purch_wine", "NA Bev": "purch_nabev"}.get(b, "purch_other")
+                col = {"Food": "purch_food", "Beer": "purch_beer", "Liquor": "purch_liquor", "Wine": "purch_wine", "NA Bev": "purch_nabev", "Retail": "purch_retail"}.get(b, "purch_other")
                 scol = {"Food": "sales_food", "Beer": "sales_beer", "Liquor": "sales_liquor", "Wine": "sales_wine", "NA Bev": "sales_nabev", "Retail": "sales_retail"}.get(b, "sales_other")
                 r = con.execute(f"SELECT COALESCE(SUM({col}),0), COALESCE(SUM({scol}),0) FROM daily_summary WHERE location_id=? AND business_date>? AND business_date<=?", (lid, prev["count_date"], last["count_date"])).fetchone()
                 purch, sales = r[0], r[1]
@@ -168,10 +168,90 @@ def build_payload(con, through: date | None = None) -> dict:
     return payload
 
 
+def detail_for_location(con, lid: str, sheets: int = 12) -> dict:
+    """The count-sheet level view behind the Inventory page's bucket rollups.
+
+    Published as a SEPARATE per-location bundle, fetched only when somebody actually drills in. The headline
+    page is 30-140 KB precisely because everything in it is pre-aggregated; putting every counted line in there
+    would make every visitor pay for a page most of them never open.
+
+    Variance is computed on VALUE, not quantity, and deliberately so: a product is counted in its report unit
+    (a keg, a case) but purchased in whatever the vendor ships, and reconciling those two unit systems per
+    product is exactly the kind of silent wrongness that makes a variance report worse than none. Value is the
+    same currency on both sides.
+    """
+    dates = [r["d"] for r in _rows(con, """
+        SELECT DISTINCT inventory_date d FROM me_inventories
+        WHERE location_id=? AND inventory_date IS NOT NULL AND inventory_date!='' ORDER BY d DESC LIMIT ?""", (lid, sheets))]
+    out = {"dates": dates, "events": [], "sheet": [], "variance": [], "window": None, "coverage": None}
+    if not dates:
+        return out
+
+    out["events"] = [[r["inventory_date"], r["countsheet_name"], r["status"], _r(r["total_value"]), r["n"]] for r in _rows(con, """
+        SELECT inventory_date, GROUP_CONCAT(DISTINCT countsheet_name) countsheet_name, GROUP_CONCAT(DISTINCT status) status,
+               SUM(total_value) total_value, COUNT(*) n
+        FROM me_inventories WHERE location_id=? AND inventory_date IN (%s) GROUP BY 1 ORDER BY 1 DESC""" % ",".join("?" * len(dates)),
+        (lid, *dates))]
+
+    cur = dates[0]
+    prev = dates[1] if len(dates) > 1 else None
+
+    # The latest count sheet as it was actually taken: by storage section, because that is how somebody
+    # standing in the walk-in with a clipboard will read it back.
+    out["sheet"] = [[r["section_name"], r["product_name"], r["bucket"], _r(r["qty"]), r["unit"], _r(r["price"]), _r(r["value"])] for r in _rows(con, """
+        SELECT ii.section_name, ii.product_name, ii.bucket, SUM(ii.quantity) qty, MAX(ii.unit) unit,
+               MAX(ii.price) price, SUM(ii.value) value
+        FROM me_inventory_items ii JOIN me_inventories iv ON iv.inventory_id=ii.inventory_id AND iv.location_id=ii.location_id
+        WHERE ii.location_id=? AND iv.inventory_date=?
+        GROUP BY ii.section_name, ii.product_id ORDER BY ii.section_name, value DESC""", (lid, cur))]
+
+    if prev:
+        days = (date.fromisoformat(cur) - date.fromisoformat(prev)).days or 1
+        out["window"] = [prev, cur, days]
+        by_prod: dict[str, dict] = {}
+        for tag, d in (("prev", prev), ("cur", cur)):
+            for r in _rows(con, """
+                SELECT ii.product_id pid, MAX(ii.product_name) nm, MAX(ii.bucket) bucket, SUM(ii.value) v, SUM(ii.quantity) q, MAX(ii.unit) unit
+                FROM me_inventory_items ii JOIN me_inventories iv ON iv.inventory_id=ii.inventory_id AND iv.location_id=ii.location_id
+                WHERE ii.location_id=? AND iv.inventory_date=? GROUP BY ii.product_id""", (lid, d)):
+                o = by_prod.setdefault(r["pid"], {"name": r["nm"], "bucket": r["bucket"], "prev": 0.0, "cur": 0.0, "qty": 0.0, "unit": None, "purch": 0.0})
+                o[tag] = float(r["v"] or 0)
+                o["name"] = o["name"] or r["nm"]
+                if tag == "cur":
+                    o["qty"], o["unit"], o["bucket"] = float(r["q"] or 0), r["unit"], r["bucket"]
+        attributed = 0.0
+        for r in _rows(con, """
+            SELECT product_id pid, SUM(line_price) v FROM me_invoice_lines
+            WHERE location_id=? AND invoice_date>? AND invoice_date<=? AND product_id IS NOT NULL AND product_id!='' GROUP BY 1""", (lid, prev, cur)):
+            if r["pid"] in by_prod:
+                by_prod[r["pid"]]["purch"] = float(r["v"] or 0)
+                attributed += float(r["v"] or 0)
+        # Purchases of things nobody counts (paper, chemicals, a one-off) cannot appear in a per-product
+        # variance, so the table would quietly cover less than the bucket totals it sits under. Publish the
+        # coverage rather than let the two disagree without explanation.
+        total_purch = (con.execute("SELECT COALESCE(SUM(line_price),0) FROM me_invoice_lines WHERE location_id=? AND invoice_date>? AND invoice_date<=?",
+                                   (lid, prev, cur)).fetchone() or [0])[0] or 0.0
+        out["coverage"] = [_r(attributed), _r(float(total_purch))]
+
+        rows = []
+        for pid, o in by_prod.items():
+            usage = o["prev"] + o["purch"] - o["cur"]
+            weekly = (usage / days * 7) if usage > 0 else None
+            woh = (o["cur"] / weekly) if weekly else None
+            # Stock sitting on a shelf with nothing leaving it. Worth its own flag rather than a low sort
+            # position: dead stock is a decision (stop buying it, run it off), not just a small number.
+            dead = 1 if (o["cur"] > 0 and usage <= 0) else 0
+            rows.append([o["name"], o["bucket"], _r(o["prev"]), _r(o["purch"]), _r(o["cur"]), _r(usage),
+                         _r(woh, 1) if woh is not None else None, dead, _r(o["qty"]), o["unit"]])
+        rows.sort(key=lambda x: -(x[5] or 0))
+        out["variance"] = rows
+    return out
+
+
 def slice_for_location(payload: dict, lid: str) -> dict:
     """A director's bundle: only their location (other locations are not merely hidden — they are absent)."""
     out = {"meta": dict(payload["meta"]), "locations": [l for l in payload["locations"] if l["id"] == lid], "activations": [a for a in payload["activations"] if a["loc"] == lid]}
-    for k in ("daily", "hourly", "top_items", "labor_jobs", "vendors", "inventory", "targets", "payments", "dining", "discounts", "pnl", "sources", "events", "leads", "events_monthly"):
+    for k in ("daily", "hourly", "top_items", "labor_jobs", "vendors", "inventory", "targets", "payments", "dining", "revctr", "discounts", "pnl", "sources", "events", "leads", "events_monthly"):
         out[k] = {lid: payload[k].get(lid)} if lid in payload[k] else {}
     return out
 
@@ -179,7 +259,11 @@ def slice_for_location(payload: dict, lid: str) -> dict:
 def run(through: date | None = None) -> dict:
     con = connect()
     p = build_payload(con, through)
+    # Detail rides under its own key and is split out into per-location bundles by build_site, never published
+    # inside the headline payload.
+    p["detail"] = {l["id"]: detail_for_location(con, l["id"]) for l in p["locations"]}
     con.close()
     n = sum(len(v) for v in p["daily"].values())
-    log.info("metrics: %d locations, %d daily rows, through %s", len(p["locations"]), n, p["meta"]["through"])
+    nd = sum(len(v.get("variance") or []) for v in p["detail"].values())
+    log.info("metrics: %d locations, %d daily rows, %d detail variance rows, through %s", len(p["locations"]), n, nd, p["meta"]["through"])
     return p
