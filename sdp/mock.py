@@ -86,6 +86,12 @@ def gen_toast(loc: dict, loc_idx: int, start: date, end: date, events: dict[str,
       {"voidReasons": [{"guid": _g(f"vr:{slug}:{n}"), "name": n} for n in ("Server error", "Kitchen error", "Guest changed mind", "Walkout")]})
     W("toast", slug, "config-discounts", "all",
       {"discounts": [{"guid": _g(f"dc:{slug}:{n}"), "name": n} for n in ("Happy Hour", "Employee Meal", "Manager Comp", "Loyalty Reward")]})
+    W("toast", slug, "config-payoutReasons", "all",
+      {"payoutReasons": [{"guid": _g(f"pr:{slug}:{n}"), "name": n} for n in ("Supplies", "Delivery tip", "Repair")]})
+    W("toast", slug, "config-noSaleReasons", "all",
+      {"noSaleReasons": [{"guid": _g(f"nsr:{slug}:{n}"), "name": n} for n in ("Change for guest", "Opened in error")]})
+    W("toast", slug, "config-cashDrawers", "all",
+      {"cashDrawers": [{"guid": _g(f"drawer:{slug}"), "name": "Main drawer"}]})
     W("toast", slug, "config-serviceAreas", "all",
       {"serviceAreas": [{"guid": _g(f"sa:{slug}:{n}"), "name": n} for n in ("Main Floor", "Patio", "Upstairs")]})
 
@@ -168,6 +174,37 @@ def gen_toast(loc: dict, loc_idx: int, start: date, end: date, events: dict[str,
                               "inDate": _ts(d, s_start), "outDate": _ts(d, s_start + s_hrs), "deleted": False})
         d += timedelta(days=1)
     W("toast", slug, "timeEntries", f"{iso(start)}_{iso(end)}", {"timeEntries": tes, "window": [iso(start), iso(end)]})
+
+    # Cash management for the recent window only, mirroring the real pull. Includes reversals on purpose: an
+    # entry whose `undoes` names an earlier one must remove BOTH from the totals, and that is the easiest part
+    # of this to get quietly wrong.
+    cd = max(start, end - timedelta(days=34))
+    while cd <= end:
+        ents, drawer = [], _g(f"drawer:{slug}")
+        for k in range(rnd.randint(2, 6)):
+            emp = rnd.choice(servers)
+            kind = rnd.choices(["NO_SALE", "PAY_OUT", "CLOSE_OUT_SHORTAGE", "CLOSE_OUT_OVERAGE", "CASH_IN", "TIP_OUT"],
+                               weights=[26, 20, 16, 12, 14, 12])[0]
+            amt = {"NO_SALE": 0.0}.get(kind, round(rnd.uniform(2, 85), 2))
+            e = {"guid": _g(f"cash:{slug}:{iso(cd)}:{k}"), "entityType": "CashEntry", "type": kind, "amount": amt,
+                 "reason": None, "date": _ts(cd, rnd.randint(11, 23)), "cashDrawer": {"guid": drawer},
+                 "employee1": {"guid": emp}, "undoes": None}
+            if kind == "PAY_OUT":
+                e["payoutReason"] = {"guid": _g(f"pr:{slug}:{rnd.choice(['Supplies', 'Delivery tip', 'Repair'])}")}
+            if kind == "NO_SALE":
+                e["noSaleReason"] = {"guid": _g(f"nsr:{slug}:{rnd.choice(['Change for guest', 'Opened in error'])}")}
+            ents.append(e)
+        if ents and rnd.random() < 0.18:                  # somebody corrected a mistake
+            tgt = ents[0]
+            ents.append({"guid": _g(f"cash:{slug}:{iso(cd)}:undo"), "entityType": "CashEntry", "type": "UNDO_PAY_OUT",
+                         "amount": tgt["amount"], "reason": "Entered twice", "date": _ts(cd, 23),
+                         "cashDrawer": {"guid": drawer}, "employee1": {"guid": tgt["employee1"]["guid"]},
+                         "undoes": tgt["guid"]})
+        W("toast", slug, "cash", iso(cd), {"businessDate": iso(cd), "entries": ents})
+        W("toast", slug, "deposits", iso(cd), {"deposits": ([{"guid": _g(f"dep:{slug}:{iso(cd)}"), "entityType": "Deposit",
+            "amount": round(rnd.uniform(300, 2200), 2), "date": _ts(cd, 23), "employee": {"guid": rnd.choice(servers)},
+            "undoes": None}] if rnd.random() > 0.15 else []), "businessDate": iso(cd)})
+        cd += timedelta(days=1)
     if sched is not None:
         W("toast", slug, "shifts", f"{iso(start)}_{iso(end)}", {"shifts": sched, "window": [iso(start), iso(end)]})
     return n_orders_total, len(tes), day_sales, day_labor

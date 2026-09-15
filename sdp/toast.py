@@ -15,6 +15,8 @@ Datasets pulled per restaurant:
   menus/v2/menus                            -> raw/toast/<loc>/menus/all.json  (item -> sales category names)
   config/v2/<resource>                      -> raw/toast/<loc>/config-<resource>/all.json  (guid -> name lookups)
   labor/v1/employees                        -> raw/toast/<loc>/employees/all.json      (guid -> person)
+  cashmgmt/v1/entries?businessDate=yyyymmdd -> raw/toast/<loc>/cash/<YYYY-MM-DD>.json   (drawer movements)
+  cashmgmt/v1/deposits?businessDate=...     -> raw/toast/<loc>/deposits/<YYYY-MM-DD>.json
 
 Rate limits: ordersBulk is capped at 5 req/s per location; we run at 4.
 Incremental strategy: re-pull the last `incremental_days` business days every night (orders get modified after
@@ -31,7 +33,13 @@ from .util import Http, RAW_DIR, env, iso, log, settings, today_local, write_raw
 
 # Guid -> name lookups worth having. diningOptions and revenueCenters rename columns we already store;
 # the rest are landed in toast_config so the views that need them do not each need a new pull.
-CONFIG_RESOURCES = ["diningOptions", "revenueCenters", "salesCategories", "voidReasons", "discounts", "serviceAreas"]
+CONFIG_RESOURCES = ["diningOptions", "revenueCenters", "salesCategories", "voidReasons", "discounts", "serviceAreas",
+                    "payoutReasons", "noSaleReasons", "cashDrawers"]
+
+# Cash management takes ONE business date per call — no ranges, no paging — so a 400-day backfill would be
+# 800 requests per location. It is only ever pulled for a recent window; the drawer questions it answers
+# ("who was short last Friday") are about the last few weeks, not last year.
+CASH_DAYS = 35
 
 
 class Toast:
@@ -110,6 +118,17 @@ class Toast:
             out.extend(r.json() or [])
             s = e + timedelta(days=1)
         return out
+
+    def cash_entries(self, guid: str, d: date) -> list[dict]:
+        """Drawer movements for one business day. Returns a bare JSON array."""
+        r = self.http.get("/cashmgmt/v1/entries", params={"businessDate": d.strftime("%Y%m%d")}, headers=self._h(guid))
+        j = r.json()
+        return j if isinstance(j, list) else []
+
+    def cash_deposits(self, guid: str, d: date) -> list[dict]:
+        r = self.http.get("/cashmgmt/v1/deposits", params={"businessDate": d.strftime("%Y%m%d")}, headers=self._h(guid))
+        j = r.json()
+        return j if isinstance(j, list) else []
 
     def jobs(self, guid: str) -> list[dict]:
         return self.http.get("/labor/v1/jobs", headers=self._h(guid)).json() or []
@@ -228,6 +247,22 @@ def pull(locations: list[dict], days_back: int, incremental_days: int, warehouse
             n_sh = len(sh)
         except Exception as e:
             log.warning("Toast: %s shifts not pulled (%s) — schedule-vs-actual unavailable", slug, e)
-        summary[slug] = {"days_pulled": len(days), "orders": n_orders, "time_entries": len(te), "shifts": n_sh, "window": [iso(start), iso(end)], "stopped_early": stopped}
+        # Cash management, recent window only (see CASH_DAYS). Optional like the other lookups: a credential
+        # without the cash scope should cost the drawer view and nothing else.
+        n_cash = 0
+        try:
+            c_start = max(start, end - timedelta(days=CASH_DAYS - 1))
+            d = c_start
+            while d <= end:
+                if not (RAW_DIR / "toast" / slug / "cash" / f"{iso(d)}.json").exists() or d > end - timedelta(days=incremental_days):
+                    write_raw("toast", slug, "cash", iso(d), {"businessDate": iso(d), "entries": t.cash_entries(guid, d)})
+                    write_raw("toast", slug, "deposits", iso(d), {"businessDate": iso(d), "deposits": t.cash_deposits(guid, d)})
+                    n_cash += 1
+                d += timedelta(days=1)
+        except Exception as e:
+            log.warning("Toast: %s cash management not pulled (%s) — the drawer view will be unavailable", slug, e)
+
+        summary[slug] = {"days_pulled": len(days), "orders": n_orders, "time_entries": len(te), "shifts": n_sh,
+                         "cash_days": n_cash, "window": [iso(start), iso(end)], "stopped_early": stopped}
         log.info("Toast %s: %s", slug, summary[slug])
     return summary

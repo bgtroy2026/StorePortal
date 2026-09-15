@@ -130,7 +130,7 @@ def _disc_row(d: dict, o: dict, c: dict, slug: str, bd: str, scope: str) -> dict
 
 
 def load_toast(con, bk: Buckets) -> dict:
-    stats = {"orders": 0, "items": 0, "payments": 0, "time_entries": 0, "config": 0, "employees": 0, "shifts": 0}
+    stats = {"orders": 0, "items": 0, "payments": 0, "time_entries": 0, "config": 0, "employees": 0, "shifts": 0, "cash_entries": 0, "deposits": 0}
     # menus first: item guid -> (name, group, sales category)
     item_cat: dict[tuple[str, str], tuple[str, str, str, float]] = {}
     for slug, ds, p, j in iter_raw("toast", dataset="menus"):
@@ -270,6 +270,31 @@ def load_toast(con, bk: Buckets) -> dict:
                             "job_name": jobs.get((slug, jg)), "in_at": a, "out_at": b,
                             "hours": round(hrs, 2) if 0 < hrs <= 24 else 0.0, "deleted": 0})
     stats["shifts"] = _upsert(con, "toast_shifts", sh_rows)
+
+    cash_rows, dep_rows = [], []
+    for slug, ds, p, j in iter_raw("toast", dataset="cash"):
+        bd = j.get("businessDate") or ""
+        for e in j.get("entries", []):
+            if not e.get("guid"):
+                continue
+            cash_rows.append({"entry_guid": e["guid"], "location_id": slug, "business_date": bd,
+                              "type": e.get("type"), "amount": float(e.get("amount") or 0), "reason": e.get("reason"),
+                              "payout_reason": (e.get("payoutReason") or {}).get("guid"),
+                              "no_sale_reason": (e.get("noSaleReason") or {}).get("guid"),
+                              "employee_guid": (e.get("employee1") or {}).get("guid"),
+                              "drawer_guid": (e.get("cashDrawer") or {}).get("guid"),
+                              "undoes": e.get("undoes"), "entry_at": e.get("date")})
+    stats["cash_entries"] = _upsert(con, "toast_cash_entries", cash_rows)
+    for slug, ds, p, j in iter_raw("toast", dataset="deposits"):
+        bd = j.get("businessDate") or ""
+        for e in j.get("deposits", []):
+            if not e.get("guid"):
+                continue
+            dep_rows.append({"deposit_guid": e["guid"], "location_id": slug, "business_date": bd,
+                             "amount": float(e.get("amount") or 0),
+                             "employee_guid": (e.get("employee") or {}).get("guid"),
+                             "undoes": e.get("undoes"), "deposit_at": e.get("date")})
+    stats["deposits"] = _upsert(con, "toast_deposits", dep_rows)
 
     for slug, ds, p, j in iter_raw("toast", dataset="timeEntries"):
         rows = []

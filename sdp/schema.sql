@@ -135,6 +135,26 @@ CREATE TABLE IF NOT EXISTS toast_employees (      -- grain: one employee per loc
   PRIMARY KEY (employee_guid, location_id)
 );
 
+-- Cash management. `undoes` points at the entry this one reverses; a reversal and its target must BOTH be
+-- excluded from totals, or a mistake that was corrected still shows up as a shortage.
+CREATE TABLE IF NOT EXISTS toast_cash_entries (
+  entry_guid    TEXT NOT NULL, location_id TEXT NOT NULL, business_date TEXT NOT NULL,
+  type          TEXT,                            -- CASH_IN / PAY_OUT / NO_SALE / CLOSE_OUT_OVERAGE / ...
+  amount        REAL DEFAULT 0,
+  reason        TEXT, payout_reason TEXT, no_sale_reason TEXT,
+  employee_guid TEXT, drawer_guid TEXT,
+  undoes        TEXT, entry_at TEXT,
+  PRIMARY KEY (entry_guid, location_id)
+);
+CREATE INDEX IF NOT EXISTS ix_toast_cash_loc_date ON toast_cash_entries(location_id, business_date);
+
+CREATE TABLE IF NOT EXISTS toast_deposits (
+  deposit_guid  TEXT NOT NULL, location_id TEXT NOT NULL, business_date TEXT NOT NULL,
+  amount        REAL DEFAULT 0, employee_guid TEXT, undoes TEXT, deposit_at TEXT,
+  PRIMARY KEY (deposit_guid, location_id)
+);
+CREATE INDEX IF NOT EXISTS ix_toast_dep_loc_date ON toast_deposits(location_id, business_date);
+
 CREATE TABLE IF NOT EXISTS toast_jobs (
   job_guid TEXT NOT NULL, location_id TEXT NOT NULL, title TEXT, wage_frequency TEXT, default_wage REAL,
   PRIMARY KEY (job_guid, location_id)

@@ -506,6 +506,10 @@ function pgLabor(m){
         +panel('Sales and labor by hour','Average day, last 8 weeks · bars: net sales · line: labor % of sales',chartBox('c_splh',true))
         +panel('Labor % by hour and weekday','Where the schedule and the trade disagree · darker = more of the hour\'s sales spent on labor · shading caps at 60% so one pre-open hour does not flatten the rest','<div id="heatLab"></div>')
       +'</div>':'')
+    +(hasCash()?'<div class="grid cols2" style="margin-top:14px">'
+        +panel('Cash drawer — last 28 days','Over and short, with corrections already netted out','<div id="cashDay"></div>')
+        +panel('Payouts, no-sales and deposits','By reason, and by whose drawer it was','<div id="cashWho"></div>')
+      +'</div>':'')
     +(hasServers()?'<div class="grid" style="margin-top:14px">'
         +panel('By server — last 28 days','Sales per person · servers with fewer than 20 orders are left out, because an average check on a handful of covers is noise','<div id="servers"></div>')
       +'</div>':'')
@@ -519,7 +523,7 @@ function pgLabor(m){
   lc.options.scales.y.ticks.callback=function(v){return fp(v,0);}; mk('c_lab',lc);
   if(!T){ $('pnlLabor').innerHTML=pnlSectionTable('labor'); return; }
   mk('c_hrs',{type:'bar',data:{labels:cur.map(function(r){return fdate(r.d);}),datasets:[{label:'Labor hours',data:cur.map(function(r){return r.lh;}),backgroundColor:css('s3'),borderRadius:3,fmt:'int'}]},options:baseOpts({scales:{x:{grid:{display:false},ticks:{maxRotation:0,autoSkip:true,maxTicksLimit:10}},y:{beginAtZero:true,grid:{color:css('grid')},border:{display:false},ticks:{callback:function(v){return fn(v)+' h';}}}}})});
-  hourlyLaborViews(); scheduleViews(); serverPanel();
+  hourlyLaborViews(); scheduleViews(); serverPanel(); cashPanels();
   var jb={}; locIds().forEach(function(l){(D.labor_jobs[l]||[]).forEach(function(r){var o=jb[r[0]]||(jb[r[0]]={h:0,c:0,s:0});o.h+=r[1];o.c+=r[2];o.s+=r[3];});});
   var jl=Object.keys(jb).sort(function(x,y){return jb[y].c-jb[x].c;}), jt=jl.reduce(function(p,c){return p+jb[c].c;},0);
   $('jobs').innerHTML='<table class="t"><tr><th>Job</th><th class="r">Hours</th><th class="r">Cost</th><th class="r">Avg rate</th><th class="r">Shifts</th><th class="r">Share</th></tr>'+jl.map(function(x){return '<tr><td class="n">'+esc(x)+'</td><td class="r">'+fn(jb[x].h)+'</td><td class="r">'+fm(jb[x].c)+'</td><td class="r">'+fm(jb[x].h?jb[x].c/jb[x].h:null,2)+'</td><td class="r">'+fn(jb[x].s)+'</td><td class="r">'+fp(jb[x].c/jt)+'</td></tr>';}).join('')+'</table>';
@@ -796,6 +800,53 @@ function hourlyLaborViews(){
   }
 }
 function hLabel(x){ return x>12?(x-12)+'p':(x===12?'12p':x+'a'); }
+
+/* ---------- cash management ---------- */
+function hasCash(){ return locIds().some(function(l){ var c=(D.cash||{})[l]; return c && c.totals; }); }
+
+function cashPanels(){
+  if(!hasCash()) return;
+  var T={over:0,short:0,payouts:0,entries:0,reversed:0}, days={}, emps={}, pay={}, nos={}, deps={};
+  locIds().forEach(function(l){
+    var c=(D.cash||{})[l]; if(!c||!c.totals) return;
+    T.over+=c.totals.over||0; T.short+=c.totals.short||0; T.payouts+=c.totals.payouts||0;
+    T.entries+=c.totals.entries||0; T.reversed+=c.totals.reversed||0;
+    (c.days||[]).forEach(function(r){ var o=days[r[0]]||(days[r[0]]=[0,0]); o[0]+=r[1]; o[1]+=r[2]; });
+    (c.by_employee||[]).forEach(function(r){ var o=emps[r[0]]||(emps[r[0]]=[0,0,0,0,0]); o[0]+=r[1]; o[1]+=r[2]; o[2]+=r[3]; o[3]+=r[4]; o[4]+=r[5]; });
+    (c.payouts||[]).forEach(function(r){ var o=pay[r[0]]||(pay[r[0]]=[0,0]); o[0]+=r[1]; o[1]+=r[2]; });
+    (c.nosales||[]).forEach(function(r){ nos[r[0]]=(nos[r[0]]||0)+r[1]; });
+    (c.deposits||[]).forEach(function(r){ var o=deps[r[0]]||(deps[r[0]]=[0,0]); o[0]+=r[1]; o[1]+=r[2]; });
+  });
+  if($('cashDay')){
+    var dl=Object.keys(days).sort(), net=T.over-T.short;
+    var worst=dl.map(function(d){return [d,days[d][0],days[d][1]];}).filter(function(x){return x[1]||x[2];})
+      .sort(function(a,b){return (b[2]-b[1])-(a[2]-a[1]);}).slice(0,10);
+    $('cashDay').innerHTML='<div class="hint" style="margin-bottom:8px">'
+      +'Over '+fm(T.over)+' · short '+fm(T.short)+' · <b style="color:'+(net<0?'var(--bad,#b4413c)':'var(--good,#2e7d5b)')+'">net '+(net>0?'+':'')+fm(net)+'</b>'
+      +(T.payouts?' · '+fm(T.payouts)+' paid out':'')+'</div>'
+      +(worst.length?'<table class="t"><tr><th>Worst days</th><th class="r">Over</th><th class="r">Short</th><th class="r">Net</th></tr>'
+        +worst.map(function(x){var n=x[1]-x[2];return '<tr><td class="n">'+fdate(x[0])+'</td><td class="r">'+(x[1]?fm(x[1]):'—')+'</td>'
+          +'<td class="r">'+(x[2]?fm(x[2]):'—')+'</td><td class="r" style="color:'+(n<0?'var(--bad,#b4413c)':'inherit')+'">'+(n>0?'+':'')+fm(n)+'</td></tr>';}).join('')
+        +'</table>':'<div class="empty">No over/short recorded — drawers either balanced or close-outs are not being entered.</div>')
+      +(T.reversed?'<div class="src">'+fn(T.reversed)+' entries were corrections and have been netted out of every figure here, along with the entries they reversed.</div>':'');
+  }
+  if($('cashWho')){
+    var el=Object.keys(emps).sort(function(a,b){return emps[b][1]-emps[a][1];});
+    var pl=Object.keys(pay).sort(function(a,b){return pay[b][1]-pay[a][1];});
+    var nl=Object.keys(nos).sort(function(a,b){return nos[b]-nos[a];});
+    var dl2=Object.keys(deps).sort(), dtot=dl2.reduce(function(p,c){return p+deps[c][0];},0);
+    $('cashWho').innerHTML=
+      (el.length?'<table class="t"><tr><th>Drawer</th><th class="r">Over</th><th class="r">Short</th><th class="r">Payouts</th><th class="r">No-sales</th></tr>'
+        +el.slice(0,12).map(function(k){var v=emps[k];return '<tr><td class="n">'+esc(k)+'</td><td class="r">'+(v[0]?fm(v[0]):'—')+'</td>'
+          +'<td class="r">'+(v[1]?fm(v[1]):'—')+'</td><td class="r">'+(v[2]?fn(v[2])+' · '+fm(v[3]):'—')+'</td><td class="r">'+(v[4]?fn(v[4]):'—')+'</td></tr>';}).join('')
+        +'</table>':'')
+      +(pl.length?'<div class="hint" style="margin-top:12px">Payouts by reason</div><table class="t"><tr><th>Reason</th><th class="r">Count</th><th class="r">Value</th></tr>'
+        +pl.map(function(k){return '<tr><td class="n">'+esc(k)+'</td><td class="r">'+fn(pay[k][0])+'</td><td class="r">'+fm(pay[k][1])+'</td></tr>';}).join('')+'</table>':'')
+      +(nl.length?'<div class="hint" style="margin-top:12px">No-sales by reason</div><table class="t"><tr><th>Reason</th><th class="r">Count</th></tr>'
+        +nl.map(function(k){return '<tr><td class="n">'+esc(k)+'</td><td class="r">'+fn(nos[k])+'</td></tr>';}).join('')+'</table>':'')
+      +(dl2.length?'<div class="src" style="margin-top:12px">'+fn(dl2.length)+' days with deposits totalling '+fm(dtot)+'.</div>':'');
+  }
+}
 
 /* ---------- per-server performance ----------
    Names are the short form the employee directory builds (first name, last initial). Sorted by net sales, but

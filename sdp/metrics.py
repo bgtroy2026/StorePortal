@@ -43,7 +43,7 @@ def build_payload(con, through: date | None = None) -> dict:
                               # site suppresses its change-vs-prior figures instead of dividing by a partial baseline.
                               "first_date": (con.execute("SELECT MIN(business_date) FROM daily_summary WHERE location_id=? AND net_sales>0", (l["slug"],)).fetchone() or [None])[0]}
                              for l in locs],
-               "daily": {}, "hourly": {}, "top_items": {}, "labor_jobs": {}, "vendors": {}, "inventory": {}, "activations": [], "targets": {}, "payments": {}, "dining": {}, "revctr": {}, "labor_hourly": {}, "schedule": {}, "tender": {}, "voids": {}, "invoices": {}, "servers": {}, "discounts": {}, "pnl": {}, "sources": {}, "events": {}, "leads": {}, "events_monthly": {}, "scorecard": {}}
+               "daily": {}, "hourly": {}, "top_items": {}, "labor_jobs": {}, "vendors": {}, "inventory": {}, "activations": [], "targets": {}, "payments": {}, "dining": {}, "revctr": {}, "labor_hourly": {}, "schedule": {}, "tender": {}, "voids": {}, "invoices": {}, "servers": {}, "cash": {}, "discounts": {}, "pnl": {}, "sources": {}, "events": {}, "leads": {}, "events_monthly": {}, "scorecard": {}}
 
     for l in locs:
         lid = l["slug"]
@@ -60,6 +60,7 @@ def build_payload(con, through: date | None = None) -> dict:
         payload["labor_hourly"][lid] = _labor_by_hour(con, lid, w56, through)
         payload["schedule"][lid] = _schedule_vs_actual(con, lid, w28, through)
         payload["servers"][lid] = _server_performance(con, lid, w28, through)
+        payload["cash"][lid] = _cash_management(con, lid, w28, through)
 
         payload["top_items"][lid] = [[r["item_name"], r["bucket"], _r(r["qty"]), _r(r["net"])] for r in _rows(con, """
             SELECT item_name, bucket, SUM(quantity) qty, SUM(price) net FROM toast_order_items WHERE location_id=? AND voided=0 AND business_date>=? AND business_date<=?
@@ -286,6 +287,64 @@ def _labor_by_hour(con, lid: str, since: date, through: date) -> list:
             cur = nxt
 
     return [[dow, hr, _r(v[0]), _r(v[1]), len(days[(dow, hr)])] for (dow, hr), v in sorted(buckets.items())]
+
+
+def _cash_management(con, lid: str, since: date, through: date) -> dict:
+    """Drawer over/short, payouts and no-sales.
+
+    Reversals are removed on BOTH sides. Toast records a correction as a new entry whose `undoes` points at the
+    original, so counting naively means a mistake that somebody already fixed still reads as a shortage — and
+    the person who fixed it looks worse, not better. Every entry named by an `undoes`, and every entry doing
+    the undoing, is dropped before anything is totalled.
+    """
+    rows = _rows(con, """
+        SELECT entry_guid, business_date, type, amount, reason, payout_reason, no_sale_reason, employee_guid, undoes
+        FROM toast_cash_entries WHERE location_id=? AND business_date>=? AND business_date<=?""",
+        (lid, since.isoformat(), through.isoformat()))
+    if not rows:
+        return {}
+    undone = {r["undoes"] for r in rows if r["undoes"]}
+    live = [r for r in rows if not r["undoes"] and r["entry_guid"] not in undone]
+
+    names = {r["employee_guid"]: (r["display_name"] or "").strip()
+             for r in _rows(con, "SELECT employee_guid, display_name FROM toast_employees WHERE location_id=?", (lid,))}
+    cfg = {r["guid"]: r["name"] for r in _rows(con, "SELECT guid, name FROM toast_config WHERE location_id=?", (lid,))}
+
+    by_day, by_emp, payouts, nosales = {}, {}, {}, {}
+    over = short = payout_total = 0.0
+    for r in live:
+        t = (r["type"] or "").upper()
+        amt = float(r["amount"] or 0)
+        d = r["business_date"]
+        emp = names.get(r["employee_guid"]) or "(unattributed)"
+        e = by_emp.setdefault(emp, {"over": 0.0, "short": 0.0, "payouts": 0, "payout_value": 0.0, "nosales": 0})
+        day = by_day.setdefault(d, {"over": 0.0, "short": 0.0})
+        if t == "CLOSE_OUT_OVERAGE":
+            over += abs(amt); day["over"] += abs(amt); e["over"] += abs(amt)
+        elif t == "CLOSE_OUT_SHORTAGE":
+            short += abs(amt); day["short"] += abs(amt); e["short"] += abs(amt)
+        elif t in ("PAY_OUT", "DRIVER_REIMBURSEMENT"):
+            payout_total += abs(amt); e["payouts"] += 1; e["payout_value"] += abs(amt)
+            key = cfg.get(r["payout_reason"]) or r["reason"] or "(no reason given)"
+            p = payouts.setdefault(key, [0, 0.0]); p[0] += 1; p[1] += abs(amt)
+        elif t == "NO_SALE":
+            e["nosales"] += 1
+            key = cfg.get(r["no_sale_reason"]) or r["reason"] or "(no reason given)"
+            nosales[key] = nosales.get(key, 0) + 1
+
+    deps = _rows(con, """SELECT business_date d, SUM(amount) a, COUNT(*) n FROM toast_deposits
+                         WHERE location_id=? AND business_date>=? AND business_date<=? AND COALESCE(undoes,'')=''
+                         GROUP BY 1 ORDER BY 1""", (lid, since.isoformat(), through.isoformat()))
+    return {
+        "days": [[d, _r(v["over"]), _r(v["short"])] for d, v in sorted(by_day.items())],
+        "by_employee": sorted(([k, _r(v["over"]), _r(v["short"]), v["payouts"], _r(v["payout_value"]), v["nosales"]]
+                               for k, v in by_emp.items()), key=lambda x: -(x[2] or 0))[:25],
+        "payouts": sorted(([k, v[0], _r(v[1])] for k, v in payouts.items()), key=lambda x: -x[2])[:15],
+        "nosales": sorted(([k, n] for k, n in nosales.items()), key=lambda x: -x[1])[:10],
+        "deposits": [[r["d"], _r(r["a"]), r["n"]] for r in deps],
+        "totals": {"over": _r(over), "short": _r(short), "net": _r(over - short), "payouts": _r(payout_total),
+                   "entries": len(live), "reversed": len(rows) - len(live)},
+    }
 
 
 def _server_performance(con, lid: str, since: date, through: date, limit: int = 40) -> list:
@@ -580,7 +639,7 @@ def _price_tracking(con, lid: str, through: date, days: int = 180) -> dict:
 def slice_for_location(payload: dict, lid: str) -> dict:
     """A director's bundle: only their location (other locations are not merely hidden — they are absent)."""
     out = {"meta": dict(payload["meta"]), "locations": [l for l in payload["locations"] if l["id"] == lid], "activations": [a for a in payload["activations"] if a["loc"] == lid]}
-    for k in ("daily", "hourly", "top_items", "labor_jobs", "vendors", "inventory", "targets", "payments", "dining", "revctr", "labor_hourly", "schedule", "tender", "voids", "invoices", "servers", "discounts", "pnl", "sources", "events", "leads", "events_monthly"):
+    for k in ("daily", "hourly", "top_items", "labor_jobs", "vendors", "inventory", "targets", "payments", "dining", "revctr", "labor_hourly", "schedule", "tender", "voids", "invoices", "servers", "cash", "discounts", "pnl", "sources", "events", "leads", "events_monthly"):
         out[k] = {lid: payload[k].get(lid)} if lid in payload[k] else {}
     return out
 
