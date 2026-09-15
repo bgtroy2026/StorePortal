@@ -132,7 +132,19 @@ def gen_toast(loc: dict, loc_idx: int, start: date, end: date, events: dict[str,
                 sels.append({"guid": _g(f"sel:{og}:{j}"), "entityType": "MenuItemSelection", "item": {"guid": _g(f"item:{slug}:{name}")}, "itemGroup": {"guid": _g(f"grp:{slug}:{grp}")},
                              "salesCategory": {"guid": _g(f"sc:{slug}:{sc}"), "name": sc}, "displayName": name, "quantity": q, "preDiscountPrice": pre, "price": line, "tax": t,
                              "voided": False, "createdDate": _ts(d, hour + 0.1 * j), "appliedDiscounts": ([{"discountAmount": disc, "name": "Happy Hour"}] if disc else [])})
-            amount, tax = round(amount, 2), round(tax, 2)
+            # Toast includes service charges INSIDE the check amount, so net sales contains them while the
+            # category split cannot. Mock used to add the charge alongside the amount instead of into it,
+            # which made the mix add up perfectly here and not in production — exactly the kind of
+            # well-behaved fiction that lets a real defect through. Model it the way Toast does.
+            svc = round(amount * 0.18, 2) if guests >= 6 else 0.0
+            # One check in fifty has an item rung, discounted and then voided. Toast excludes it from sales and
+            # discounts; nothing in mock used to produce this shape, so the bug it causes could not be seen.
+            if rnd.random() < 0.02:
+                sels.append({"guid": _g(f"sel:{og}:void"), "entityType": "MenuItemSelection", "item": {"guid": _g(f"item:{slug}:Voided")},
+                             "salesCategory": {"guid": _g(f"sc:{slug}:Food"), "name": "Food"}, "displayName": "Rung then voided",
+                             "quantity": 1, "preDiscountPrice": 12.0, "price": 0.0, "tax": 0.0, "voided": True,
+                             "createdDate": _ts(d, hour + 0.05), "appliedDiscounts": [{"discountAmount": 12.0, "name": "Void comp"}]})
+            amount, tax = round(amount + svc, 2), round(tax, 2)
             total = round(amount + tax, 2)
             tip = round(total * rnd.choice([0, 0.15, 0.18, 0.2, 0.2, 0.22, 0.25]), 2)
             ptype = rnd.choices(["CREDIT", "CASH", "GIFTCARD", "OTHER"], weights=[82, 12, 4, 2])[0]
@@ -143,7 +155,7 @@ def gen_toast(loc: dict, loc_idx: int, start: date, end: date, events: dict[str,
                            "diningOption": {"guid": _g("do:" + rnd.choice(DINING)), "behavior": rnd.choice(DINING)}, "revenueCenter": {"guid": _g(f"rc:{slug}:{'Bar' if hour > 20 else rnd.choice(['Dining', 'Dining', 'Patio'])}")},
                            "server": {"guid": rnd.choice(servers)}, "numberOfGuests": guests, "voided": voided, "voidDate": (_ts(d, hour + 0.5) if voided else None),
                            "checks": [{"guid": cg, "entityType": "Check", "amount": amount, "taxAmount": tax, "totalAmount": total, "voided": voided, "paymentStatus": "CLOSED",
-                                       "selections": sels, "payments": [pay], "appliedDiscounts": [], "appliedServiceCharges": ([{"chargeAmount": round(amount * 0.18, 2), "gratuity": True, "name": "Auto grat"}] if guests >= 6 else [])}]})
+                                       "selections": sels, "payments": [pay], "appliedDiscounts": [], "appliedServiceCharges": ([{"chargeAmount": svc, "gratuity": True, "name": "Auto grat"}] if svc else [])}]})
         W("toast", slug, "orders", iso(d), {"businessDate": iso(d), "orders": orders})
         n_orders_total += n
         d += timedelta(days=1)

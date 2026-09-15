@@ -292,6 +292,9 @@ CREATE TABLE IF NOT EXISTS daily_summary (             -- grain: location × bus
   orders INTEGER DEFAULT 0, checks INTEGER DEFAULT 0, guests INTEGER DEFAULT 0,
   sales_food REAL DEFAULT 0, sales_beer REAL DEFAULT 0, sales_liquor REAL DEFAULT 0, sales_wine REAL DEFAULT 0,
   sales_nabev REAL DEFAULT 0, sales_retail REAL DEFAULT 0, sales_other REAL DEFAULT 0,
+  -- Service charges are inside net sales but belong to no menu category, so without their own column the
+  -- category split silently fails to add up to net (Solon 2026-09-05: $433.81, 2.7% of the day).
+  sales_svc REAL DEFAULT 0,
   labor_hours REAL DEFAULT 0, labor_cost REAL DEFAULT 0,
   purchases REAL DEFAULT 0, purch_food REAL DEFAULT 0, purch_beer REAL DEFAULT 0, purch_liquor REAL DEFAULT 0,
   purch_wine REAL DEFAULT 0, purch_nabev REAL DEFAULT 0, purch_retail REAL DEFAULT 0, purch_other REAL DEFAULT 0,

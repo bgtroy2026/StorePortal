@@ -75,6 +75,10 @@ def _upsert(con, table: str, rows: list[dict]):
     return len(rows)
 
 
+# Job titles that record hours but are not labour. Kept as a name list because Toast guids differ per location.
+NON_LABOR_JOBS = {"Bar Drawers"}
+
+
 def _bd(v) -> str:
     """Toast businessDate int yyyymmdd -> ISO."""
     s = str(v)
@@ -204,9 +208,15 @@ def load_toast(con, bk: Buckets) -> dict:
                     discs.append(_disc_row(d, o, c, slug, bd, "check"))
                 svc += sum(float(s.get("chargeAmount") or 0) for s in (c.get("appliedServiceCharges") or []))
                 for s in c.get("selections") or []:
-                    for d in (s.get("appliedDiscounts") or []):
-                        disc += float(d.get("discountAmount") or 0)
-                        discs.append(_disc_row(d, o, c, slug, bd, "item"))
+                    # An item rung, discounted, then voided keeps its appliedDiscounts. Toast excludes those
+                    # from Sales discounts and we must too: counting them inflates discounts AND gross by the
+                    # same amount (gross is net + discounts), which nets out — so the error hides behind a
+                    # correct net-sales figure. Verified at Solon on 2026-09-05: $41.66 on both lines.
+                    s_void = bool(s.get("voided") or s.get("deleted"))
+                    if not s_void:
+                        for d in (s.get("appliedDiscounts") or []):
+                            disc += float(d.get("discountAmount") or 0)
+                            discs.append(_disc_row(d, o, c, slug, bd, "item"))
                     meta = item_cat.get((slug, (s.get("item") or {}).get("guid")))
                     sc = ((s.get("salesCategory") or {}).get("name")
                           or salescat.get((slug, (s.get("salesCategory") or {}).get("guid")))
@@ -226,7 +236,10 @@ def load_toast(con, bk: Buckets) -> dict:
             orders.append({"order_guid": o["guid"], "location_id": slug, "business_date": bd, "opened_at": o.get("openedDate"), "closed_at": o.get("closedDate"), "modified_at": o.get("modifiedDate"),
                            "dining_option": dining.get((slug, (o.get("diningOption") or {}).get("guid"))) or (o.get("diningOption") or {}).get("behavior") or (o.get("diningOption") or {}).get("guid"), "revenue_center": revctr.get((slug, (o.get("revenueCenter") or {}).get("guid"))) or (o.get("revenueCenter") or {}).get("guid"),
                            "server_guid": (o.get("server") or {}).get("guid"), "guests": int(o.get("numberOfGuests") or 0), "voided": voided, "checks_count": len(checks),
-                           "net_sales": 0 if voided else round(net, 2), "tax": 0 if voided else round(tax, 2), "tips": round(tips, 2), "discounts": round(disc, 2), "service_charges": round(svc, 2),
+                           "net_sales": 0 if voided else round(net, 2), "tax": 0 if voided else round(tax, 2), "tips": round(tips, 2),
+                           # Zeroed on a void for the same reason as net and gross — otherwise a voided order's
+                           # discounts survive into the daily totals with no sales to sit against.
+                           "discounts": 0 if voided else round(disc, 2), "service_charges": 0 if voided else round(svc, 2),
                            "gross_sales": 0 if voided else round(net + disc, 2), "voided_value": voided_value, "refunds": round(refunds, 2), "source_hash": None})
         # replace the whole business day for this location so deleted orders disappear
         if orders:
@@ -301,6 +314,12 @@ def load_toast(con, bk: Buckets) -> dict:
         for t in j.get("timeEntries", []):
             if t.get("deleted"):
                 continue
+            # Some job titles are not labour at all — "Bar Drawers" is a till assignment, carrying hours at a
+            # zero wage. Toast's own labour reporting excludes it; we did not, which left labour COST correct
+            # (no wage attached) while hours ran ~5% high and sales-per-labour-hour ~5% low. Verified at Solon
+            # on 2026-09-05: 265.0 h against Toast's 252.7.
+            if (jobs.get((slug, (t.get("jobReference") or {}).get("guid"))) or "") in NON_LABOR_JOBS:
+                continue
             reg, ot, wage = float(t.get("regularHours") or 0), float(t.get("overtimeHours") or 0), float(t.get("hourlyWage") or 0)
             bd = _bd(t.get("businessDate")) if t.get("businessDate") else (t.get("inDate") or "")[:10]
             jg = (t.get("jobReference") or {}).get("guid")
@@ -308,6 +327,16 @@ def load_toast(con, bk: Buckets) -> dict:
                          "job_name": jobs.get((slug, jg)), "in_at": t.get("inDate"), "out_at": t.get("outDate"), "regular_hours": reg, "overtime_hours": ot, "hourly_wage": wage,
                          "wages": round(reg * wage + ot * wage * 1.5, 2), "declared_cash_tips": float(t.get("declaredCashTips") or 0), "non_cash_tips": float(t.get("nonCashTips") or 0)})
         stats["time_entries"] += _upsert(con, "toast_time_entries", rows)
+
+    # The filter above only keeps NEW non-labour entries out. Entries loaded before this rule existed are
+    # already in the warehouse and would keep inflating labour hours for every historical day, which no
+    # re-pull would reach — the pull only refreshes a recent window. Clear them out here, every run, so the
+    # rule applies to the whole history rather than only to days pulled after it shipped.
+    if NON_LABOR_JOBS:
+        q = ",".join("?" * len(NON_LABOR_JOBS))
+        n = con.execute(f"DELETE FROM toast_time_entries WHERE job_name IN ({q})", tuple(NON_LABOR_JOBS)).rowcount
+        if n:
+            log.info("time entries: removed %d rows for non-labour jobs (%s)", n, ", ".join(sorted(NON_LABOR_JOBS)))
     return stats
 
 
@@ -511,7 +540,7 @@ def rebuild_daily_summary(con):
     con.execute("DELETE FROM daily_summary")
     con.execute("""
     INSERT INTO daily_summary (location_id, business_date, net_sales, gross_sales, discounts, tax, tips, refunds, orders, checks, guests,
-      sales_food, sales_beer, sales_liquor, sales_wine, sales_nabev, sales_retail, sales_other, labor_hours, labor_cost,
+      sales_food, sales_beer, sales_liquor, sales_wine, sales_nabev, sales_retail, sales_other, sales_svc, labor_hours, labor_cost,
       purchases, purch_food, purch_beer, purch_liquor, purch_wine, purch_nabev, purch_retail, purch_other)
     WITH days AS (
       SELECT location_id, business_date FROM toast_orders
@@ -520,7 +549,7 @@ def rebuild_daily_summary(con):
       UNION SELECT location_id, business_date FROM me_pnl_summary
       UNION SELECT location_id, invoice_date FROM me_invoices WHERE invoice_date IS NOT NULL
     ),
-    o AS (SELECT location_id, business_date, SUM(net_sales) net, SUM(gross_sales) gross, SUM(discounts) disc, SUM(tax) tax, SUM(tips) tips, SUM(refunds) ref,
+    o AS (SELECT location_id, business_date, SUM(net_sales) net, SUM(gross_sales) gross, SUM(discounts) disc, SUM(tax) tax, SUM(tips) tips, SUM(refunds) ref, SUM(service_charges) svc,
                  SUM(CASE WHEN voided=0 THEN 1 ELSE 0 END) orders, SUM(CASE WHEN voided=0 THEN checks_count ELSE 0 END) checks, SUM(CASE WHEN voided=0 THEN guests ELSE 0 END) guests
           FROM toast_orders GROUP BY 1,2),
     i AS (SELECT location_id, business_date,
@@ -545,6 +574,7 @@ def rebuild_daily_summary(con):
     SELECT d.location_id, d.business_date,
       COALESCE(o.net, ms.net, 0), COALESCE(o.gross, ms.net, 0), COALESCE(o.disc,0), COALESCE(o.tax,0), COALESCE(o.tips,0), COALESCE(o.ref,0), COALESCE(o.orders,0), COALESCE(o.checks,0), COALESCE(o.guests,0),
       COALESCE(i.f, ms.f, 0), COALESCE(i.b, ms.b, 0), COALESCE(i.l, ms.l, 0), COALESCE(i.w, ms.w, 0), COALESCE(i.n, ms.n, 0), COALESCE(i.r, ms.r, 0), COALESCE(i.x, ms.x, 0),
+      COALESCE(o.svc,0),
       COALESCE(t.hrs,0), COALESCE(t.cost, ml.cost, 0),
       COALESCE(ph.tot,0), COALESCE(p.f,0), COALESCE(p.b,0), COALESCE(p.l,0), COALESCE(p.w,0), COALESCE(p.n,0), COALESCE(p.r,0), COALESCE(p.x,0)
     FROM days d
