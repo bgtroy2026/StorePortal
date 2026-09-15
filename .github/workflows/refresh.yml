@@ -29,6 +29,10 @@ on:
         description: "Only run the connectivity diagnostics (MarginEdge + Toast)"
         type: boolean
         default: false
+      build_only:
+        description: "Rebuild and republish the site from the stored warehouse — no API pulls (use for code/design changes)"
+        type: boolean
+        default: false
       source:
         description: "Limit the pull to one source (lets Toast be re-pulled without restarting MarginEdge)"
         type: choice
@@ -92,8 +96,12 @@ jobs:
         if: ${{ !inputs.mock && !inputs.diag }}
         run: python -m sdp restore
 
+      # build_only exists because a code or design change needs none of this. The warehouse is restored from
+      # the release asset above, so transform and build have everything they need; pulling again just re-fetches
+      # data that has not changed. Measured on run #27: pull 769s, transform 16s, build 3s — so skipping the
+      # pull turns a ~27-minute deploy into about a minute.
       - name: Pull (recent window + all other sources)
-        if: ${{ !inputs.mock && !inputs.diag }}
+        if: ${{ !inputs.mock && !inputs.diag && !inputs.build_only }}
         run: python -m sdp pull --source ${{ inputs.source || 'all' }} --phase recent ${{ inputs.backfill && '--backfill' || '' }}
 
       - name: Pull (mock data)
@@ -106,8 +114,9 @@ jobs:
       - name: Build site + encrypted bundles
         if: ${{ !inputs.diag }}
         run: python -m sdp build
+      # Nothing was pulled in build_only mode, so there is no new state worth writing back.
       - name: Persist warehouse state
-        if: ${{ !inputs.mock && !inputs.diag }}
+        if: ${{ !inputs.mock && !inputs.diag && !inputs.build_only }}
         run: python -m sdp persist
 
       - name: Sanity check (no plaintext data in the artifact)
@@ -126,7 +135,7 @@ jobs:
 
   history:
     needs: recent
-    if: ${{ !inputs.mock && !inputs.diag && (inputs.source == '' || inputs.source == 'all' || inputs.source == 'marginedge') }}
+    if: ${{ !inputs.mock && !inputs.diag && !inputs.build_only && (inputs.source == '' || inputs.source == 'all' || inputs.source == 'marginedge') }}
     runs-on: ubuntu-latest
     timeout-minutes: 350
     environment:
