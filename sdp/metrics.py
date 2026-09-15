@@ -43,7 +43,7 @@ def build_payload(con, through: date | None = None) -> dict:
                               # site suppresses its change-vs-prior figures instead of dividing by a partial baseline.
                               "first_date": (con.execute("SELECT MIN(business_date) FROM daily_summary WHERE location_id=? AND net_sales>0", (l["slug"],)).fetchone() or [None])[0]}
                              for l in locs],
-               "daily": {}, "hourly": {}, "top_items": {}, "labor_jobs": {}, "vendors": {}, "inventory": {}, "activations": [], "targets": {}, "payments": {}, "dining": {}, "revctr": {}, "labor_hourly": {}, "schedule": {}, "tender": {}, "voids": {}, "invoices": {}, "servers": {}, "cash": {}, "discounts": {}, "pnl": {}, "sources": {}, "events": {}, "leads": {}, "events_monthly": {}, "scorecard": {}}
+               "daily": {}, "hourly": {}, "top_items": {}, "labor_jobs": {}, "vendors": {}, "inventory": {}, "activations": [], "targets": {}, "payments": {}, "dining": {}, "revctr": {}, "labor_hourly": {}, "schedule": {}, "tender": {}, "voids": {}, "invoices": {}, "servers": {}, "cash": {}, "pacing": {}, "discounts": {}, "pnl": {}, "sources": {}, "events": {}, "leads": {}, "events_monthly": {}, "scorecard": {}}
 
     for l in locs:
         lid = l["slug"]
@@ -61,6 +61,7 @@ def build_payload(con, through: date | None = None) -> dict:
         payload["schedule"][lid] = _schedule_vs_actual(con, lid, w28, through)
         payload["servers"][lid] = _server_performance(con, lid, w28, through)
         payload["cash"][lid] = _cash_management(con, lid, w28, through)
+        payload["pacing"][lid] = _pacing(con, lid, through)
 
         payload["top_items"][lid] = [[r["item_name"], r["bucket"], _r(r["qty"]), _r(r["net"])] for r in _rows(con, """
             SELECT item_name, bucket, SUM(quantity) qty, SUM(price) net FROM toast_order_items WHERE location_id=? AND voided=0 AND business_date>=? AND business_date<=?
@@ -287,6 +288,65 @@ def _labor_by_hour(con, lid: str, since: date, through: date) -> list:
             cur = nxt
 
     return [[dow, hr, _r(v[0]), _r(v[1]), len(days[(dow, hr)])] for (dow, hr), v in sorted(buckets.items())]
+
+
+def _pacing(con, lid: str, through: date) -> dict:
+    """Month-to-date against target, and a forecast to month end.
+
+    The forecast is seasonal-naive rather than a straight run-rate: each remaining day is estimated from that
+    LOCATION'S OWN average for that weekday over the last eight weeks. A run-rate is badly wrong in a taproom,
+    where a Saturday can be triple a Tuesday — halfway through a month with a weekend still to come, a linear
+    projection understates; just after a big weekend it overstates, and a director chasing either number makes
+    the wrong call about staffing and ordering.
+
+    The pro-rata target is weighted the same way, so "ahead" and "behind" mean the same thing on both sides.
+    """
+    month = through.strftime("%Y-%m")
+    first = through.replace(day=1)
+    nxt = (first + timedelta(days=32)).replace(day=1)
+    dim = (nxt - first).days
+
+    tg = con.execute("SELECT sales_target, cogs_pct_target, labor_pct_target, guests_target FROM targets WHERE location_id=? AND month=?",
+                     (lid, month)).fetchone()
+    mtd = con.execute("""SELECT COALESCE(SUM(net_sales),0), COALESCE(SUM(guests),0), COALESCE(SUM(labor_cost),0),
+                                COALESCE(SUM(purchases),0), COUNT(*)
+                         FROM daily_summary WHERE location_id=? AND business_date>=? AND business_date<=?""",
+                      (lid, first.isoformat(), through.isoformat())).fetchone()
+    if not mtd or not mtd[4]:
+        return {}
+
+    # Weekday profile from the last eight complete weeks, used for both the forecast and the pro-rata split.
+    prof = {int(r["dow"]): float(r["avg"] or 0) for r in _rows(con, """
+        SELECT CAST(strftime('%w', business_date) AS INT) dow, AVG(net_sales) avg
+        FROM daily_summary WHERE location_id=? AND business_date>=? AND business_date<? AND net_sales>0
+        GROUP BY 1""", (lid, (through - timedelta(days=56)).isoformat(), through.isoformat()))}
+    if not prof:
+        return {}
+    def w(d):
+        return prof.get(int(d.strftime("%w")), 0.0)
+
+    elapsed = [first + timedelta(days=i) for i in range((through - first).days + 1)]
+    remaining = [first + timedelta(days=i) for i in range((through - first).days + 1, dim)]
+    w_elapsed = sum(w(d) for d in elapsed)
+    w_total = w_elapsed + sum(w(d) for d in remaining)
+
+    net, guests, labor, purch, days = float(mtd[0]), int(mtd[1] or 0), float(mtd[2]), float(mtd[3]), mtd[4]
+    forecast = net + sum(w(d) for d in remaining)
+    target = float(tg[0]) if tg and tg[0] else None
+    share = (w_elapsed / w_total) if w_total else None
+
+    return {
+        "month": month, "days_elapsed": days, "days_in_month": dim,
+        "mtd": {"net": _r(net), "guests": guests, "labor_pct": _r(labor / net, 4) if net else None,
+                "purch_pct": _r(purch / net, 4) if net else None},
+        "forecast": _r(forecast),
+        "target": _r(target) if target else None,
+        "prorata": _r(target * share) if (target and share) else None,
+        "pace_pct": _r(net / (target * share), 4) if (target and share and target * share) else None,
+        "forecast_pct": _r(forecast / target, 4) if target else None,
+        "elapsed_share": _r(share, 4) if share else None,
+        "targets": {"cogs": tg[1] if tg else None, "labor": tg[2] if tg else None, "guests": tg[3] if tg else None},
+    }
 
 
 def _cash_management(con, lid: str, since: date, through: date) -> dict:
@@ -639,7 +699,7 @@ def _price_tracking(con, lid: str, through: date, days: int = 180) -> dict:
 def slice_for_location(payload: dict, lid: str) -> dict:
     """A director's bundle: only their location (other locations are not merely hidden — they are absent)."""
     out = {"meta": dict(payload["meta"]), "locations": [l for l in payload["locations"] if l["id"] == lid], "activations": [a for a in payload["activations"] if a["loc"] == lid]}
-    for k in ("daily", "hourly", "top_items", "labor_jobs", "vendors", "inventory", "targets", "payments", "dining", "revctr", "labor_hourly", "schedule", "tender", "voids", "invoices", "servers", "cash", "discounts", "pnl", "sources", "events", "leads", "events_monthly"):
+    for k in ("daily", "hourly", "top_items", "labor_jobs", "vendors", "inventory", "targets", "payments", "dining", "revctr", "labor_hourly", "schedule", "tender", "voids", "invoices", "servers", "cash", "pacing", "discounts", "pnl", "sources", "events", "leads", "events_monthly"):
         out[k] = {lid: payload[k].get(lid)} if lid in payload[k] else {}
     return out
 

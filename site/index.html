@@ -391,6 +391,41 @@ function render(){
   ({overview:pgOverview,sales:pgSales,labor:pgLabor,cogs:pgCogs,inventory:pgInventory,events:pgEvents,activations:pgActivations,scorecard:pgScorecard,locations:pgLocations})[S.page](m);
 }
 
+/* ---------- month-to-date pacing ----------
+   Weighted by each location's own weekday profile on both sides, so "ahead" and "behind" compare like with
+   like. A straight run-rate in a taproom is wrong in a predictable direction: it understates with a weekend
+   still to come and overstates just after one. */
+function pacingBlock(){
+  var rows=[];
+  locIds().forEach(function(l){
+    var p=(D.pacing||{})[l]; if(!p||!p.month) return;
+    var loc=(D.locations.filter(function(x){return x.id===l;})[0]||{name:l});
+    rows.push({loc:loc.name, p:p});
+  });
+  if(!rows.length) return '';
+  var any=rows.some(function(r){return r.p.target;});
+  var T={net:0,target:0,prorata:0,forecast:0};
+  rows.forEach(function(r){ T.net+=r.p.mtd.net||0; T.target+=r.p.target||0; T.prorata+=r.p.prorata||0; T.forecast+=r.p.forecast||0; });
+  var pace=T.prorata?T.net/T.prorata:null, fc=T.target?T.forecast/T.target:null;
+  var m=rows[0].p, sub=m.days_elapsed+' of '+m.days_in_month+' days'+(m.elapsed_share!=null?' · '+fp(m.elapsed_share,0)+' of a typical month\'s trade':'');
+  function band(v){ return v==null?'':(v>=1?' style="color:var(--good,#2e7d5b)"':(v>=0.95?'':' style="color:var(--bad,#b4413c)"')); }
+  return panel('Month to date — '+esc(m.month), sub,
+    '<div class="grid tiles" style="margin-bottom:10px">'
+    +tile('MTD net sales',fk(T.net),'', any?'<span class="tg">pace target '+fk(T.prorata)+'</span>':'')
+    +(any?tile('Pace',(pace!=null?'<span'+band(pace)+'>'+fp(pace,0)+'</span>':'—'),'','<span class="tg">vs where we should be</span>'):'')
+    +tile('Forecast to month end',fk(T.forecast),'','<span class="tg">weekday-weighted</span>')
+    +(any?tile('Forecast vs target',(fc!=null?'<span'+band(fc)+'>'+fp(fc,0)+'</span>':'—'),'','<span class="tg">target '+fk(T.target)+'</span>'):'')
+    +'</div>'
+    +(rows.length>1?'<div class="tw"><table class="t"><tr><th>Location</th><th class="r">MTD</th><th class="r">Pace target</th><th class="r">Pace</th><th class="r">Forecast</th><th class="r">Target</th><th class="r">vs target</th></tr>'
+      +rows.map(function(r){var p=r.p;
+        return '<tr><td class="n">'+esc(r.loc)+'</td><td class="r">'+fk(p.mtd.net)+'</td><td class="r">'+(p.prorata?fk(p.prorata):'—')+'</td>'
+          +'<td class="r"'+band(p.pace_pct)+'>'+(p.pace_pct!=null?fp(p.pace_pct,0):'—')+'</td>'
+          +'<td class="r">'+fk(p.forecast)+'</td><td class="r">'+(p.target?fk(p.target):'—')+'</td>'
+          +'<td class="r"'+band(p.forecast_pct)+'>'+(p.forecast_pct!=null?fp(p.forecast_pct,0):'—')+'</td></tr>';}).join('')
+      +'</table></div>':'')
+    +(any?'':'<div class="src">No sales target set for '+esc(m.month)+' in inputs/targets.csv, so only the forecast is shown.</div>'));
+}
+
 function pgOverview(m){
   var a=S.d0,b=S.d1, cw=cmpWindow(), k=kpis(a,b), kp=hasData(cw[0],cw[1])?kpis(cw[0],cw[1]):null, tg=targetsFor(a,b);
   var h='<div class="grid tiles">'
@@ -401,6 +436,8 @@ function pgOverview(m){
    +(hasToast()?tile('Sales / labor hour',fm(k.splh,0),delta(k.splh,kp&&kp.splh))+tile('Discounts',fk(k.disc),delta(k.disc,kp&&kp.disc,true),'<span class="tg">'+fp(k.gross?k.disc/k.gross:null)+' of gross</span>'):tile('Prime cost %',fp(k.net?(k.labor+k.purch)/k.net:null),delta(k.net?(k.labor+k.purch)/k.net:null,kp&&kp.net?(kp.labor+kp.purch)/kp.net:null,true),'<span class="tg">labor + purchases</span>'))
    +(hasEvents()?tile('Event revenue',fk(evRows().filter(function(e){return evIsDef(e.status)&&e.d>=a&&e.d<=b;}).reduce(function(p,c){return p+evValue(c);},0)),'','<span class="tg">private events (Tripleseat)</span>'):'')
    +'</div>';
+  var pb=pacingBlock();
+  if(pb) h+='<div class="grid" style="margin-top:14px">'+pb+'</div>';
   h+='<div class="grid cols2" style="margin-top:14px">'
    +panel('Net sales by day','Current range vs comparison window; activations marked ●',chartBox('c_trend',true))
    +panel('Sales mix','Share of net sales by category',chartBox('c_mix')+'<div id="mixLegend" class="legend"></div>')
