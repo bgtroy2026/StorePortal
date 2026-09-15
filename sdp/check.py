@@ -208,6 +208,30 @@ def run(db=None) -> int:
             lambda b: f"{b['location_id']} averages {b['pct']}% in Other across {b['days']} days",
             severity="warn")
 
+    # 11. Cash entries that exist but carry no value. The aggregation keys on Toast's `type` strings, so a
+    #     vocabulary we do not recognise leaves every total at zero while the entry COUNT still looks healthy —
+    #     a loss-prevention view full of $0.00 that appears to be working. Report the actual types present so
+    #     the mismatch is obvious rather than a mystery.
+    n_cash = con.execute("SELECT COUNT(*) FROM toast_cash_entries").fetchone()[0]
+    if n_cash:
+        nonzero = con.execute("SELECT COUNT(*) FROM toast_cash_entries WHERE ABS(COALESCE(amount,0)) > 0.005").fetchone()[0]
+        types = _rows(con, """SELECT COALESCE(type,'(null)') t, COUNT(*) n,
+                                     ROUND(SUM(ABS(COALESCE(amount,0))),2) val
+                              FROM toast_cash_entries GROUP BY 1 ORDER BY n DESC""")
+        log.info("cash entry types present: %s",
+                 "; ".join(f"{t['t']}={t['n']} (${t['val']:,.2f})" for t in types))
+        if not nonzero:
+            r.fail(f"cash entries carry no value: {n_cash} entries, every amount zero — "
+                   f"types present: {', '.join(t['t'] for t in types)}")
+        else:
+            r.ok(f"cash entries carry values ({nonzero} of {n_cash} non-zero)")
+
+        # Types the aggregation actually understands. Anything else contributes nothing to over/short.
+        known = ("CLOSE_OUT_OVERAGE", "CLOSE_OUT_SHORTAGE", "PAY_OUT", "DRIVER_REIMBURSEMENT", "NO_SALE")
+        unknown = [t for t in types if t["t"] not in known]
+        _report(r, "cash entry types are all understood by the aggregation", unknown,
+                lambda b: f"{b['t']} x{b['n']} (${b['val']:,.2f})", severity="warn")
+
     n_days = con.execute("SELECT COUNT(*) FROM daily_summary").fetchone()[0]
     locs = con.execute("SELECT COUNT(DISTINCT location_id) FROM daily_summary").fetchone()[0]
     log.info("checks complete over %d location-days across %d locations: %d failed, %d warned",
