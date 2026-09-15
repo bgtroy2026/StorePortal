@@ -505,7 +505,8 @@ def _cash_management(con, lid: str, since: date, through: date) -> dict:
     the undoing, is dropped before anything is totalled.
     """
     rows = _rows(con, """
-        SELECT entry_guid, business_date, type, amount, reason, payout_reason, no_sale_reason, employee_guid, undoes
+        SELECT entry_guid, business_date, type, amount, reason, payout_reason, no_sale_reason, employee_guid,
+               drawer_guid, undoes
         FROM toast_cash_entries WHERE location_id=? AND business_date>=? AND business_date<=?""",
         (lid, since.isoformat(), through.isoformat()))
     if not rows:
@@ -526,7 +527,12 @@ def _cash_management(con, lid: str, since: date, through: date) -> dict:
     #
     # TIP_OUT is deliberately excluded from the loss-prevention totals: it is the mechanics of tipping out
     # servers, not cash at risk, and at $715k it would dominate every chart it appeared in.
-    by_day, by_emp, payouts, nosales = {}, {}, {}, {}
+    # Grouped by DRAWER first, person second. Toast records the employee who PERFORMED the close-out, which at
+    # a bar is the closing manager doing every drawer in the same minute — so a per-person table makes one
+    # manager look responsible for every till in the building. Verified at Omaha on 2026-08-21: four drawers,
+    # four shortages, one name, all timestamped 23:18. The drawer is the unit that means something; the person
+    # is "who counted it", and the view says so in those words.
+    by_day, by_emp, by_drawer, payouts, nosales = {}, {}, {}, {}, {}
     over = short = payout_total = collected = tipped_out = 0.0
     exact_n = over_n = short_n = nosale_n = other_n = 0
     other_types: dict[str, int] = {}
@@ -536,15 +542,19 @@ def _cash_management(con, lid: str, since: date, through: date) -> dict:
         d = r["business_date"]
         emp = names.get(r["employee_guid"]) or "(unattributed)"
         e = by_emp.setdefault(emp, {"over": 0.0, "short": 0.0, "exact": 0, "collected": 0.0, "nosales": 0})
+        dw = cfg.get(r["drawer_guid"]) or r["drawer_guid"] or "(no drawer)"
+        k = by_drawer.setdefault(dw, {"over": 0.0, "short": 0.0, "exact": 0, "over_n": 0, "short_n": 0, "shorts": []})
         day = by_day.setdefault(d, {"over": 0.0, "short": 0.0, "exact": 0})
         if t == "CLOSE_OUT_OVERAGE":
             over += abs(amt); over_n += 1; day["over"] += abs(amt); e["over"] += abs(amt)
+            k["over"] += abs(amt); k["over_n"] += 1
         elif t == "CLOSE_OUT_SHORTAGE":
             short += abs(amt); short_n += 1; day["short"] += abs(amt); e["short"] += abs(amt)
+            k["short"] += abs(amt); k["short_n"] += 1; k["shorts"].append(abs(amt))
         elif t == "CLOSE_OUT_EXACT":
             # A drawer that balanced. Without it there is no denominator, and a perfect night is
             # indistinguishable from a night nobody counted.
-            exact_n += 1; day["exact"] += 1; e["exact"] += 1
+            exact_n += 1; day["exact"] += 1; e["exact"] += 1; k["exact"] += 1
         elif t == "CASH_COLLECTED":
             collected += abs(amt); e["collected"] += abs(amt)
         elif t == "TIP_OUT":
@@ -565,6 +575,33 @@ def _cash_management(con, lid: str, since: date, through: date) -> dict:
                          WHERE location_id=? AND business_date>=? AND business_date<=? AND COALESCE(undoes,'')=''
                          GROUP BY 1 ORDER BY 1""", (lid, since.isoformat(), through.isoformat()))
     closeouts = exact_n + over_n + short_n
+
+    # Is this a float problem or a people problem? A drawer that is short because cash went missing is short by
+    # a different amount every time. A drawer that is short because its expected starting cash is set wrong is
+    # short by roughly the SAME amount every time, and so is every other drawer at that location. That is a
+    # testable difference, and it is the difference between checking a setting and doubting a person — so the
+    # portal tests it rather than leaving a director to infer it from a table.
+    #
+    # The test: at least three drawers, each short most times they were counted, with their typical shortages
+    # clustered together. `typical` is the median, so one unusual night cannot manufacture the pattern.
+    def _median(v):
+        v = sorted(v)
+        if not v:
+            return None
+        m = len(v) // 2
+        return v[m] if len(v) % 2 else (v[m - 1] + v[m]) / 2
+
+    consistent = None
+    med_by_drawer = {d: _median(v["shorts"]) for d, v in by_drawer.items() if v["short_n"] >= 2}
+    if len(med_by_drawer) >= 3:
+        meds = sorted(med_by_drawer.values())
+        lo, hi = meds[0], meds[-1]
+        # Every drawer's typical shortage within 40% of the largest: tight enough that a shared cause is far
+        # more likely than several independent ones.
+        if hi and lo / hi >= 0.6:
+            consistent = {"drawers": len(med_by_drawer), "low": _r(lo), "high": _r(hi),
+                          "typical": _r(_median(meds))}
+
     return {
         "days": [[d, _r(v["over"]), _r(v["short"]), v["exact"]] for d, v in sorted(by_day.items())],
         "by_employee": sorted(([k, _r(v["over"]), _r(v["short"]), v["exact"], _r(v["collected"]), v["nosales"]]
@@ -572,6 +609,11 @@ def _cash_management(con, lid: str, since: date, through: date) -> dict:
         "payouts": sorted(([k, v[0], _r(v[1])] for k, v in payouts.items()), key=lambda x: -x[2])[:15],
         "nosales": sorted(([k, n] for k, n in nosales.items()), key=lambda x: -x[1])[:10],
         "deposits": [[r["d"], _r(r["a"]), r["n"]] for r in deps],
+        "by_drawer": sorted(([d, v["exact"], v["over_n"], v["short_n"], _r(v["over"]), _r(v["short"]),
+                              _r(_median(v["shorts"]))] for d, v in by_drawer.items()
+                             if v["exact"] or v["over_n"] or v["short_n"]),
+                            key=lambda x: -(x[5] or 0))[:25],
+        "consistent_shortfall": consistent,
         "totals": {
             "over": _r(over), "short": _r(short), "net": _r(over - short), "payouts": _r(payout_total),
             "collected": _r(collected), "tipped_out": _r(tipped_out),

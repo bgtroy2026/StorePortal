@@ -937,13 +937,15 @@ function hasCash(){ return locIds().some(function(l){ var c=(D.cash||{})[l]; ret
 function cashPanels(){
   if(!hasCash()) return;
   var T={over:0,short:0,payouts:0,entries:0,reversed:0,collected:0,closeouts:0,exact:0,over_n:0,short_n:0,nosales:0,unrecognised:0};
-  var days={}, emps={}, pay={}, nos={}, deps={};
+  var days={}, emps={}, draw={}, pay={}, nos={}, deps={}, cons=[];
   locIds().forEach(function(l){
     var c=(D.cash||{})[l]; if(!c||!c.totals) return;
     ['over','short','payouts','entries','reversed','collected','closeouts','exact','over_n','short_n','nosales','unrecognised']
       .forEach(function(k){ T[k]+=c.totals[k]||0; });
     (c.days||[]).forEach(function(r){ var o=days[r[0]]||(days[r[0]]=[0,0]); o[0]+=r[1]; o[1]+=r[2]; });
     (c.by_employee||[]).forEach(function(r){ var o=emps[r[0]]||(emps[r[0]]=[0,0,0,0,0]); o[0]+=r[1]; o[1]+=r[2]; o[2]+=r[3]; o[3]+=r[4]; o[4]+=r[5]; });
+    (c.by_drawer||[]).forEach(function(r){ var o=draw[r[0]]||(draw[r[0]]=[0,0,0,0,0,null]); o[0]+=r[1]; o[1]+=r[2]; o[2]+=r[3]; o[3]+=r[4]; o[4]+=r[5]; o[5]=r[6]; });
+    if(c.consistent_shortfall) cons.push([l, c.consistent_shortfall]);
     (c.payouts||[]).forEach(function(r){ var o=pay[r[0]]||(pay[r[0]]=[0,0]); o[0]+=r[1]; o[1]+=r[2]; });
     (c.nosales||[]).forEach(function(r){ nos[r[0]]=(nos[r[0]]||0)+r[1]; });
     (c.deposits||[]).forEach(function(r){ var o=deps[r[0]]||(deps[r[0]]=[0,0]); o[0]+=r[1]; o[1]+=r[2]; });
@@ -973,14 +975,33 @@ function cashPanels(){
       +(T.reversed?'<div class="src">'+fn(T.reversed)+' entries were corrections and have been netted out of every figure here, along with the entries they reversed.</div>':'');
   }
   if($('cashWho')){
+    var dr=Object.keys(draw).sort(function(a,b){return draw[b][4]-draw[a][4];});
     var el=Object.keys(emps).sort(function(a,b){return emps[b][1]-emps[a][1];});
     var pl=Object.keys(pay).sort(function(a,b){return pay[b][1]-pay[a][1];});
     var nl=Object.keys(nos).sort(function(a,b){return nos[b]-nos[a];});
     var dl2=Object.keys(deps).sort(), dtot=dl2.reduce(function(p,c){return p+deps[c][0];},0);
     $('cashWho').innerHTML=
-      (el.length?'<table class="t"><tr><th>Drawer</th><th class="r">Over</th><th class="r">Short</th><th class="r">Payouts</th><th class="r">No-sales</th></tr>'
+      /* The float test, first and in plain words, because it decides whether anyone should be having a
+         conversation about this at all. */
+      (cons.length?cons.map(function(x){var l=x[0],k=x[1];
+        var nm=(D.locations.filter(function(z){return z.id===l;})[0]||{name:l}).name;
+        return '<div class="hint" style="margin-bottom:10px;padding:10px;border-left:3px solid var(--bad,#b4413c)">'
+          +'<b>'+esc(nm)+': '+fn(k.drawers)+' drawers are each short by about the same amount every time</b> — '
+          +'typically '+fm(k.typical)+' (range '+fm(k.low)+'–'+fm(k.high)+'). '
+          +'Cash that goes missing goes missing by a different amount each night. A shortfall this consistent, '
+          +'across this many drawers, points at the expected starting cash being set wrong rather than at anyone '
+          +'handling it. Worth checking the float each drawer is set to open with before anything else.</div>';}).join('')
+        :'')
+      +(dr.length?'<div class="hint" style="margin-bottom:6px">By drawer — the unit that means something. Toast attributes a close-out to whoever performed it, which at close is usually one manager doing every drawer, so the person is not the variable here.</div>'
+        +'<table class="t"><tr><th>Drawer</th><th class="r">Balanced</th><th class="r">Over</th><th class="r">Short</th><th class="r">Short $</th><th class="r">Typical short</th></tr>'
+        +dr.slice(0,14).map(function(k){var v=draw[k];return '<tr><td class="n">'+esc(k)+'</td><td class="r">'+(v[0]?fn(v[0]):'—')+'</td>'
+          +'<td class="r">'+(v[1]?fn(v[1]):'—')+'</td><td class="r">'+(v[2]?fn(v[2]):'—')+'</td>'
+          +'<td class="r">'+(v[4]?fm(v[4]):'—')+'</td><td class="r">'+(v[5]?fm(v[5]):'—')+'</td></tr>';}).join('')
+        +'</table>':'')
+      +(el.length?'<div class="hint" style="margin-top:12px">Closed by — who performed the count, not who is accountable for it</div>'
+        +'<table class="t"><tr><th>Closed by</th><th class="r">Over</th><th class="r">Short</th><th class="r">Cash collected</th><th class="r">No-sales</th></tr>'
         +el.slice(0,12).map(function(k){var v=emps[k];return '<tr><td class="n">'+esc(k)+'</td><td class="r">'+(v[0]?fm(v[0]):'—')+'</td>'
-          +'<td class="r">'+(v[1]?fm(v[1]):'—')+'</td><td class="r">'+(v[2]?fn(v[2])+' · '+fm(v[3]):'—')+'</td><td class="r">'+(v[4]?fn(v[4]):'—')+'</td></tr>';}).join('')
+          +'<td class="r">'+(v[1]?fm(v[1]):'—')+'</td><td class="r">'+(v[3]?fm(v[3]):'—')+'</td><td class="r">'+(v[4]?fn(v[4]):'—')+'</td></tr>';}).join('')
         +'</table>':'')
       +(pl.length?'<div class="hint" style="margin-top:12px">Payouts by reason</div><table class="t"><tr><th>Reason</th><th class="r">Count</th><th class="r">Value</th></tr>'
         +pl.map(function(k){return '<tr><td class="n">'+esc(k)+'</td><td class="r">'+fn(pay[k][0])+'</td><td class="r">'+fm(pay[k][1])+'</td></tr>';}).join('')+'</table>':'')
