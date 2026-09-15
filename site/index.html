@@ -339,15 +339,45 @@ async function boot(auth){
   $('barfill').style.width='100%';
   startApp(data, auth.profile);
 }
+/* Apps Script intermittently leaves a POST hanging for ~30 seconds and then failing, while the script itself
+   runs and completes in about two. Measured repeatedly on 2026-09-15: the same call failed at 32.7s, 32.1s and
+   32.0s, and succeeded at 1.5s and 0.75s minutes apart, with every execution logged Completed server-side and
+   no Google incident posted. A single-shot fetch therefore drops the user on the sign-in screen often enough
+   to read as "sign-in keeps failing", when waiting a couple of seconds and asking again nearly always works.
+   So: a short deadline rather than the browser's long one, and three tries. Only transport failures retry —
+   a real answer from the script, including a refusal, is final and must not be asked again. */
+async function scriptPost(body, onRetry){
+  var waits=[700,1800], last=null;
+  for(var a=0;a<=waits.length;a++){
+    var ctl=new AbortController();
+    // 8s, not 12: a working call answers in 0.75-2.4s, so eight seconds is four times the slowest good one
+    // and still leaves the worst case (three dead tries, ~27s) shorter than the single 32s hang it replaces.
+    var timer=setTimeout(function(){ctl.abort();}, 8000);
+    try{
+      var r=await fetch(CFG.API_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},
+                                     body:body, signal:ctl.signal});
+      clearTimeout(timer);
+      return r;
+    }catch(e){
+      clearTimeout(timer); last=e;
+      if(a===waits.length) break;
+      if(onRetry) onRetry(a+1);
+      await new Promise(function(res){setTimeout(res,waits[a]);});
+    }
+  }
+  throw last||new Error('sign-in service unreachable');
+}
 async function onCred(resp){
   var j;
   try{
     setStatus('Checking access…'); $('err').textContent='';
-    var r=await fetch(CFG.API_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({a:'signin',t:resp.credential})});
+    var r=await scriptPost(JSON.stringify({a:'signin',t:resp.credential}), function(n){
+      setStatus('Sign-in service is slow — retrying ('+n+' of 2)…');
+    });
     j=await r.json();
     if(!j.ok){ setErr(j.error==='not on the roster'?'Your account is not on the portal roster — ask Troy to add you.':('Sign-in refused: '+(j.error||'unknown'))); return; }
     try{ sessionStorage.setItem('sdp_auth',JSON.stringify(j)); }catch(e){}
-  }catch(e){ setErr('Could not reach the sign-in service. '+e.message); return; }
+  }catch(e){ setErr('Could not reach the sign-in service after three tries. It is usually back within a minute — press the sign-in button again. ('+(e&&e.name==='AbortError'?'timed out':e.message)+')'); return; }
   try{ await boot(j); }catch(e){ try{sessionStorage.removeItem('sdp_auth');}catch(_){} setErr('Signed in fine, but the portal data would not load. If the site was being updated just now, wait about a minute and refresh. ('+e.message+')'); }
 }
 var gsiOK=false;
