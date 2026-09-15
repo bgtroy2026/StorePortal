@@ -936,11 +936,12 @@ function hasCash(){ return locIds().some(function(l){ var c=(D.cash||{})[l]; ret
 
 function cashPanels(){
   if(!hasCash()) return;
-  var T={over:0,short:0,payouts:0,entries:0,reversed:0}, days={}, emps={}, pay={}, nos={}, deps={};
+  var T={over:0,short:0,payouts:0,entries:0,reversed:0,collected:0,closeouts:0,exact:0,over_n:0,short_n:0,nosales:0,unrecognised:0};
+  var days={}, emps={}, pay={}, nos={}, deps={};
   locIds().forEach(function(l){
     var c=(D.cash||{})[l]; if(!c||!c.totals) return;
-    T.over+=c.totals.over||0; T.short+=c.totals.short||0; T.payouts+=c.totals.payouts||0;
-    T.entries+=c.totals.entries||0; T.reversed+=c.totals.reversed||0;
+    ['over','short','payouts','entries','reversed','collected','closeouts','exact','over_n','short_n','nosales','unrecognised']
+      .forEach(function(k){ T[k]+=c.totals[k]||0; });
     (c.days||[]).forEach(function(r){ var o=days[r[0]]||(days[r[0]]=[0,0]); o[0]+=r[1]; o[1]+=r[2]; });
     (c.by_employee||[]).forEach(function(r){ var o=emps[r[0]]||(emps[r[0]]=[0,0,0,0,0]); o[0]+=r[1]; o[1]+=r[2]; o[2]+=r[3]; o[3]+=r[4]; o[4]+=r[5]; });
     (c.payouts||[]).forEach(function(r){ var o=pay[r[0]]||(pay[r[0]]=[0,0]); o[0]+=r[1]; o[1]+=r[2]; });
@@ -951,13 +952,24 @@ function cashPanels(){
     var dl=Object.keys(days).sort(), net=T.over-T.short;
     var worst=dl.map(function(d){return [d,days[d][0],days[d][1]];}).filter(function(x){return x[1]||x[2];})
       .sort(function(a,b){return (b[2]-b[1])-(a[2]-a[1]);}).slice(0,10);
-    $('cashDay').innerHTML='<div class="hint" style="margin-bottom:8px">'
-      +'Over '+fm(T.over)+' · short '+fm(T.short)+' · <b style="color:'+(net<0?'var(--bad,#b4413c)':'var(--good,#2e7d5b)')+'">net '+(net>0?'+':'')+fm(net)+'</b>'
-      +(T.payouts?' · '+fm(T.payouts)+' paid out':'')+'</div>'
+    /* A drawer that balanced and a drawer nobody counted are not the same thing, and the old version of this
+       panel showed both as nothing. Lead with how many close-outs there WERE: with none, every figure below is
+       an absence of measurement, not a clean result, and the panel says so instead of printing zeros. */
+    var acc = T.closeouts ? (T.exact/T.closeouts) : null;
+    $('cashDay').innerHTML=(T.closeouts
+        ? '<div class="hint" style="margin-bottom:8px">'
+          +fn(T.closeouts)+' close-outs · <b>'+fp(acc,0)+' balanced exactly</b> · '
+          +fn(T.over_n)+' over, '+fn(T.short_n)+' short · '
+          +'over '+fm(T.over)+' · short '+fm(T.short)+' · <b style="color:'+(net<0?'var(--bad,#b4413c)':'var(--good,#2e7d5b)')+'">net '+(net>0?'+':'')+fm(net)+'</b>'
+          +(T.collected?' · '+fm(T.collected)+' cash collected':'')+'</div>'
+        : '<div class="hint" style="margin-bottom:8px"><b style="color:var(--bad,#b4413c)">No drawer close-outs were recorded in this range.</b> '
+          +'Over/short cannot be measured without them — the figures below are missing, not zero.'
+          +(T.collected?' '+fm(T.collected)+' of cash was collected in the same period.':'')+'</div>')
       +(worst.length?'<table class="t"><tr><th>Worst days</th><th class="r">Over</th><th class="r">Short</th><th class="r">Net</th></tr>'
         +worst.map(function(x){var n=x[1]-x[2];return '<tr><td class="n">'+fdate(x[0])+'</td><td class="r">'+(x[1]?fm(x[1]):'—')+'</td>'
           +'<td class="r">'+(x[2]?fm(x[2]):'—')+'</td><td class="r" style="color:'+(n<0?'var(--bad,#b4413c)':'inherit')+'">'+(n>0?'+':'')+fm(n)+'</td></tr>';}).join('')
-        +'</table>':'<div class="empty">No over/short recorded — drawers either balanced or close-outs are not being entered.</div>')
+        +'</table>':(T.closeouts?'<div class="empty">Every close-out in this range balanced exactly — nothing over or short.</div>':''))
+      +(T.unrecognised?'<div class="hint" style="margin-top:8px;color:var(--bad,#b4413c)">'+fn(T.unrecognised)+' cash entries had a type this view does not recognise and were not counted anywhere. Worth reporting.</div>':'')
       +(T.reversed?'<div class="src">'+fn(T.reversed)+' entries were corrections and have been netted out of every figure here, along with the entries they reversed.</div>':'');
   }
   if($('cashWho')){

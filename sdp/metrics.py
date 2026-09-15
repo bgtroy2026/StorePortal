@@ -517,40 +517,73 @@ def _cash_management(con, lid: str, since: date, through: date) -> dict:
              for r in _rows(con, "SELECT employee_guid, display_name FROM toast_employees WHERE location_id=?", (lid,))}
     cfg = {r["guid"]: r["name"] for r in _rows(con, "SELECT guid, name FROM toast_config WHERE location_id=?", (lid,))}
 
+    # Toast's entry vocabulary varies by account. This one records TIP_OUT, CASH_COLLECTED, CLOSE_OUT_EXACT,
+    # CLOSE_OUT_SHORTAGE, CLOSE_OUT_OVERAGE and NO_SALE — and does NOT use PAY_OUT or DRIVER_REIMBURSEMENT,
+    # which an earlier version of this function handled while ignoring the two types carrying 96% of the
+    # entries and $914k of movement. The result was a loss-prevention view of $0.00 that looked populated
+    # because the entry COUNT was right. Anything unrecognised is now counted into `other` rather than
+    # silently dropped, so the same mistake announces itself instead of reading as "nothing happened".
+    #
+    # TIP_OUT is deliberately excluded from the loss-prevention totals: it is the mechanics of tipping out
+    # servers, not cash at risk, and at $715k it would dominate every chart it appeared in.
     by_day, by_emp, payouts, nosales = {}, {}, {}, {}
-    over = short = payout_total = 0.0
+    over = short = payout_total = collected = tipped_out = 0.0
+    exact_n = over_n = short_n = nosale_n = other_n = 0
+    other_types: dict[str, int] = {}
     for r in live:
         t = (r["type"] or "").upper()
         amt = float(r["amount"] or 0)
         d = r["business_date"]
         emp = names.get(r["employee_guid"]) or "(unattributed)"
-        e = by_emp.setdefault(emp, {"over": 0.0, "short": 0.0, "payouts": 0, "payout_value": 0.0, "nosales": 0})
-        day = by_day.setdefault(d, {"over": 0.0, "short": 0.0})
+        e = by_emp.setdefault(emp, {"over": 0.0, "short": 0.0, "exact": 0, "collected": 0.0, "nosales": 0})
+        day = by_day.setdefault(d, {"over": 0.0, "short": 0.0, "exact": 0})
         if t == "CLOSE_OUT_OVERAGE":
-            over += abs(amt); day["over"] += abs(amt); e["over"] += abs(amt)
+            over += abs(amt); over_n += 1; day["over"] += abs(amt); e["over"] += abs(amt)
         elif t == "CLOSE_OUT_SHORTAGE":
-            short += abs(amt); day["short"] += abs(amt); e["short"] += abs(amt)
-        elif t in ("PAY_OUT", "DRIVER_REIMBURSEMENT"):
-            payout_total += abs(amt); e["payouts"] += 1; e["payout_value"] += abs(amt)
-            key = cfg.get(r["payout_reason"]) or r["reason"] or "(no reason given)"
-            p = payouts.setdefault(key, [0, 0.0]); p[0] += 1; p[1] += abs(amt)
+            short += abs(amt); short_n += 1; day["short"] += abs(amt); e["short"] += abs(amt)
+        elif t == "CLOSE_OUT_EXACT":
+            # A drawer that balanced. Without it there is no denominator, and a perfect night is
+            # indistinguishable from a night nobody counted.
+            exact_n += 1; day["exact"] += 1; e["exact"] += 1
+        elif t == "CASH_COLLECTED":
+            collected += abs(amt); e["collected"] += abs(amt)
+        elif t == "TIP_OUT":
+            tipped_out += abs(amt)
         elif t == "NO_SALE":
-            e["nosales"] += 1
+            nosale_n += 1; e["nosales"] += 1
             key = cfg.get(r["no_sale_reason"]) or r["reason"] or "(no reason given)"
             nosales[key] = nosales.get(key, 0) + 1
+        elif t in ("PAY_OUT", "DRIVER_REIMBURSEMENT"):
+            payout_total += abs(amt)
+            key = cfg.get(r["payout_reason"]) or r["reason"] or "(no reason given)"
+            p = payouts.setdefault(key, [0, 0.0]); p[0] += 1; p[1] += abs(amt)
+        else:
+            other_n += 1
+            other_types[t or "(no type)"] = other_types.get(t or "(no type)", 0) + 1
 
     deps = _rows(con, """SELECT business_date d, SUM(amount) a, COUNT(*) n FROM toast_deposits
                          WHERE location_id=? AND business_date>=? AND business_date<=? AND COALESCE(undoes,'')=''
                          GROUP BY 1 ORDER BY 1""", (lid, since.isoformat(), through.isoformat()))
+    closeouts = exact_n + over_n + short_n
     return {
-        "days": [[d, _r(v["over"]), _r(v["short"])] for d, v in sorted(by_day.items())],
-        "by_employee": sorted(([k, _r(v["over"]), _r(v["short"]), v["payouts"], _r(v["payout_value"]), v["nosales"]]
+        "days": [[d, _r(v["over"]), _r(v["short"]), v["exact"]] for d, v in sorted(by_day.items())],
+        "by_employee": sorted(([k, _r(v["over"]), _r(v["short"]), v["exact"], _r(v["collected"]), v["nosales"]]
                                for k, v in by_emp.items()), key=lambda x: -(x[2] or 0))[:25],
         "payouts": sorted(([k, v[0], _r(v[1])] for k, v in payouts.items()), key=lambda x: -x[2])[:15],
         "nosales": sorted(([k, n] for k, n in nosales.items()), key=lambda x: -x[1])[:10],
         "deposits": [[r["d"], _r(r["a"]), r["n"]] for r in deps],
-        "totals": {"over": _r(over), "short": _r(short), "net": _r(over - short), "payouts": _r(payout_total),
-                   "entries": len(live), "reversed": len(rows) - len(live)},
+        "totals": {
+            "over": _r(over), "short": _r(short), "net": _r(over - short), "payouts": _r(payout_total),
+            "collected": _r(collected), "tipped_out": _r(tipped_out),
+            "closeouts": closeouts, "exact": exact_n, "over_n": over_n, "short_n": short_n,
+            # The share of counted drawers that balanced exactly. None when nothing was counted — which is a
+            # different statement from 0% and must not render as one.
+            "accuracy": _r(exact_n / closeouts, 4) if closeouts else None,
+            "nosales": nosale_n,
+            "entries": len(live), "reversed": len(rows) - len(live),
+            "unrecognised": other_n,
+            "unrecognised_types": sorted(other_types.items(), key=lambda x: -x[1])[:6],
+        },
     }
 
 

@@ -195,20 +195,24 @@ def gen_toast(loc: dict, loc_idx: int, start: date, end: date, events: dict[str,
         ents, drawer = [], _g(f"drawer:{slug}")
         for k in range(rnd.randint(2, 6)):
             emp = rnd.choice(servers)
-            kind = rnd.choices(["NO_SALE", "PAY_OUT", "CLOSE_OUT_SHORTAGE", "CLOSE_OUT_OVERAGE", "CASH_IN", "TIP_OUT"],
-                               weights=[26, 20, 16, 12, 14, 12])[0]
-            amt = {"NO_SALE": 0.0}.get(kind, round(rnd.uniform(2, 85), 2))
+            # The vocabulary a real Toast account actually returns, in roughly the real proportions. Mock used
+            # to emit PAY_OUT and CASH_IN — types this account never produces — while omitting CLOSE_OUT_EXACT
+            # and under-weighting TIP_OUT and CASH_COLLECTED, which between them carry 96% of real entries.
+            # That is why a view built against the wrong vocabulary passed every test and published zeros.
+            kind = rnd.choices(["TIP_OUT", "CASH_COLLECTED", "CLOSE_OUT_EXACT", "CLOSE_OUT_SHORTAGE",
+                                "CLOSE_OUT_OVERAGE", "NO_SALE"],
+                               weights=[58, 35, 2, 2, 1, 2])[0]
+            amt = {"NO_SALE": 0.0, "CLOSE_OUT_EXACT": 0.0}.get(kind, round(rnd.uniform(2, 85), 2))
             e = {"guid": _g(f"cash:{slug}:{iso(cd)}:{k}"), "entityType": "CashEntry", "type": kind, "amount": amt,
                  "reason": None, "date": _ts(cd, rnd.randint(11, 23)), "cashDrawer": {"guid": drawer},
                  "employee1": {"guid": emp}, "undoes": None}
-            if kind == "PAY_OUT":
-                e["payoutReason"] = {"guid": _g(f"pr:{slug}:{rnd.choice(['Supplies', 'Delivery tip', 'Repair'])}")}
+
             if kind == "NO_SALE":
                 e["noSaleReason"] = {"guid": _g(f"nsr:{slug}:{rnd.choice(['Change for guest', 'Opened in error'])}")}
             ents.append(e)
         if ents and rnd.random() < 0.18:                  # somebody corrected a mistake
             tgt = ents[0]
-            ents.append({"guid": _g(f"cash:{slug}:{iso(cd)}:undo"), "entityType": "CashEntry", "type": "UNDO_PAY_OUT",
+            ents.append({"guid": _g(f"cash:{slug}:{iso(cd)}:undo"), "entityType": "CashEntry", "type": "UNDO_CASH_COLLECTED",
                          "amount": tgt["amount"], "reason": "Entered twice", "date": _ts(cd, 23),
                          "cashDrawer": {"guid": drawer}, "employee1": {"guid": tgt["employee1"]["guid"]},
                          "undoes": tgt["guid"]})
