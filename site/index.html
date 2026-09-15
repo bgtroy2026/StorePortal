@@ -1210,6 +1210,51 @@ function pgActivations(m){
   m.querySelectorAll('[data-as]').forEach(function(b){b.onclick=function(){S.actSrc=b.dataset.as;render();};});
 }
 
+/* ---------- cross-location benchmarking ----------
+   Indexed against the MEDIAN, not the average, and on rates rather than totals. Totals mostly measure how big
+   a taproom is; rates measure how well it is run, which is the only comparison that is fair to a small site or
+   to one that opened partway through the year and has no prior period of its own to be judged against.
+   The median rather than the mean because with six locations one outlier drags an average badly. */
+function benchmarkPanel(rows){
+  var metrics=[
+    {k:'ppa',   label:'Sales per guest',   fmt:'money', good:1},
+    {k:'check', label:'Average check',     fmt:'money', good:1},
+    {k:'splh',  label:'Sales / labor hour',fmt:'money0',good:1},
+    {k:'labor', label:'Labor %',           fmt:'pct',   good:-1},
+    {k:'purch', label:'Purchases %',       fmt:'pct',   good:-1},
+    {k:'disc',  label:'Discount %',        fmt:'pct',   good:-1}
+  ];
+  var vals=rows.map(function(r){var s=r.s;return {
+    name:r.l.name, partial:r.partial,
+    ppa:s.guests?s.net/s.guests:null, check:s.checks?s.net/s.checks:null, splh:s.lh?s.net/s.lh:null,
+    labor:s.net?s.lc/s.net:null, purch:s.net?s.p/s.net:null, disc:s.net?s.disc/s.net:null };});
+  if(vals.length<2) return '';
+  function median(k){var v=vals.map(function(x){return x[k];}).filter(function(x){return x!=null;}).sort(function(a,b){return a-b;});
+    if(!v.length) return null; var m=Math.floor(v.length/2); return v.length%2?v[m]:(v[m-1]+v[m])/2; }
+  var med={}; metrics.forEach(function(m){med[m.k]=median(m.k);});
+  function show(v,f){ return v==null?'—':(f==='pct'?fp(v):(f==='money0'?fm(v,0):fm(v,2))); }
+  return panel('How the taprooms compare','Indexed against the group median · rates, not totals, so size is not mistaken for performance',
+    '<div class="tw"><table class="t"><tr><th>Location</th>'
+    +metrics.map(function(m){return '<th class="r">'+esc(m.label)+'</th>';}).join('')+'</tr>'
+    +vals.map(function(x){
+      return '<tr><td class="n">'+esc(x.name)+(x.partial?' <span class="pill">new</span>':'')+'</td>'
+        +metrics.map(function(m){
+          var v=x[m.k], mm=med[m.k];
+          var idx=(v!=null&&mm)?v/mm:null;
+          // 5% either side of the median is not a difference worth colouring.
+          var col=''; if(idx!=null&&Math.abs(idx-1)>=0.05) col=((idx>1?1:-1)===m.good)?'var(--good,#2e7d5b)':'var(--bad,#b4413c)';
+          // Rounding a 0.3% gap to "-0%" looks like a defect; anything that rounds to nothing is "par".
+            var gap=idx==null?null:(Math.abs(idx-1)<0.005?'par':(idx>=1?'+':'')+fp(idx-1,0));
+            return '<td class="r"'+(col?' style="color:'+col+'"':'')+'>'+show(v,m.fmt)
+            +(gap?'<div style="font-size:10.5px;color:var(--muted)">'+gap+'</div>':'')+'</td>';
+        }).join('')+'</tr>';
+    }).join('')
+    +'<tr style="border-top:2px solid var(--grid,#e5e7eb)"><td class="n"><b>Group median</b></td>'
+    +metrics.map(function(m){return '<td class="r"><b>'+show(med[m.k],m.fmt)+'</b></td>';}).join('')+'</tr>'
+    +'</table></div>'
+    +'<div class="hint" style="margin-top:10px">Green means better than the median for that measure — which is a higher number for sales rates and a lower one for labour, purchases and discounts. Differences under 5% are left uncoloured.'+(vals.some(function(x){return x.partial;})?' A taproom marked <span class="pill">new</span> has no prior period of its own, so this is the only comparison available to it.':'')+'</div>');
+}
+
 function pgLocations(m){
   var a=S.d0,b=S.d1,cw=cmpWindow();
   // A location that opened partway through the window has no comparable prior period: comparing a full range
@@ -1219,6 +1264,7 @@ function pgLocations(m){
   var anyNew=rows.some(function(r){return r.partial;});
   m.innerHTML='<div class="panel"><h3>Location scorecard</h3><div class="hint">All locations for the selected range; change vs '+(S.cmp==='ly'?'last year':'prior period')+(anyNew?'. Locations marked <span class="pill">new</span> opened partway through this window, so there is no comparable prior period and their change is shown as —.':'')+'</div><div style="overflow-x:auto"><table class="t"><tr><th>Location</th><th class="r">Net sales</th><th class="r">Δ</th><th class="r">Guests</th><th class="r">Avg check</th><th class="r">PPA</th><th class="r">Labor %</th><th class="r">Purch %</th><th class="r">SPLH</th><th class="r">Discounts</th></tr>'
     +rows.map(function(r,i){var s=r.s,p=r.p;var d=(p.net&&!r.partial)?(s.net-p.net)/p.net:null;return '<tr><td class="n"><i class="sw" style="background:'+css(LOCCOL[i%8])+'"></i>'+esc(r.l.name)+(r.partial?' <span class="pill" title="Opened '+fdate(r.l.first_date)+' — no comparable prior period">new</span>':'')+'</td><td class="r">'+fm(s.net)+'</td><td class="r" style="color:'+(d>=0?'var(--good)':'var(--bad)')+';font-weight:700">'+(d!=null?(d>=0?'+':'')+fp(d):'—')+'</td><td class="r">'+fn(s.guests)+'</td><td class="r">'+fm(s.checks?s.net/s.checks:null,2)+'</td><td class="r">'+fm(s.guests?s.net/s.guests:null,2)+'</td><td class="r">'+fp(s.net?s.lc/s.net:null)+'</td><td class="r">'+fp(s.net?s.p/s.net:null)+'</td><td class="r">'+fm(s.lh?s.net/s.lh:null,0)+'</td><td class="r">'+fm(s.disc)+'</td></tr>';}).join('')+'</table></div></div>'
+    +'<div class="grid" style="margin-top:14px">'+benchmarkPanel(rows)+'</div>'
     +'<div class="grid cols2" style="margin-top:14px">'+panel('Net sales by week by location','',chartBox('c_locs',true))+panel('Labor % by week by location','',chartBox('c_loclab',true))+'</div>';
   var wkAll={}; D.locations.forEach(function(l){rowsIn(l.id,a,b).forEach(function(r){var d=pd(r[0]);d.setDate(d.getDate()-((d.getDay()+6)%7));var w=ds(d);var o=wkAll[w]||(wkAll[w]={_n:0});if(l.id===D.locations[0].id)o._n++;var q=o[l.id]||(o[l.id]={net:0,lc:0});q.net+=r[K.net];q.lc+=r[K.lc];});});
   var wks=Object.keys(wkAll).sort();
