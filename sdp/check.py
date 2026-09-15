@@ -226,6 +226,17 @@ def run(db=None) -> int:
         else:
             r.ok(f"cash entries carry values ({nonzero} of {n_cash} non-zero)")
 
+        # The published views use a 28-day window, so the vocabulary that matters is the vocabulary IN that
+        # window, per location — a type that is common across the whole history can still be absent from what
+        # a director actually sees.
+        recent_cash = _rows(con, """
+            SELECT location_id, COALESCE(type,'(null)') t, COUNT(*) n, ROUND(SUM(ABS(COALESCE(amount,0))),2) val
+            FROM toast_cash_entries
+            WHERE business_date >= (SELECT DATE(MAX(business_date),'-27 days') FROM daily_summary)
+            GROUP BY 1,2 ORDER BY location_id, n DESC""")
+        log.info("cash entries in the published 28-day window: %s",
+                 "; ".join(f"{c['location_id']}/{c['t']}={c['n']}(${c['val']:,.0f})" for c in recent_cash) or "NONE")
+
         # Types the aggregation actually understands. Anything else contributes nothing to over/short.
         known = ("CLOSE_OUT_OVERAGE", "CLOSE_OUT_SHORTAGE", "PAY_OUT", "DRIVER_REIMBURSEMENT", "NO_SALE")
         unknown = [t for t in types if t["t"] not in known]
