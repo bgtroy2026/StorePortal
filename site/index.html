@@ -97,6 +97,15 @@ body.sheetmode #main{background:#f2f1ec}
   .wb .rail button.on{background:var(--navy);color:#fff}}
 .panel{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;min-width:0;overflow-x:auto}
 .panel h3{font-size:13px;color:var(--navy);margin-bottom:2px}
+.ph{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+/* Present but quiet: a director should notice it when they want it, not before. */
+.csv{flex:none;border:1px solid var(--border);background:transparent;color:var(--muted);border-radius:6px;
+  font-size:10.5px;font-weight:700;letter-spacing:.06em;padding:2px 7px;cursor:pointer;opacity:.45;
+  transition:opacity .15s ease,color .15s ease}
+.panel:hover .csv{opacity:1}
+.csv:hover{color:var(--navy);border-color:var(--navy)}
+.csv:focus-visible{opacity:1;outline:2px solid var(--navy);outline-offset:2px}
+@media print{.csv{display:none}}
 .panel .hint{font-size:11.5px;color:var(--muted);margin-bottom:10px}
 .panel .cw{position:relative;height:260px}
 .panel .cw.tall{height:340px}
@@ -397,7 +406,56 @@ function tileNT(label){ return '<div class="tile"><div class="l">'+label+'</div>
 function killCharts(){charts.forEach(function(c){try{c.destroy();}catch(e){}});charts=[];}
 function delta(cur,prev,inv){ if(cur==null||prev==null||!prev)return '<span class="tg">no comparison</span>'; var d=(cur-prev)/Math.abs(prev); var up=d>=0; var good=inv?!up:up; return '<span class="'+(good?'up':'dn')+'">'+(up?'▲':'▼')+' '+fp(Math.abs(d),1)+'</span><span class="tg">vs '+(S.cmp==='ly'?'LY':'prior')+'</span>'; }
 function tile(label,val,dl,extra){ return '<div class="tile"><div class="l">'+label+'</div><div class="v">'+val+'</div><div class="d">'+(dl||'')+(extra||'')+'</div></div>'; }
-function panel(title,hint,body,cls){ return '<div class="panel '+(cls||'')+'"><h3>'+title+'</h3><div class="hint">'+(hint||'')+'</div>'+body+'</div>'; }
+/* Every panel gets a CSV button. It reads the table that is actually on screen rather than the underlying
+   payload, so what downloads is exactly what the director is looking at — same rows, same filters, same date
+   range — and it cannot drift away from the view the way a second export path would. Panels with no table
+   hide the button at render time. */
+function panel(title,hint,body,cls){
+  var id='p'+(panel._n=(panel._n||0)+1);
+  return '<div class="panel '+(cls||'')+'" id="'+id+'"><div class="ph"><h3>'+title+'</h3>'
+    +'<button class="csv" data-csv="'+id+'" title="Download this table as CSV" aria-label="Download '+esc(String(title).replace(/<[^>]*>/g,''))+' as CSV">CSV</button></div>'
+    +'<div class="hint">'+(hint||'')+'</div>'+body+'</div>';
+}
+function csvCell(v){
+  v=String(v==null?'':v).replace(/\u00a0/g,' ').trim();
+  // Money and percentages export as numbers so a spreadsheet can total them; anything else stays as text.
+  var m=v.replace(/[$,]/g,'');
+  // Dividing by 100 in binary floating point turns 8.8% into 0.08800000000000001, which looks like a defect
+  // in a spreadsheet cell. Round to more precision than any displayed percentage carries, then drop the
+  // trailing zeros so the value stays a clean number.
+  if(/^-?\d+(\.\d+)?%$/.test(m)) return String(+(parseFloat(m) / 100).toFixed(8));
+  if(/^-?\d+(\.\d+)?$/.test(m) && /[$,]/.test(v)) return m;
+  if(/[",\n]/.test(v)) return '"'+v.replace(/"/g,'""')+'"';
+  return v;
+}
+function panelCsv(pid){
+  var el=$(pid); if(!el) return;
+  var tbl=el.querySelector('table'); if(!tbl) return;
+  var lines=[];
+  tbl.querySelectorAll('tr').forEach(function(tr){
+    var cells=[...tr.children].map(function(c){return csvCell(c.textContent);});
+    if(cells.length) lines.push(cells.join(','));
+  });
+  if(!lines.length) return;
+  var title=((el.querySelector('h3')||{}).textContent||'table').replace(/[^\w -]/g,'').trim();
+  var name=title.replace(/\s+/g,'-').toLowerCase()+'_'+(S.d0||'')+'_'+(S.d1||'')+'.csv';
+  var blob=new Blob(['\ufeff'+lines.join('\r\n')],{type:'text/csv;charset=utf-8'});
+  var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name;
+  document.body.appendChild(a); a.click();
+  setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); },0);
+}
+/* Delegated, so it keeps working for panels rendered after this binds — which is all of them. */
+document.addEventListener('click',function(e){
+  var b=e.target&&e.target.closest&&e.target.closest('button[data-csv]');
+  if(b){ e.preventDefault(); panelCsv(b.dataset.csv); }
+});
+/* A panel whose body is a chart or an empty state has nothing to export; hide rather than disappoint. */
+function syncCsvButtons(){
+  document.querySelectorAll('button[data-csv]').forEach(function(b){
+    var p=$(b.dataset.csv);
+    b.hidden = !(p && p.querySelector('table') && p.querySelectorAll('table tr').length>1);
+  });
+}
 function chartBox(id,tall){ return '<div class="cw'+(tall?' tall':'')+'"><canvas id="'+id+'"></canvas></div>'; }
 if(window.Chart){Chart.defaults.font.family=getComputedStyle(document.body).fontFamily; Chart.defaults.color=css('ink2'); Chart.defaults.borderColor=css('grid');}
 var baseOpts=function(o){ return Object.assign({responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{display:false},tooltip:{backgroundColor:css('navy'),titleFont:{weight:'700'},padding:8,callbacks:{label:function(c){var v=c.parsed.y!=null?c.parsed.y:c.parsed;return ' '+c.dataset.label+': '+(c.dataset.fmt==='pct'?fp(v):c.dataset.fmt==='int'?fn(v):fm(v));}}}},
@@ -420,6 +478,9 @@ function render(){
   var m=$('main'); m.innerHTML='';
   if(S.page==='scorecard' && !hasScorecard()) S.page='overview';
   ({overview:pgOverview,sales:pgSales,labor:pgLabor,cogs:pgCogs,inventory:pgInventory,events:pgEvents,activations:pgActivations,scorecard:pgScorecard,locations:pgLocations})[S.page](m);
+  // Some panels fill their tables asynchronously (drilldowns, lazily fetched detail), so run once now and
+  // once after the current task settles rather than assuming everything is in the DOM already.
+  syncCsvButtons(); setTimeout(syncCsvButtons,0);
 }
 
 /* ---------- exception digest ----------
@@ -610,14 +671,14 @@ function pgLabor(m){
       +'</div>':'')
     +(hasCash()?'<div class="grid cols2" style="margin-top:14px">'
         +panel('Cash drawer — last 28 days','Over and short, with corrections already netted out','<div id="cashDay"></div>')
-        +panel('Payouts, no-sales and deposits','By reason, and by whose drawer it was','<div id="cashWho"></div>')
+        +panel('Drawers and cash movement — last 28 days','Grouped by drawer; the person column is who performed the count','<div id="cashWho"></div>')
       +'</div>':'')
     +(hasServers()?'<div class="grid" style="margin-top:14px">'
         +panel('By server — last 28 days','Sales per person · servers with fewer than 20 orders are left out, because an average check on a handful of covers is noise','<div id="servers"></div>')
       +'</div>':'')
     +(hasSchedule()?'<div class="grid cols2" style="margin-top:14px">'
         +panel('Scheduled vs worked hours','Last 28 days · bars: scheduled · line: actually worked',chartBox('c_sched',true))
-        +panel('Schedule adherence','Matched per person, per day, per job','<div id="schedTbl"></div>')
+        +panel('Schedule adherence — last 28 days','Matched per person, per day, per job','<div id="schedTbl"></div>')
       +'</div>':'');
   var cur=byDate(a,b);
   var lc=lineCfg(cur.map(function(r){return fdate(r.d);}),[{label:'Labor %',data:cur.map(function(r){return r.net?r.lc/r.net:null;}),borderColor:css('s3'),fmt:'pct'}]);
@@ -1327,7 +1388,7 @@ function benchmarkPanel(rows){
     if(!v.length) return null; var m=Math.floor(v.length/2); return v.length%2?v[m]:(v[m-1]+v[m])/2; }
   var med={}; metrics.forEach(function(m){med[m.k]=median(m.k);});
   function show(v,f){ return v==null?'—':(f==='pct'?fp(v):(f==='money0'?fm(v,0):fm(v,2))); }
-  return panel('How the taprooms compare','Indexed against the group median · rates, not totals, so size is not mistaken for performance',
+  return panel('How the taprooms compare','Selected date range · indexed against the group median · rates, not totals, so size is not mistaken for performance',
     '<div class="tw"><table class="t"><tr><th>Location</th>'
     +metrics.map(function(m){return '<th class="r">'+esc(m.label)+'</th>';}).join('')+'</tr>'
     +vals.map(function(x){
