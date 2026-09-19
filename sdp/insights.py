@@ -15,7 +15,7 @@ import re
 import sqlite3
 from datetime import date, timedelta
 
-from .pours import brand_key, keg_ounces
+from .pours import brand_key, brand_label, keg_ounces
 from .util import settings
 
 
@@ -59,7 +59,8 @@ def beer_volume(con, lid: str, through: date, max_days: int = 56) -> dict:
     brands: dict[str, dict] = {}
     T = {"draft_q": 0.0, "draft_sized_q": 0.0, "draft_oz": 0.0, "pkg_q": 0.0, "pkg_oz": 0.0, "net": 0.0}
     for r in rows:
-        b = brands.setdefault(r["nm"] or "(unnamed)", {"draft_oz": 0.0, "draft_q": 0.0, "unsized_q": 0.0, "pkg_q": 0.0, "net": 0.0})
+        # "Easy Eddy" and "Easy Eddy 16oz" are one beer rung two ways; the size is already in size_oz.
+        b = brands.setdefault(brand_label(r["nm"]) or "(unnamed)", {"draft_oz": 0.0, "draft_q": 0.0, "unsized_q": 0.0, "pkg_q": 0.0, "net": 0.0})
         q, sq, oz = float(r["q"] or 0), float(r["sized_q"] or 0), float(r["oz"] or 0)
         b["net"] += float(r["net"] or 0); T["net"] += float(r["net"] or 0)
         if r["pour"] == "package":
@@ -311,9 +312,11 @@ def menu_analysis(con, lid: str, w28: date, through: date, first_date: str | Non
     for r in _rows(con, """SELECT COALESCE(item_name,'(unnamed)') nm, bucket, CASE WHEN business_date>=? THEN 1 ELSE 0 END cur, SUM(quantity) q, SUM(price) net, COUNT(DISTINCT business_date) days
                            FROM toast_order_items WHERE location_id=? AND voided=0 AND business_date>=? AND business_date<=? AND bucket NOT IN ('Other')
                            GROUP BY 1,2,3""", (a, lid, p0, b)):
-        o = vel.setdefault((r["nm"], r["bucket"]), [0.0, 0.0, 0.0, 0.0, 0])
+        # Beer is folded to the brand so a re-keyed button ("Easy Eddy" -> "Easy Eddy 16oz") is not reported as one
+        # item collapsing and another taking off on the same day.
+        o = vel.setdefault((brand_label(r["nm"]) if r["bucket"] == "Beer" else r["nm"], r["bucket"]), [0.0, 0.0, 0.0, 0.0, 0])
         if r["cur"]:
-            o[0] += float(r["q"] or 0); o[1] += float(r["net"] or 0); o[4] = r["days"]
+            o[0] += float(r["q"] or 0); o[1] += float(r["net"] or 0); o[4] = max(o[4], r["days"] or 0)
         else:
             o[2] += float(r["q"] or 0); o[3] += float(r["net"] or 0)
     rows = [[k[0], k[1], _r(v[0], 0), _r(v[1]), _r(v[2], 0), _r(v[3]), v[4]] for k, v in vel.items() if v[0] or v[2]]
@@ -330,33 +333,52 @@ def menu_analysis(con, lid: str, w28: date, through: date, first_date: str | Non
     if first_date:
         floor = (date.fromisoformat(first_date) + timedelta(days=45)).isoformat()
         recent = (through - timedelta(days=120)).isoformat()
-        firsts = _rows(con, """SELECT item_name nm, MIN(business_date) f, SUM(quantity) q, SUM(price) net FROM toast_order_items
-                               WHERE location_id=? AND voided=0 AND bucket='Beer' AND item_name IS NOT NULL AND business_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
-                               GROUP BY 1 HAVING f>=? AND f>=? AND q>=20""", (lid, floor, recent))
-        for fr in firsts:
+        # A release is a new BEER, not a new button. Taprooms re-key their menus — Solon turned "Easy Eddy" into
+        # "Easy Eddy 16oz" on 7 Sep 2026 — and by item name that reads as eight launches in one day. So first-sale
+        # dates are taken per BRAND (sizes and pack words stripped), and a brand only counts as new if no spelling
+        # of it was sold here before.
+        items = _rows(con, """SELECT item_name nm, MIN(business_date) f, SUM(quantity) q, SUM(price) net FROM toast_order_items
+                              WHERE location_id=? AND voided=0 AND bucket='Beer' AND item_name IS NOT NULL
+                                AND business_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' GROUP BY 1""", (lid,))
+        brands: dict[str, dict] = {}
+        for it in items:
+            k = brand_key(it["nm"])
+            o = brands.setdefault(k, {"names": [], "f": it["f"], "q": 0.0, "net": 0.0, "top": (it["nm"], -1.0)})
+            o["names"].append(it["nm"]); o["f"] = min(o["f"], it["f"]); o["q"] += float(it["q"] or 0); o["net"] += float(it["net"] or 0)
+            if float(it["q"] or 0) > o["top"][1]:
+                o["top"] = (it["nm"], float(it["q"] or 0))
+        for k, o in brands.items():
+            if not (o["f"] >= floor and o["f"] >= recent and o["q"] >= 20):
+                continue
             try:
-                f0 = date.fromisoformat(str(fr["f"])[:10])
-            except (TypeError, ValueError):
-                continue                              # a business date Toast left blank is not a launch date
+                f0 = date.fromisoformat(o["f"])
+            except ValueError:
+                continue
+            marks = ",".join("?" * len(o["names"]))
             wk = []
             for i in range(4):
                 s_, e_ = f0 + timedelta(days=7 * i), f0 + timedelta(days=7 * i + 6)
-                if s_ > through:
-                    wk.append(None); continue
-                v = con.execute("SELECT COALESCE(SUM(quantity),0) FROM toast_order_items WHERE location_id=? AND voided=0 AND item_name=? AND business_date>=? AND business_date<=?",
-                                (lid, fr["nm"], s_.isoformat(), min(e_, through).isoformat())).fetchone()[0]
-                wk.append(_r(float(v or 0), 0) if e_ <= through else None)     # an unfinished week is not a week
-            out["new_beers"].append([fr["nm"], str(fr["f"])[:10], wk, _r(float(fr["q"] or 0), 0), _r(float(fr["net"] or 0))])
+                if e_ > through:
+                    wk.append(None); continue               # an unfinished week is not a week
+                v = con.execute(f"SELECT COALESCE(SUM(quantity),0) FROM toast_order_items WHERE location_id=? AND voided=0 AND item_name IN ({marks}) AND business_date>=? AND business_date<=?",
+                                (lid, *o["names"], s_.isoformat(), e_.isoformat())).fetchone()[0]
+                wk.append(_r(float(v or 0), 0))
+            out["new_beers"].append([brand_label(o["top"][0]), o["f"], wk, _r(o["q"], 0), _r(o["net"])])
         out["new_beers"].sort(key=lambda x: x[1], reverse=True)
     return out
 
 
 def beer_mix(con, lid: str, w28: date, through: date) -> list:
-    """Each beer's share of this taproom's beer units — the column the cross-location brand matrix is built from."""
-    rows = _rows(con, """SELECT COALESCE(item_name,'(unnamed)') nm, COALESCE(SUM(quantity),0) q FROM toast_order_items WHERE location_id=? AND voided=0 AND bucket='Beer'
-                         AND business_date>=? AND business_date<=? GROUP BY 1 ORDER BY q DESC""", (lid, w28.isoformat(), through.isoformat()))
-    tot = sum(float(r["q"] or 0) for r in rows) or 0.0
-    return [[r["nm"], _r(float(r["q"] or 0), 0), _r(float(r["q"] or 0) / tot, 4) if tot else None] for r in rows[:40]]
+    """Each beer's share of this taproom's beer units — the column the cross-location brand matrix is built from.
+    Folded to the brand, so a taproom that keys "Easy Eddy 16oz" lines up with one that keys "Easy Eddy"."""
+    acc: dict[str, float] = {}
+    for r in _rows(con, """SELECT COALESCE(item_name,'(unnamed)') nm, COALESCE(SUM(quantity),0) q FROM toast_order_items WHERE location_id=? AND voided=0 AND bucket='Beer'
+                           AND business_date>=? AND business_date<=? GROUP BY 1""", (lid, w28.isoformat(), through.isoformat())):
+        k = brand_label(r["nm"])
+        acc[k] = acc.get(k, 0.0) + float(r["q"] or 0)
+    tot = sum(acc.values()) or 0.0
+    rows = sorted(acc.items(), key=lambda kv: -kv[1])[:40]
+    return [[k, _r(v, 0), _r(v / tot, 4) if tot else None] for k, v in rows]
 
 
 # ------------------------------------------------------------------------------------------ counting discipline

@@ -52,12 +52,13 @@ def main(src: str, geocache: str, out: str) -> int:
     locs = json.load(open(os.path.join(ROOT, "config", "locations.json")))["locations"]
     mk = json.load(open(os.path.join(ROOT, "config", "markets.json")))
     radius = float(mk.get("radius_miles", 12))
+    per_loc = mk.get("radius_by_location") or {}
     cities = {k: {c.upper() for c in v} for k, v in (mk.get("cities") or {}).items()}
     cache = {}
     if geocache and os.path.exists(geocache):
         cache = (json.load(open(geocache)).get("cache") or {})
     agg: dict[tuple, list] = {}
-    placed = {"geo": 0, "city": 0, "none": 0}
+    placed = {"geo": 0, "outside": 0, "city": 0, "none": 0}
     as_of = None
     files = sorted(glob.glob(os.path.join(src, "Yearly Distributor Data (*).csv")))
     if not files:
@@ -92,8 +93,9 @@ def main(src: str, geocache: str, out: str) -> int:
             hit = cache.get(f"{addr}|{city}|{st}|{z[:5]}") or cache.get(f"{addr}|{city}|{st}|{z}")
             markets = []
             if hit and isinstance(hit, (list, tuple)) and len(hit) >= 2 and hit[0] is not None and hit[1] is not None:
-                markets = [l["slug"] for l in locs if l.get("lat") is not None and miles(hit[0], hit[1], l["lat"], l["lon"]) <= radius]
-                placed["geo"] += 1
+                markets = [l["slug"] for l in locs if l.get("lat") is not None
+                           and miles(hit[0], hit[1], l["lat"], l["lon"]) <= float(per_loc.get(l["slug"], radius))]
+                placed["geo" if markets else "outside"] += 1
             else:
                 markets = [k for k, cs in cities.items() if city in cs and (not mk.get("states") or st in (mk["states"].get(k) or [st]))]
                 placed["city" if markets else "none"] += 1
@@ -113,9 +115,10 @@ def main(src: str, geocache: str, out: str) -> int:
     for (slug, _, _), v in agg.items():
         by[slug] = by.get(slug, 0.0) + v[0]
     print(f"as of {as_of}: {len(agg)} rows -> {out}")
-    print("rows placed by geocode / by city / not placeable:", placed["geo"], "/", placed["city"], "/", placed["none"], "(unplaceable rows are outside every market or have no usable address)")
+    print(f"account-item rows: {placed['geo']} inside a market by geocode, {placed['city']} by city name, "
+          f"{placed['outside']} geocoded but outside every market, {placed['none']} with no geocode and no city match")
     for slug, ce_ in sorted(by.items()):
-        print(f"  {slug:16} {ce_:>12,.0f} CE year to date within {radius:g} miles")
+        print(f"  {slug:16} {ce_:>12,.0f} CE year to date within {float(per_loc.get(slug, radius)):g} miles")
     return 0
 
 

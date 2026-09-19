@@ -179,3 +179,9 @@ def brand_key(name: str | None) -> str:
     # A name made ONLY of the words stripped above ("Big Grove IPA", "Pale Ale") would otherwise collapse to the
     # empty string, and every such beer would merge into one row. Fall back to the whole name.
     return " ".join(sorted(re.sub(r"[^a-z0-9]+", " ", (name or "").lower()).split()))
+
+
+def brand_label(name: str | None) -> str:
+    """The name with its size taken off, for display: "Easy Eddy 16oz" -> "Easy Eddy"."""
+    s = re.sub(r"\s*\b\d+(?:\.\d+)?\s*(?:oz|ml)\b\.?", "", name or "", flags=re.I)
+    return re.sub(r"\s{2,}", " ", s).strip(" -") or (name or "")
