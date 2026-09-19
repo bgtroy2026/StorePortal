@@ -5,9 +5,11 @@ rows; item/labor/vendor/hourly detail is pre-aggregated here for fixed windows t
 """
 from __future__ import annotations
 
+import re
 import sqlite3
 from datetime import date, datetime, timedelta
 
+from . import insights
 from .transform import connect
 from .util import locations, log, settings
 
@@ -36,14 +38,20 @@ def build_payload(con, through: date | None = None) -> dict:
     w56 = through - timedelta(days=55)
     payload = {"meta": {"built_at": datetime.utcnow().isoformat(timespec="seconds") + "Z", "through": through.isoformat(), "since": since.isoformat(),
                         "title": cfg["site"]["title"], "buckets": cfg["category_map"]["buckets"]},
-               "locations": [{"id": l["slug"], "name": l["name"], "short": l.get("short"), "opened": l.get("opened"),
+               "locations": [{"id": l["slug"], "name": l["name"], "short": l.get("short"), "opened": l.get("opened"), "seats": l.get("seats"),
                               # first_date is the earliest business day the POS actually has sales for, taken from the
                               # data rather than the hand-typed `opened` in config/locations.json. A location that opened
                               # partway through the window (Prairie Village, 2026) has no comparable prior period, so the
                               # site suppresses its change-vs-prior figures instead of dividing by a partial baseline.
                               "first_date": (con.execute("SELECT MIN(business_date) FROM daily_summary WHERE location_id=? AND net_sales>0", (l["slug"],)).fetchone() or [None])[0]}
                              for l in locs],
-               "daily": {}, "hourly": {}, "top_items": {}, "labor_jobs": {}, "vendors": {}, "inventory": {}, "activations": [], "targets": {}, "payments": {}, "dining": {}, "revctr": {}, "labor_hourly": {}, "schedule": {}, "tender": {}, "voids": {}, "invoices": {}, "servers": {}, "cash": {}, "pacing": {}, "digest": {}, "discounts": {}, "pnl": {}, "sources": {}, "events": {}, "leads": {}, "events_monthly": {}, "scorecard": {}}
+               "daily": {}, "hourly": {}, "top_items": {}, "labor_jobs": {}, "vendors": {}, "inventory": {}, "activations": [], "targets": {}, "payments": {}, "dining": {}, "revctr": {}, "labor_hourly": {}, "schedule": {}, "tender": {}, "voids": {}, "invoices": {}, "servers": {}, "cash": {}, "pacing": {}, "digest": {}, "discounts": {}, "pnl": {}, "sources": {}, "events": {}, "leads": {}, "events_monthly": {}, "scorecard": {},
+               "beer": {}, "channels": {}, "loyalty": {}, "menu": {}, "beer_mix": {}, "compliance": {}, "weather": {}, "market": {}}
+    # MarginEdge onboarding is still settling, so everything sourced from it is badged provisional in the portal.
+    # One switch in config turns the badges off when the data is trusted; nothing else has to change.
+    payload["meta"]["provisional"] = {"marginedge": bool((cfg.get("marginedge") or {}).get("provisional", True)),
+                                      "note": (cfg.get("marginedge") or {}).get("provisional_note") or
+                                              "MarginEdge onboarding is still in progress — treat inventory, purchases and P&L as provisional."}
 
     for l in locs:
         lid = l["slug"]
@@ -68,7 +76,7 @@ def build_payload(con, through: date | None = None) -> dict:
             GROUP BY 1,2 ORDER BY net DESC LIMIT 40""", (lid, w28.isoformat(), through.isoformat()))]
 
         payload["labor_jobs"][lid] = [[r["job"], _r(r["hrs"]), _r(r["cost"]), r["shifts"]] for r in _rows(con, """
-            SELECT COALESCE(job_name, 'Unknown') job, SUM(regular_hours+overtime_hours) hrs, SUM(wages) cost, COUNT(*) shifts FROM toast_time_entries
+            SELECT COALESCE(job_name, 'Unknown') job, SUM(COALESCE(regular_hours,0)+COALESCE(overtime_hours,0)) hrs, SUM(wages) cost, COUNT(*) shifts FROM toast_time_entries
             WHERE location_id=? AND business_date>=? AND business_date<=? GROUP BY 1 ORDER BY cost DESC""", (lid, w28.isoformat(), through.isoformat()))]
 
         payload["vendors"][lid] = [[r["vendor_name"], _r(r["tot"]), r["n"], r["bucket"]] for r in _rows(con, """
@@ -169,6 +177,24 @@ def build_payload(con, through: date | None = None) -> dict:
             inv.append({"bucket": b, "date": last["count_date"], "value": _r(last["value"]), "prev_date": prev["count_date"] if prev else None, "prev_value": _r(prev["value"]) if prev else None,
                         "purchases": _r(purch) if purch is not None else None, "usage": _r(usage) if usage is not None else None, "sales": _r(sales) if sales is not None else None})
         payload["inventory"][lid] = inv
+
+        first_date = next((x["first_date"] for x in payload["locations"] if x["id"] == lid), None)
+        # Every derived view is isolated. They add to the portal; none of them is worth the nightly publish. A
+        # failure logs loudly and that ONE section is published as null, which the page treats as "not available".
+        def _safe(name, fn, *a):
+            try:
+                return fn(con, lid, *a)
+            except Exception as e:
+                log.error("metrics: %s failed for %s (%s: %s) — published without it", name, lid, type(e).__name__, e)
+                return None
+        payload["beer"][lid] = _safe("beer", insights.beer_volume, through)
+        payload["channels"][lid] = _safe("channels", insights.channels, w28, through)
+        payload["loyalty"][lid] = _safe("loyalty", insights.loyalty, w28, through)
+        payload["menu"][lid] = _safe("menu", insights.menu_analysis, w28, through, first_date)
+        payload["beer_mix"][lid] = _safe("beer_mix", insights.beer_mix, w28, through) or []
+        payload["compliance"][lid] = _safe("compliance", insights.count_compliance, through)
+        payload["weather"][lid] = _safe("weather", insights.weather, since, through)
+        payload["market"][lid] = _safe("market", insights.market, w28, through)
 
         # The digest reads back sections of the payload rather than re-querying, so it can never disagree with
         # the page a director opens to check it. That means it has to run LAST: it previously sat above, where
@@ -312,6 +338,7 @@ DIGEST_RULES = {
     "dead_stock": 3,
     "open_invoices": 10,
     "schedule_gap": 0.05,
+    "count_compliance": 0.75,    # share of expected inventory counts actually made
 }
 
 
@@ -324,8 +351,11 @@ def _digest(con, lid: str, payload: dict, w28: date, through: date) -> list:
     """
     R = DIGEST_RULES
     out = []
-    def add(sev, area, head, detail=""):
-        out.append([sev, area, head, detail])
+    # The fifth element is a STABLE KEY for the rule that fired ("cash_net", "inv_uncounted:Beer"). The wording of
+    # a line changes every night as the numbers move; the key does not, and it is what an acknowledgement is
+    # filed against — so "I'm on it" survives tomorrow's rebuild instead of vanishing with yesterday's sentence.
+    def add(sev, area, head, detail="", key=None):
+        out.append([sev, area, head, detail, key or re.sub(r"[^a-z0-9]+", "_", f"{area}:{head}".lower())[:60]])
 
     prior_start = (w28 - timedelta(days=28)).isoformat()
     cur = con.execute("""SELECT COALESCE(SUM(net_sales),0), COALESCE(SUM(labor_cost),0), COALESCE(SUM(purchases),0),
@@ -348,7 +378,7 @@ def _digest(con, lid: str, payload: dict, w28: date, through: date) -> list:
         if abs(ch) >= R["sales_change"]:
             add("warn" if ch < 0 else "good", "Sales",
                 f"Net sales {'down' if ch < 0 else 'up'} {abs(ch) * 100:.0f}% on the previous 28 days",
-                f"{_r(net):,.0f} vs {_r(pnet):,.0f}")
+                f"{_r(net):,.0f} vs {_r(pnet):,.0f}", key="sales_change")
         # Category movers, but only ones big enough to matter.
         for name, i in (("Food", 3), ("Beer", 4), ("Liquor", 5), ("Wine", 6), ("NA Bev", 7)):
             c, p = float(cur[i]), float(prv[i])
@@ -357,18 +387,18 @@ def _digest(con, lid: str, payload: dict, w28: date, through: date) -> list:
                 if abs(d) >= R["bucket_change"]:
                     add("warn" if d < 0 else "good", "Mix",
                         f"{name} sales {'down' if d < 0 else 'up'} {abs(d) * 100:.0f}%",
-                        f"{_r(c):,.0f} vs {_r(p):,.0f}")
+                        f"{_r(c):,.0f} vs {_r(p):,.0f}", key=f"mix:{name}")
 
     lab_pct = labor / net if net else None
     if lab_pct is not None and prv and prv[0] and float(prv[1]):
         d = lab_pct - (float(prv[1]) / float(prv[0]))
         if d >= R["pct_points"]:
-            add("warn", "Labor", f"Labor up {d * 100:.1f} points to {lab_pct * 100:.1f}% of sales")
+            add("warn", "Labor", f"Labor up {d * 100:.1f} points to {lab_pct * 100:.1f}% of sales", key="labor_up")
     tg = payload["targets"].get(lid, {}).get(through.strftime("%Y-%m"))
     if tg and tg[2] and lab_pct and lab_pct - tg[2] >= R["pct_points"]:
-        add("warn", "Labor", f"Labor {(lab_pct - tg[2]) * 100:.1f} points over the {tg[2] * 100:.0f}% target")
+        add("warn", "Labor", f"Labor {(lab_pct - tg[2]) * 100:.1f} points over the {tg[2] * 100:.0f}% target", key="labor_target")
     if tg and tg[1] and net and (purch / net) - tg[1] >= R["pct_points"]:
-        add("warn", "COGS", f"Purchases {((purch / net) - tg[1]) * 100:.1f} points over the {tg[1] * 100:.0f}% target")
+        add("warn", "COGS", f"Purchases {((purch / net) - tg[1]) * 100:.1f} points over the {tg[1] * 100:.0f}% target", key="cogs_target")
 
     pac = payload["pacing"].get(lid) or {}
     if pac.get("forecast_pct") is not None:
@@ -376,25 +406,25 @@ def _digest(con, lid: str, payload: dict, w28: date, through: date) -> list:
         if abs(d) >= R["pace"]:
             add("warn" if d < 0 else "good", "Pacing",
                 f"Forecast to land {abs(d) * 100:.0f}% {'under' if d < 0 else 'over'} the month's target",
-                f"{_r(pac['forecast']):,.0f} vs {_r(pac['target']):,.0f}")
+                f"{_r(pac['forecast']):,.0f} vs {_r(pac['target']):,.0f}", key="pacing")
 
     if net and pnet and float(prv[8]):
         d = (disc / net) - (float(prv[8]) / pnet)
         if d >= R["comp_points"]:
-            add("warn", "Comps", f"Discounts up {d * 100:.1f} points to {disc / net * 100:.1f}% of sales")
+            add("warn", "Comps", f"Discounts up {d * 100:.1f} points to {disc / net * 100:.1f}% of sales", key="comps_up")
 
     v = payload["voids"].get(lid) or {}
     if v.get("orders") and v.get("orders_ok"):
         rate = v["orders"] / (v["orders"] + v["orders_ok"])
         if rate >= R["void_rate"]:
             add("warn", "Voids", f"{rate * 100:.1f}% of orders voided",
-                f"{v['orders']} orders" + (f", {_r(v['value']):,.0f}" if v.get("valued") else ""))
+                f"{v['orders']} orders" + (f", {_r(v['value']):,.0f}" if v.get("valued") else ""), key="void_rate")
 
     c = payload["cash"].get(lid) or {}
     if c.get("totals") and abs(c["totals"].get("net") or 0) >= R["cash_net"]:
         n = c["totals"]["net"]
         add("warn" if n < 0 else "info", "Cash",
-            f"Drawers net {'short' if n < 0 else 'over'} {abs(n):,.0f} across 28 days")
+            f"Drawers net {'short' if n < 0 else 'over'} {abs(n):,.0f} across 28 days", key="cash_net")
 
     # A bucket missing from the latest count sheet is a data gap, not a finding about the food. It stays silent
     # in every other view by design, which is exactly why the digest has to say it out loud — an uncounted
@@ -404,10 +434,10 @@ def _digest(con, lid: str, payload: dict, w28: date, through: date) -> list:
     for r in _inv:
         if r.get("prev_value") and not r.get("value"):
             add("warn", "Inventory", f"{r['bucket']} was not on the count sheet dated {r['date']}",
-                "usage and cost cannot be calculated for it")
+                "usage and cost cannot be calculated for it", key=f"inv_uncounted:{r['bucket']}")
         elif _newest and r.get("date") and r["date"] != _newest:
             add("info", "Inventory", f"{r['bucket']} last counted {r['date']}",
-                f"other categories were counted {_newest}")
+                f"other categories were counted {_newest}", key=f"inv_stale:{r['bucket']}")
 
     for r in _inv:
         if r.get("usage") and r.get("value") and r.get("prev_date"):
@@ -417,11 +447,11 @@ def _digest(con, lid: str, payload: dict, w28: date, through: date) -> list:
                 woh = r["value"] / weekly
                 if woh >= R["weeks_on_hand"]:
                     add("info", "Inventory", f"{r['bucket']} at {woh:.1f} weeks on hand",
-                        f"{_r(r['value']):,.0f} counted")
+                        f"{_r(r['value']):,.0f} counted", key=f"inv_woh:{r['bucket']}")
 
     inv = payload["invoices"].get(lid) or {}
     if len(inv.get("open") or []) >= R["open_invoices"]:
-        add("info", "Invoices", f"{len(inv['open'])} invoices not in a finished state")
+        add("info", "Invoices", f"{len(inv['open'])} invoices not in a finished state", key="open_invoices")
 
     sc = payload["schedule"].get(lid) or {}
     if sc.get("daily"):
@@ -430,7 +460,22 @@ def _digest(con, lid: str, payload: dict, w28: date, through: date) -> list:
             d = (ta - ts) / ts
             add("warn" if d > 0 else "info", "Schedule",
                 f"{abs(d) * 100:.0f}% {'more' if d > 0 else 'fewer'} hours worked than scheduled",
-                f"{ta:,.0f}h vs {ts:,.0f}h")
+                f"{ta:,.0f}h vs {ts:,.0f}h", key="schedule_gap")
+
+    comp = payload.get("compliance", {}).get(lid) or {}
+    if comp.get("score") is not None and comp["score"] < R["count_compliance"]:
+        missed = [r[0] for r in comp["rows"] if r[3] < r[4]]
+        add("warn", "Counting", f"{comp['score'] * 100:.0f}% of expected inventory counts made in the last {comp['weeks']} weeks",
+            ("behind: " + ", ".join(missed[:5])) if missed else "", key="count_compliance")
+
+    fc = (c.get("float_check") or {}) if c else {}
+    if fc.get("verdict") == "explained":
+        add("info", "Cash", f"Drawer shortages match a float setting: Toast expects {fc['toast_expected']:,.0f}, drawers open with {fc['actual_float']:,.0f}",
+            "fix the expected starting cash in Toast, not the people", key="cash_float")
+
+    # Keg yield is deliberately NOT a digest rule yet: it has not been checked against a real pair of counts, and
+    # house beer arrives as a transfer that MarginEdge may not record as an invoice. It stays on the Beer page,
+    # with its caveats, until it has earned a place in an email.
 
     order = {"warn": 0, "info": 1, "good": 2}
     out.sort(key=lambda x: order.get(x[0], 3))
@@ -605,7 +650,28 @@ def _cash_management(con, lid: str, since: date, through: date) -> dict:
             consistent = {"drawers": len(med_by_drawer), "low": _r(lo), "high": _r(hi),
                           "typical": _r(_median(meds))}
 
+    # What the drawers are SUPPOSED to open with. The pattern test above can say "this looks like a setting";
+    # only the intended float can say which setting, and by how much. inputs/floats.csv carries, per location
+    # (drawer "*") or per drawer, the starting cash Toast is configured to expect and the cash actually put in.
+    floats = _rows(con, "SELECT drawer, toast_expected, actual_float, notes FROM drawer_floats WHERE location_id=?", (lid,))
+    float_check = None
+    if floats:
+        f0 = next((f for f in floats if f["drawer"] in ("*", "")), floats[0])
+        exp_, act_ = f0["toast_expected"], f0["actual_float"]
+        gap = (exp_ - act_) if (exp_ is not None and act_ is not None) else None
+        verdict = None
+        if gap is not None and consistent:
+            # within $15 or 10% of the typical shortage: the float explains it
+            verdict = "explained" if abs(gap - consistent["typical"]) <= max(15.0, 0.1 * consistent["typical"]) else "unexplained"
+        elif gap is not None and abs(gap) >= 1:
+            verdict = "mismatch"                        # floats differ, though no shortage pattern has shown up (yet)
+        elif gap is not None:
+            verdict = "aligned"
+        float_check = {"toast_expected": exp_, "actual_float": act_, "gap": _r(gap) if gap is not None else None,
+                       "verdict": verdict, "rows": [[f["drawer"], f["toast_expected"], f["actual_float"], f["notes"]] for f in floats]}
+
     return {
+        "float_check": float_check,
         "days": [[d, _r(v["over"]), _r(v["short"]), v["exact"]] for d, v in sorted(by_day.items())],
         "by_employee": sorted(([k, _r(v["over"]), _r(v["short"]), v["exact"], _r(v["collected"]), v["nosales"]]
                                for k, v in by_emp.items()), key=lambda x: -(x[2] or 0))[:25],
@@ -924,7 +990,7 @@ def _price_tracking(con, lid: str, through: date, days: int = 180) -> dict:
 def slice_for_location(payload: dict, lid: str) -> dict:
     """A director's bundle: only their location (other locations are not merely hidden — they are absent)."""
     out = {"meta": dict(payload["meta"]), "locations": [l for l in payload["locations"] if l["id"] == lid], "activations": [a for a in payload["activations"] if a["loc"] == lid]}
-    for k in ("daily", "hourly", "top_items", "labor_jobs", "vendors", "inventory", "targets", "payments", "dining", "revctr", "labor_hourly", "schedule", "tender", "voids", "invoices", "servers", "cash", "pacing", "digest", "discounts", "pnl", "sources", "events", "leads", "events_monthly"):
+    for k in ("beer", "channels", "loyalty", "menu", "beer_mix", "compliance", "weather", "market", "daily", "hourly", "top_items", "labor_jobs", "vendors", "inventory", "targets", "payments", "dining", "revctr", "labor_hourly", "schedule", "tender", "voids", "invoices", "servers", "cash", "pacing", "digest", "discounts", "pnl", "sources", "events", "leads", "events_monthly"):
         out[k] = {lid: payload[k].get(lid)} if lid in payload[k] else {}
     return out
 
@@ -936,6 +1002,12 @@ def run(through: date | None = None) -> dict:
     # inside the headline payload.
     through = date.fromisoformat(p["meta"]["through"])
     p["detail"] = {l["id"]: detail_for_location(con, l["id"], through) for l in p["locations"]}
+    since = date.fromisoformat(p["meta"]["since"])
+    for l in p["locations"]:
+        try:
+            p["detail"][l["id"]]["range"] = insights.range_detail(con, l["id"], since, through)
+        except Exception as e:                        # the date picker degrades to fixed windows; the publish goes on
+            log.error("metrics: range detail failed for %s (%s: %s)", l["id"], type(e).__name__, e)
     con.close()
     n = sum(len(v) for v in p["daily"].values())
     nd = sum(len(v.get("variance") or []) for v in p["detail"].values())

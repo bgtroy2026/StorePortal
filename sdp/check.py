@@ -24,6 +24,8 @@ contradiction. Catching a shared wrong assumption still takes a person comparing
 """
 from __future__ import annotations
 
+from datetime import date
+
 import sqlite3
 
 from .transform import NON_LABOR_JOBS, connect
@@ -238,10 +240,55 @@ def run(db=None) -> int:
                  "; ".join(f"{c['location_id']}/{c['t']}={c['n']}(${c['val']:,.0f})" for c in recent_cash) or "NONE")
 
         # Types the aggregation actually understands. Anything else contributes nothing to over/short.
-        known = ("CLOSE_OUT_OVERAGE", "CLOSE_OUT_SHORTAGE", "PAY_OUT", "DRIVER_REIMBURSEMENT", "NO_SALE")
+        known = ("CLOSE_OUT_OVERAGE", "CLOSE_OUT_SHORTAGE", "CLOSE_OUT_EXACT", "CASH_COLLECTED", "TIP_OUT", "PAY_OUT",
+                 "DRIVER_REIMBURSEMENT", "NO_SALE", "UNDO_CASH_COLLECTED", "UNDO_TIP_OUT", "UNDO_NO_SALE", "UNDO_PAY_OUT")
         unknown = [t for t in types if t["t"] not in known]
         _report(r, "cash entry types are all understood by the aggregation", unknown,
                 lambda b: f"{b['t']} x{b['n']} (${b['val']:,.2f})", severity="warn")
+
+    # 12. Pour sizes. Beer volume is only as good as the share of draft sales a size could be read from, and the
+    #     text that would NOT parse is the to-do list. Logged as labels and counts only — this log is public.
+    cap = con.execute("SELECT COUNT(DISTINCT location_id||business_date) FROM toast_order_items WHERE bucket='Beer' AND modifiers IS NOT NULL").fetchone()[0]
+    if cap:
+        cov = _rows(con, """
+            SELECT location_id, SUM(quantity) q, SUM(CASE WHEN size_oz IS NOT NULL THEN quantity ELSE 0 END) sized
+            FROM toast_order_items WHERE bucket='Beer' AND voided=0 AND modifiers IS NOT NULL AND COALESCE(pour,'draft')='draft' GROUP BY 1""")
+        bad = [c for c in cov if c["q"] and c["sized"] / c["q"] < 0.8]
+        _report(r, "at least 80% of draft sales have a readable pour size", bad,
+                lambda b: f"{b['location_id']} {100.0 * b['sized'] / b['q']:.0f}%", severity="warn")
+        uns = _rows(con, """
+            SELECT TRIM(COALESCE(item_name,'(unnamed)') || CASE WHEN COALESCE(modifiers,'')!='' THEN ' ['||modifiers||']' ELSE '' END) t, COUNT(*) n
+            FROM toast_order_items WHERE bucket='Beer' AND voided=0 AND modifiers IS NOT NULL AND size_oz IS NULL AND COALESCE(pour,'draft')='draft'
+            GROUP BY 1 ORDER BY n DESC LIMIT 25""")
+        log.info("draft sales with no readable size (item [modifiers]), most frequent first: %s", "; ".join(u["t"] for u in uns) or "none")
+        mods = _rows(con, """SELECT modifiers m, COUNT(*) n FROM toast_order_items WHERE bucket='Beer' AND COALESCE(modifiers,'')!='' GROUP BY 1 ORDER BY n DESC LIMIT 40""")
+        log.info("most common beer modifier strings: %s", "; ".join(m["m"] for m in mods) or "none")
+        big = _rows(con, "SELECT item_name, modifiers, size_oz FROM toast_order_items WHERE bucket='Beer' AND COALESCE(pour,'draft')='draft' AND size_oz>64 GROUP BY 1,2,3 LIMIT 10")
+        _report(r, "no draft pour larger than a growler", big, lambda b: f"{b['item_name'] or '(unnamed)'} [{b['modifiers'] or ''}] = {b['size_oz']} oz", severity="warn")
+        log.info("pour sizes captured on %d location-days; %d still predate capture (python -m sdp pull --source toast --heal)", cap,
+                 con.execute("""SELECT COUNT(*) FROM (SELECT DISTINCT location_id, business_date FROM toast_order_items WHERE bucket='Beer') o
+                                WHERE NOT EXISTS (SELECT 1 FROM toast_order_items i WHERE i.location_id=o.location_id AND i.business_date=o.business_date AND i.modifiers IS NOT NULL)""").fetchone()[0])
+    else:
+        log.info("pour sizes: nothing captured yet (no day has been pulled since modifiers were added)")
+
+    # 13. Labels the derived views key on. If Toast renames a dining option, the channel split silently files it
+    #     under Other; seeing the vocabulary in the log is how that gets noticed.
+    log.info("dining options: %s", "; ".join(x["d"] for x in _rows(con, "SELECT DISTINCT COALESCE(dining_option,'(null)') d FROM toast_orders ORDER BY 1")))
+    log.info("order sources: %s", "; ".join(x["d"] for x in _rows(con, "SELECT DISTINCT COALESCE(source,'(not captured)') d FROM toast_orders ORDER BY 1")))
+    log.info("loyalty: identified checks captured on %d location-days; vendors: %s",
+             con.execute("SELECT COUNT(DISTINCT location_id||business_date) FROM toast_loyalty").fetchone()[0],
+             "; ".join(x["v"] for x in _rows(con, "SELECT DISTINCT COALESCE(vendor,'(none)') v FROM toast_loyalty")) or "none")
+    kegs = _rows(con, """SELECT DISTINCT COALESCE(pr.name, l.vendor_item_name) nm FROM me_invoice_lines l
+                         LEFT JOIN me_products pr ON pr.product_id=l.product_id AND pr.location_id=l.location_id
+                         WHERE l.bucket='Beer' AND l.invoice_date >= (SELECT DATE(MAX(business_date),'-90 days') FROM daily_summary) ORDER BY 1 LIMIT 60""")
+    log.info("beer products on recent MarginEdge invoices: %s", "; ".join(k["nm"] or "?" for k in kegs) or "none")
+
+    # 14. Weather is context, so its absence only warns — but a silent gap would make the rain analysis lie.
+    wx = _rows(con, """SELECT l.location_id, (SELECT MAX(date) FROM weather_daily w WHERE w.location_id=l.location_id AND w.kind='observed') last
+                       FROM locations l""")
+    through = con.execute("SELECT MAX(business_date) FROM daily_summary WHERE net_sales>0").fetchone()[0]
+    bad = [w for w in wx if not w["last"] or (through and w["last"] < through and (date.fromisoformat(through) - date.fromisoformat(w["last"])).days > 3)]
+    _report(r, "every taproom has recent observed weather", bad, lambda b: f"{b['location_id']} last {b['last'] or 'never'}", severity="warn")
 
     n_days = con.execute("SELECT COUNT(*) FROM daily_summary").fetchone()[0]
     locs = con.execute("SELECT COUNT(DISTINCT location_id) FROM daily_summary").fetchone()[0]
