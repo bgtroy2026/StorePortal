@@ -78,11 +78,13 @@ echo "Pushed $SHA to $REPO"
 # Only if the token happens to carry the Actions permission. A 403 here is not a failure: the push is what
 # matters, and the run can always be started from the Actions page instead.
 # --run        : full refresh (pulls every source, ~27 min)
+# --run-heal   : re-pull past Toast days so history gains newly parsed fields (hours; one pending run at a time)
 # --run-build  : rebuild and republish from the stored warehouse, no API pulls (~1 min) — what a code or
 #                design change actually needs.
 case "${2:-}" in
-  --run|--run-build)
+  --run|--run-build|--run-heal)
     if [ "${2}" = "--run-build" ]; then BODY='{"ref":"main","inputs":{"build_only":"true"}}'; WHAT="build-only republish";
+    elif [ "${2}" = "--run-heal" ]; then BODY='{"ref":"main","inputs":{"source":"toast","heal":"true"}}'; WHAT="Toast history re-pull (heal)";
     else BODY='{"ref":"main","inputs":{}}'; WHAT="full refresh"; fi
     CODE=$(curl -sS -o /tmp/dispatch.out -w '%{http_code}' -X POST \
       -H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.github+json" \
