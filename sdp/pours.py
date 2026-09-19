@@ -40,6 +40,13 @@ DEFAULTS = {
     # Draft sold with NO readable size. None = leave unsized and report it. Set a number only once the unsized
     # list in the portal has been read and the remaining items really are a standard pour.
     "default_draft_oz": None,
+    # Exact item names that carry no size anywhere ("Half Time Tiger Hawk", "Easy Eddy HH", a guest bottle). Matched
+    # on the whole item name, case-insensitively. A number is ounces of draft; {"oz": 12, "pour": "package"} marks a
+    # can or bottle so it stays out of the keg maths.
+    "items": {},
+    # Vessel words that mean the same thing in an item NAME as in a modifier. Deliberately short: "half" and
+    # "tulip" are not here, because "Better Half Stout" is a beer.
+    "name_keywords": ["pint", "crowler", "growler", "howler", "pitcher", "taster", "sampler"],
 }
 
 _OZ = re.compile(r"(\d+(?:\.\d+)?)\s*(?:oz|ounce|ounces)\b", re.I)
@@ -91,6 +98,17 @@ class PourParser:
         self.flight_oz = num(c.get("flight_oz"))
         self.package_words = [str(w).lower() for w in (c.get("package_words") or []) if w]
         self.default_draft_oz = num(c.get("default_draft_oz"))
+        self.items = {}
+        for k, v in (c.get("items") or {}).items():
+            if str(k).startswith("_"):
+                continue
+            if isinstance(v, dict):
+                oz, pour = num(v.get("oz")), ("package" if str(v.get("pour") or "").lower().startswith("pack") else "draft")
+            else:
+                oz, pour = num(v), "draft"
+            if oz:
+                self.items[str(k).strip().lower()] = (oz, pour)
+        self.name_keywords = {str(w).lower() for w in (c.get("name_keywords") or [])}
         self._kw_re = [(re.compile(r"\b" + re.escape(k) + r"s?\b", re.I), v) for k, v in self.keywords]
         self._pkg_re = re.compile(r"\b(?:" + "|".join(re.escape(w) for w in self.package_words) + r")\b", re.I) if self.package_words else None
 
@@ -99,6 +117,9 @@ class PourParser:
         name = (item_name or "")
         mods = (modifiers or "")
         text = f"{name} | {mods}"
+        hit = self.items.get(name.strip().lower())
+        if hit and not _OZ.search(mods):              # a size rung as a modifier still beats the configured default
+            return hit
         # Whole words only. Unanchored, "can" matches "AmeriCAN IPA" and every pint in that category silently
         # becomes a can. The pack words are looked for in the MODIFIERS and the sales category, never the brand
         # name, for the same reason: "Bottle Rocket IPA" is a draft beer.
@@ -136,12 +157,12 @@ class PourParser:
         for rx, oz in self._kw_re:
             if rx.search(mods):
                 return oz, ("package" if packaged else "draft")
-        # A crowler or growler sold as its own menu item carries the word in the name.
-        m = re.search(r"\b(crowler|growler|howler)s?\b", name, re.I)
-        if m:
-            kw = dict(self.keywords).get(m.group(1).lower())
-            if kw:
-                return kw, "draft"
+        # A few vessel words are safe to read out of the item name too ("Hawkeye Easy Eddy Pint", "Crowler Fill").
+        kwd = dict(self.keywords)
+        for w in re.findall(r"[a-z]+", name.lower()):
+            w = w[:-1] if w.endswith("s") and w[:-1] in self.name_keywords else w
+            if w in self.name_keywords and kwd.get(w):
+                return kwd[w], ("package" if packaged else "draft")
         if packaged:
             return None, "package"
         return (float(self.default_draft_oz) if self.default_draft_oz else None), "draft"
@@ -162,7 +183,7 @@ def keg_ounces(*texts: str | None) -> float | None:
 
 
 _BRAND_STRIP = re.compile(r"\b(?:\d+\s*/\s*\d+(?:\s*/\s*[\d.]+)?|\d+(?:\.\d+)?\s*(?:oz|ml|l|gal)|1\s*/\s*[246]\s*(?:bbl|barrel|bl)?|half|quarter|sixth|sixtel|bbl|barrel|keg|kegs|draft|draught|"
-                          r"\d+\s*(?:pk|pack)|can|cans|bottle|bottles|case|ipa|pale|ale|lager|pils|pilsner|big grove|bgb|brewery|historical)\b", re.I)
+                          r"\d+\s*(?:pk|pack)|can|cans|bottle|bottles|case|beer|ipa|pale|ale|lager|pils|pilsner|big grove|bgb|brewery|historical)\b", re.I)
 
 
 def brand_key(name: str | None) -> str:
