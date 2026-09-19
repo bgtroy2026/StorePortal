@@ -10,7 +10,7 @@ import json
 import shutil
 from pathlib import Path
 
-from . import metrics
+from . import digest_mail, metrics
 from .bundle import bundle_id, derive_key, encrypt
 from .util import ROOT, SITE_DIR, env, log
 
@@ -57,6 +57,15 @@ def run(secret: str | None = None, dev_json: bool = False) -> dict:
             buf = encrypt(obj, derive_key(secret, label, epoch))
             (data / f"{bid}.bin").write_bytes(buf)
             written[label] = {"file": f"data/{bid}.bin", "bytes": len(buf)}
+        # The morning email, rendered here and sent by the Apps Script. Built from the same payload the pages
+        # use, so the email can never quote a figure the portal does not show.
+        try:
+            dg = digest_mail.build(payload)
+            buf = digest_mail.stream_encrypt(dg, derive_key(secret, "digest", epoch))
+            (data / f"{bundle_id('digest', epoch)}.bin").write_bytes(buf)
+            written["digest"] = {"file": f"data/{bundle_id('digest', epoch)}.bin", "bytes": len(buf)}
+        except Exception as e:                       # an email must never cost the site its publish
+            log.warning("digest email not built (%s: %s)", type(e).__name__, e)
         # a public manifest with only build time + data-through date (no data) so the shell can show freshness pre-login
     # The epoch is published deliberately: it is a salt, not a secret, and the Apps Script reads it from here
     # so there is one source of truth rather than two settings that can drift apart.

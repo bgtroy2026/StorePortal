@@ -29,6 +29,21 @@
  *   {"a":"ping","s":<sid>}         → log a portal open
  *   {"a":"scorecard","k":<key>}    → the Leadership Scorecard tab, for the nightly pipeline (no user session)
  *   {"a":"usage","s":<sid>}        → portal usage (admins only): who has signed in, how often, and who never has
+ *   {"a":"view","s":<sid>,"p":<page>,"l":<loc>} → log one page view (which pages earn their keep)
+ *   {"a":"acks","s":<sid>}         → acknowledgements on digest exceptions, for the locations this person covers
+ *   {"a":"ack","s":<sid>,"loc","key","state","note","head"} → acknowledge / resolve / reopen one exception
+ *
+ * Time-driven (no request): morningTick() runs every 15 minutes once installTriggers() has been run ONCE from
+ * the editor. It starts the nightly refresh on GitHub, emails the morning digest when the build lands, and
+ * emails an alert if it has not landed by 8 AM Central. See the MORNING section below.
+ *
+ * Extra Script Properties for that:
+ *   GH_TOKEN          — fine-grained GitHub token, repo bgtroy2026/StorePortal, Actions: Read and write. REQUIRED for
+ *                       the refresh to start from here. Without it the tick still emails digests and alerts.
+ *   GH_TOKEN_EXPIRES  — YYYY-MM-DD, optional; a warning is emailed weekly from 14 days before it.
+ *   DIGEST_MODE       — 'preview' (default: every digest goes to ALERT_TO, subject prefixed with who it was FOR)
+ *                       or 'live' (each person gets their own).
+ *   ALERT_TO          — where alerts and previews go. Defaults to the first Admin on the roster.
  */
 
 var ALLOWED_DOMAINS = ['biggrove.com', 'biggrovebrewery.com'];
@@ -58,6 +73,9 @@ function handle(body) {
   if (req.a === 'signin') return doSignin(String(req.t || ''));
   if (req.a === 'scorecard') return doScorecard(String(req.k || ''));
   if (req.a === 'usage') return doUsage(String(req.s || ''));
+  if (req.a === 'view') return doView(String(req.s || ''), String(req.p || ''), String(req.l || ''));
+  if (req.a === 'acks') return doAcks(String(req.s || ''));
+  if (req.a === 'ack') return doAck(String(req.s || ''), req);
   return { ok: false, error: 'unknown action' };
 }
 
@@ -299,7 +317,9 @@ function doUsage(sid) {
                   last: by[left].last ? by[left].last.toISOString() : null });
   }
   people.sort(function (a, b) { return String(b.last || '').localeCompare(String(a.last || '')); });
-  return { ok: true, people: people, never: never, recent: recent, generated_at: new Date().toISOString() };
+  var views = { pages: [], by_person: [] };
+  try { views = viewSummary(ss); } catch (ignored) {}
+  return { ok: true, people: people, never: never, recent: recent, views: views, generated_at: new Date().toISOString() };
 }
 
 // ---- helpers --------------------------------------------------------------------------------------------
@@ -363,4 +383,341 @@ function setupRoster() {
 function testDerivation() {
   var b = bundleFor(prop('PORTAL_SECRET'), 'all');
   Logger.log(b.id + ' ' + b.key);
+}
+
+
+/** A cell that begins with = + - or @ is a FORMULA to Sheets, and appendRow evaluates it. Everything a signed-in
+ *  user can type (a note) or send (a location, a headline) is neutralised before it is written. */
+function cellSafe(v) { v = String(v == null ? '' : v); return /^[=+\-@\t\r]/.test(v) ? "'" + v : v; }
+
+// =====================================================================================================
+// PAGE VIEWS
+// =====================================================================================================
+// Sign-ins say who turned up; page views say what they came for. One row per page per session (the portal
+// de-duplicates before calling), so this is a record of attention, not a click stream.
+
+function doView(sid, page, loc) {
+  var s = readSid(sid);
+  if (!s) return { ok: false, error: 'expired session' };
+  page = String(page || '').replace(/[^a-z0-9_:-]/gi, '').slice(0, 40);
+  if (!page) return { ok: false, error: 'no page' };
+  try {
+    var ss = SpreadsheetApp.openById(prop('SHEET_ID'));
+    var sh = ss.getSheetByName('Views');
+    if (!sh) { sh = ss.insertSheet('Views'); sh.appendRow(['When', 'Email', 'Role', 'Page', 'Location']); sh.setFrozenRows(1); }
+    sh.appendRow([new Date(), s.e, s.r, page, String(loc || '').toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 40)]);
+  } catch (ignored) {}
+  return { ok: true };
+}
+
+// Page totals for the usage view: last 28 days, by page and by person-page.
+function viewSummary(ss) {
+  var sh = ss.getSheetByName('Views');
+  var pages = {}, people = {};
+  if (!sh || sh.getLastRow() < 2) return { pages: [], by_person: [] };
+  var rows = sh.getRange(2, 1, sh.getLastRow() - 1, 5).getValues();
+  var cutoff = Date.now() - 28 * 864e5;
+  for (var i = 0; i < rows.length; i++) {
+    var w = rows[i][0];
+    if (!(w instanceof Date) || w.getTime() < cutoff) continue;
+    var pg = String(rows[i][3] || ''), em = String(rows[i][1] || '').toLowerCase();
+    var o = pages[pg] || (pages[pg] = { page: pg, views: 0, people: {} });
+    o.views++; o.people[em] = 1;
+    var k = em + '|' + pg;
+    people[k] = (people[k] || 0) + 1;
+  }
+  var out = [];
+  for (var p in pages) out.push({ page: p, views: pages[p].views, people: Object.keys(pages[p].people).length });
+  out.sort(function (a, b) { return b.views - a.views; });
+  var bp = [];
+  for (var k2 in people) { var parts = k2.split('|'); bp.push([parts[0], parts[1], people[k2]]); }
+  bp.sort(function (a, b) { return b[2] - a[2]; });
+  return { pages: out, by_person: bp.slice(0, 80) };
+}
+
+// =====================================================================================================
+// EXCEPTION ACKNOWLEDGEMENTS
+// =====================================================================================================
+// The digest tells a director what needs them. This is how they answer it: acknowledged (I have seen it),
+// resolved (it is dealt with, and here is what I did), or reopened. Filed against the rule's STABLE KEY rather
+// than its wording, because the sentence changes every night as the numbers move and the key does not.
+// Append-only: the latest row per location+key is the current state, and the history is the record of what
+// was done about it -- which is the point.
+
+var ACK_STATES = { ack: 1, resolved: 1, open: 1 };
+
+function rosterLocations(ss, email) {
+  var rows = rosterSheet(ss).getDataRange().getValues();
+  for (var i = 1; i < rows.length; i++) {
+    if (String(rows[i][0]).toLowerCase().trim() !== email) continue;
+    var role = String(rows[i][2] || '');
+    var locs = String(rows[i][3] || '').toLowerCase().replace(/\s+/g, '');
+    if (/^(leadership|admin)/i.test(role) || locs === 'all' || !locs) return 'all';
+    return locs.split(',').filter(Boolean);
+  }
+  return [];
+}
+
+function ackSheet(ss) {
+  var sh = ss.getSheetByName('Exceptions');
+  if (!sh) {
+    sh = ss.insertSheet('Exceptions');
+    sh.appendRow(['When', 'Email', 'Name', 'Location', 'Key', 'State', 'Note', 'Headline']);
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+
+function doAck(sid, req) {
+  var s = readSid(sid);
+  if (!s) return { ok: false, error: 'expired session' };
+  var loc = String(req.loc || '').toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 40);
+  var key = String(req.key || '').replace(/[^A-Za-z0-9_: -]/g, '').slice(0, 80);
+  var state = String(req.state || '');
+  if (!loc || !key || !ACK_STATES[state]) return { ok: false, error: 'bad request' };
+  var ss = SpreadsheetApp.openById(prop('SHEET_ID'));
+  var mine = rosterLocations(ss, s.e);
+  if (mine !== 'all' && mine.indexOf(loc) === -1) return { ok: false, error: 'not your location' };
+  var note = String(req.note || '').slice(0, 500), head = String(req.head || '').slice(0, 200);
+  ackSheet(ss).appendRow([new Date(), s.e, cellSafe(s.n), loc, cellSafe(key), state, cellSafe(note), cellSafe(head)]);
+  return { ok: true, ack: { loc: loc, key: key, state: state, note: note, by: s.n || s.e, at: new Date().toISOString() } };
+}
+
+function doAcks(sid) {
+  var s = readSid(sid);
+  if (!s) return { ok: false, error: 'expired session' };
+  var ss = SpreadsheetApp.openById(prop('SHEET_ID'));
+  var mine = rosterLocations(ss, s.e);
+  var sh = ss.getSheetByName('Exceptions');
+  var latest = {}, history = [];
+  if (sh && sh.getLastRow() > 1) {
+    var rows = sh.getRange(2, 1, sh.getLastRow() - 1, 8).getValues();
+    var cutoff = Date.now() - 60 * 864e5;
+    for (var i = 0; i < rows.length; i++) {
+      var w = rows[i][0], loc = String(rows[i][3] || '');
+      if (!(w instanceof Date) || w.getTime() < cutoff) continue;
+      if (mine !== 'all' && mine.indexOf(loc) === -1) continue;
+      var a = { loc: loc, key: String(rows[i][4] || ''), state: String(rows[i][5] || ''), note: String(rows[i][6] || ''),
+                head: String(rows[i][7] || ''), by: String(rows[i][2] || rows[i][1] || ''), at: w.toISOString() };
+      latest[loc + '|' + a.key] = a;               // rows are in time order, so the last one wins
+      history.push(a);
+    }
+  }
+  var out = [];
+  for (var k in latest) out.push(latest[k]);
+  return { ok: true, acks: out, history: history.slice(-60).reverse() };
+}
+
+// =====================================================================================================
+// MORNING: start the refresh, email the digest, raise the alarm
+// =====================================================================================================
+// Why this lives here. The refresh used to be started by a scheduled task that needed Troy's Mac, and between
+// 15 and 19 Sep 2026 it fired every morning, reported success, and started nothing -- it had no access to the
+// machine holding its token. Every one of those days the data arrived on GitHub's own late cron, after lunch.
+// Apps Script time triggers run on Google's side with no computer involved, and this project is already the
+// portal's backend, so the job moved here.
+//
+// One function on a 15-minute trigger rather than three timed ones: Apps Script fires "at 5am" anywhere in a
+// one-hour window, and the three jobs depend on each other (no digest before the build lands, no alarm if it
+// did). A tick that looks at the clock and at what has already happened today is simpler and cannot race.
+
+var REPO = 'bgtroy2026/StorePortal';
+var TZ = 'America/Chicago';
+
+/** Run ONCE from the editor (it will ask for permission to send mail and call GitHub). Safe to re-run. */
+function installTriggers() {
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'morningTick') ScriptApp.deleteTrigger(t); });
+  ScriptApp.newTrigger('morningTick').timeBased().everyMinutes(15).create();
+  var msg = 'morningTick installed (every 15 min). GH_TOKEN: ' + (prop('GH_TOKEN') ? 'set' : 'MISSING - the refresh cannot start from here until it is added') +
+            ' | DIGEST_MODE: ' + (prop('DIGEST_MODE') || 'preview') + ' | alerts to: ' + alertTo();
+  Logger.log(msg); return msg;
+}
+
+function centralNow() {
+  var d = new Date();
+  return { date: Utilities.formatDate(d, TZ, 'yyyy-MM-dd'), hm: Number(Utilities.formatDate(d, TZ, 'HHmm')), dow: Number(Utilities.formatDate(d, TZ, 'u')) };
+}
+
+function alertTo() {
+  var to = prop('ALERT_TO');
+  if (to) return to;
+  try {
+    var rows = rosterSheet(SpreadsheetApp.openById(prop('SHEET_ID'))).getDataRange().getValues();
+    for (var i = 1; i < rows.length; i++) if (/^admin/i.test(String(rows[i][2] || ''))) return String(rows[i][0]).trim();
+  } catch (ignored) {}
+  return Session.getEffectiveUser().getEmail();
+}
+
+function morningTick() {
+  var p = PropertiesService.getScriptProperties();
+  var now = centralNow(), notes = [];
+  // Each step is isolated: a failure starting the refresh must not stop the alarm that says it never landed.
+  function step(name, fn) { try { fn(); } catch (e) { notes.push(name + ' FAILED: ' + e); } }
+
+  // 1. Start the refresh: first tick at or after 5:15 AM Central, once per day.
+  step('dispatch', function () {
+    if (!(now.hm >= 515 && now.hm < 1200) || p.getProperty('DISPATCHED_ON') === now.date) return;
+    var r = dispatchRefresh();
+    notes.push('dispatch: ' + r);
+    if (/^(started|already)/.test(r)) { p.setProperty('DISPATCHED_ON', now.date); return; }
+    if (now.hm >= 600 && p.getProperty('DISPATCH_ALERT_ON') !== now.date) {
+      p.setProperty('DISPATCH_ALERT_ON', now.date);
+      mail(alertTo(), 'Store Director Portal: the morning refresh could not be started',
+           'The 5:15 AM refresh was not started: ' + r + '\n\nGitHub\'s own late schedule will still run it around midday. ' +
+           'If this mentions a token, create a new fine-grained token for ' + REPO + ' (Actions: Read and write) and put it in the GH_TOKEN script property.');
+    }
+  });
+
+  // "Fresh" means built today AND carrying yesterday's trading. A code-only republish at 1 AM is built today and a
+  // day stale; it must neither trigger the digest nor silence the alarm.
+  var man = null;
+  step('manifest', function () { man = siteManifest(); });
+  var yesterday = Utilities.formatDate(new Date(Date.now() - 864e5), TZ, 'yyyy-MM-dd');
+  var fresh = !!(man && String(man.built_local || '') === now.date && String(man.through || '') >= yesterday);
+
+  // 2. Email the digest once, between 5:30 and noon. The day is marked BEFORE sending: if a send throws halfway
+  //    down the roster, the cost is some people missing one email -- not everyone above them receiving it again
+  //    every fifteen minutes for the rest of the morning.
+  step('digest', function () {
+    if (!fresh || now.hm < 530 || now.hm >= 1200 || p.getProperty('DIGEST_SENT_ON') === now.date) return;
+    p.setProperty('DIGEST_SENT_ON', now.date);
+    notes.push('digest: ' + sendDigests());
+  });
+
+  // 3. Raise the alarm if nothing fresh has landed by 8:00.
+  step('stale', function () {
+    if (fresh || now.hm < 800 || now.hm >= 1300 || p.getProperty('STALE_ALERT_ON') === now.date) return;
+    p.setProperty('STALE_ALERT_ON', now.date);
+    mail(alertTo(), 'Store Director Portal: no fresh data yet this morning',
+         'It is past 8 AM Central and the portal is not showing yesterday. Last build: ' + (man ? man.built_at : 'unknown') +
+         ', data through ' + (man ? man.through : 'unknown') + '.\n\nCheck https://github.com/' + REPO + '/actions for a failed or queued run.');
+    notes.push('stale alert sent');
+  });
+
+  // 4. Token expiry, Mondays from 14 days out.
+  step('token', function () {
+    var exp = p.getProperty('GH_TOKEN_EXPIRES');
+    if (!exp || now.dow !== 1 || now.hm < 800 || now.hm >= 815) return;
+    var days = Math.round((new Date(exp + 'T12:00:00Z').getTime() - Date.now()) / 864e5);
+    if (days <= 14) mail(alertTo(), 'Store Director Portal: the GitHub token expires in ' + days + ' days',
+                         'The token that starts the morning refresh (GH_TOKEN) expires on ' + exp + '. Create a replacement for ' + REPO +
+                         ' (Actions: Read and write), paste it into the GH_TOKEN script property, and update GH_TOKEN_EXPIRES. ' +
+                         'The deploy token file on the Mac (.storeportal-token) was created at the same time and expires with it.');
+  });
+  if (notes.length) logEvent('system', 'morningTick', 'Admin', notes.join(' | '));
+  return notes.join(' | ') || 'nothing to do';
+}
+
+function siteManifest() {
+  try {
+    var r = UrlFetchApp.fetch(prop('SITE_URL').replace(/\/$/, '') + '/data/manifest.json?t=' + Date.now(), { muteHttpExceptions: true });
+    if (r.getResponseCode() !== 200) return null;
+    var j = JSON.parse(r.getContentText());
+    j.built_local = j.built_at ? Utilities.formatDate(new Date(j.built_at), TZ, 'yyyy-MM-dd') : '';
+    return j;
+  } catch (e) { return null; }
+}
+
+function dispatchRefresh() {
+  var tok = prop('GH_TOKEN');
+  if (!tok) return 'no GH_TOKEN script property';
+  var h = { Authorization: 'Bearer ' + tok, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' };
+  try {
+    var runs = UrlFetchApp.fetch('https://api.github.com/repos/' + REPO + '/actions/workflows/refresh.yml/runs?per_page=6', { headers: h, muteHttpExceptions: true });
+    if (runs.getResponseCode() === 401 || runs.getResponseCode() === 403) return 'token rejected (HTTP ' + runs.getResponseCode() + ')';
+    if (runs.getResponseCode() === 200) {
+      var today = Utilities.formatDate(new Date(), 'UTC', 'yyyy-MM-dd');
+      var list = JSON.parse(runs.getContentText()).workflow_runs || [];
+      for (var i = 0; i < list.length; i++) {
+        var run = list[i];
+        if (String(run.created_at).slice(0, 10) !== today) continue;
+        if (run.status !== 'completed') return 'already running (#' + run.run_number + ')';
+        // A code-only republish (build_only) is over in a minute and pulls nothing; it must not count as the
+        // day's refresh. A real run takes many minutes.
+        var mins = (new Date(run.updated_at).getTime() - new Date(run.run_started_at).getTime()) / 60000;
+        if ((run.conclusion === 'success' || run.conclusion === 'failure') && mins > 8) return 'already done (#' + run.run_number + ', ' + run.conclusion + ')';
+      }
+    }
+    var r = UrlFetchApp.fetch('https://api.github.com/repos/' + REPO + '/actions/workflows/refresh.yml/dispatches',
+      { method: 'post', headers: h, contentType: 'application/json', payload: JSON.stringify({ ref: 'main', inputs: {} }), muteHttpExceptions: true });
+    return r.getResponseCode() === 204 ? 'started' : 'GitHub said HTTP ' + r.getResponseCode() + ' ' + r.getContentText().slice(0, 120);
+  } catch (e) { return 'error: ' + e; }
+}
+
+function mail(to, subject, body, html) {
+  var o = { to: to, subject: subject, name: 'Big Grove Store Director Portal' };
+  if (html) o.htmlBody = html; else o.body = body;
+  if (html && body) o.body = body;
+  MailApp.sendEmail(o);
+}
+
+/**
+ * Email each person their morning digest.
+ *
+ * The pipeline publishes data/digest.bin beside the bundles: one HTML section per location plus a company
+ * roll-up, encrypted with a key derived from PORTAL_SECRET exactly as the bundle keys are (label "digest").
+ * Apps Script has no AES, so this file uses the SHA-256 counter-mode stream the Sales Portal's Monday digest
+ * already uses -- confidentiality only, which is all a public Pages URL needs.
+ *
+ * Who gets what comes from the roster: a Director gets the sections for the locations on their row; Leadership
+ * and Admin get the roll-up. In 'preview' mode (the default) NOBODY but ALERT_TO receives anything -- each
+ * digest is sent there with the intended recipient in the subject, so the content can be judged before a
+ * single director is emailed. Set the DIGEST_MODE script property to 'live' to switch over.
+ */
+function sendDigests() {
+  var secret = prop('PORTAL_SECRET');
+  if (!secret) return 'no PORTAL_SECRET';
+  var b = bundleFor(secret, 'digest');
+  var resp = UrlFetchApp.fetch(prop('SITE_URL').replace(/\/$/, '') + '/data/' + b.id + '.bin?t=' + Date.now(), { muteHttpExceptions: true });
+  if (resp.getResponseCode() !== 200) return 'digest file not published (HTTP ' + resp.getResponseCode() + ')';
+  var payload = streamDecrypt(resp.getContent(), b.key);
+  var live = String(prop('DIGEST_MODE') || 'preview').toLowerCase() === 'live';
+  var preview = alertTo();
+  var rows = rosterSheet(SpreadsheetApp.openById(prop('SHEET_ID'))).getDataRange().getValues();
+  var sent = 0, skipped = [];
+  for (var i = 1; i < rows.length; i++) {
+    var email = String(rows[i][0] || '').trim(), name = String(rows[i][1] || '').trim();
+    var role = String(rows[i][2] || 'Director').trim(), locs = String(rows[i][3] || '').toLowerCase().replace(/\s+/g, '');
+    if (!email) continue;
+    // The roster is typed by hand. An address outside the company cannot sign in, and must not be emailed figures.
+    if (ALLOWED_DOMAINS.indexOf((email.toLowerCase().split('@')[1] || '')) === -1) { skipped.push(email + ' (outside domain)'); continue; }
+    if (String(rows[i][4] || '').toLowerCase().trim() === 'no') { skipped.push(email + ' (opted out)'); continue; }   // optional 5th column: digest = no
+    var all = /^(leadership|admin)/i.test(role) || locs === 'all' || !locs;
+    var html, subject;
+    if (all) { html = payload.all && payload.all.html; subject = payload.all && payload.all.subject; }
+    else {
+      var parts = [], heads = [];
+      locs.split(',').filter(Boolean).forEach(function (l) { var sct = payload.locations[l]; if (sct) { parts.push(sct.html); heads.push(sct.subject); } });
+      html = parts.join('<div style="height:28px"></div>');
+      subject = heads.length === 1 ? heads[0] : ('Morning digest: ' + heads.length + ' taprooms, ' + payload.through_label);
+    }
+    if (!html) { skipped.push(email + ' (no section)'); continue; }
+    html = payload.head + html + payload.foot;
+    try {
+      mail(live ? email : preview, (live ? '' : '[preview for ' + (name || email) + '] ') + subject, 'Open the portal: ' + prop('SITE_URL'), html);
+      sent++;
+    } catch (e) { skipped.push(email + ' (send failed: ' + e + ')'); }
+  }
+  logEvent('system', 'digest', 'Admin', 'digest sent ' + sent + (live ? '' : ' (preview to ' + preview + ')') + (skipped.length ? ' | skipped: ' + skipped.join(', ') : ''));
+  return 'sent ' + sent + (live ? '' : ' (preview)');
+}
+
+function streamDecrypt(bytes, keyB64) {
+  var key = Utilities.base64Decode(keyB64);
+  var nonce = bytes.slice(0, 16), ct = bytes.slice(16), out = [], blk = null, bi = 0;
+  for (var i = 0; i < ct.length; i++) {
+    if (i % 32 === 0) {
+      var ctr = [(bi >>> 24) & 255, (bi >>> 16) & 255, (bi >>> 8) & 255, bi & 255].map(function (x) { return (x << 24) >> 24; });
+      blk = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, key.concat(nonce, ctr)); bi++;
+    }
+    out.push(((ct[i] & 255) ^ (blk[i % 32] & 255)) << 24 >> 24);
+  }
+  return JSON.parse(Utilities.ungzip(Utilities.newBlob(out, 'application/x-gzip', 'digest.json.gz')).getDataAsString('UTF-8'));
+}
+
+/** Run from the editor to see exactly what tomorrow's digest would send, without sending it. */
+function previewDigestToMe() {
+  var p = PropertiesService.getScriptProperties(), was = p.getProperty('DIGEST_MODE');
+  p.setProperty('DIGEST_MODE', 'preview');
+  try { return sendDigests(); } finally { if (was) p.setProperty('DIGEST_MODE', was); else p.deleteProperty('DIGEST_MODE'); }
 }
