@@ -28,13 +28,12 @@ from .util import settings
 # taprooms ring things, and is surfaced in the portal as such.
 DEFAULTS = {
     # keyword (lower-case, matched as a whole word) -> ounces
-    "keywords": {
-        "pint": 16, "half pint": 8, "half pour": 8, "half": 8, "taster": 5, "sample": 5, "sampler": 5,
-        "crowler": 32, "growler": 64, "howler": 32, "pitcher": 60, "stein": 33.8, "liter": 33.8, "litre": 33.8,
-        "tulip": 12, "snifter": 10, "goblet": 12,
-    },
-    # a flight is several small pours; total ounces for the whole flight
-    "flight_oz": 20,
+    # Only measures that mean the same thing everywhere. The first real modifier list (2026-09-19) showed why the
+    # rest had to go: this account pours an "18.2 oz Stein", so the textbook one-litre stein would have been wrong
+    # by half, and "Sample" could be a 7 oz pour or a free taste. Glassware is config, not a default.
+    "keywords": {"pint": 16, "half pint": 8, "crowler": 32, "growler": 64, "howler": 32},
+    # a flight is several small pours; total ounces for the whole flight. None = flights are reported as unsized.
+    "flight_oz": None,
     # words that mark a sale as packaged (to-go cans/bottles), not draft
     "package_words": ["pk", "pack", "4pk", "6pk", "12pk", "can", "cans", "bottle", "bottles", "case", "to-go cans", "togo"],
     # Draft sold with NO readable size. None = leave unsized and report it. Set a number only once the unsized
@@ -46,10 +45,12 @@ DEFAULTS = {
     "items": {},
     # Vessel words that mean the same thing in an item NAME as in a modifier. Deliberately short: "half" and
     # "tulip" are not here, because "Better Half Stout" is a beer.
-    "name_keywords": ["pint", "crowler", "growler", "howler", "pitcher", "taster", "sampler"],
+    "name_keywords": ["pint", "crowler", "growler", "howler"],
 }
 
 _OZ = re.compile(r"(\d+(?:\.\d+)?)\s*(?:oz|ounce|ounces)\b", re.I)
+# "16 lager", "16 pint", "12 - tulip": a bare number straight before a glass word is ounces, as rung at the bar.
+_BARE = re.compile(r"\b(\d{1,2}(?:\.\d)?)\s*-?\s*(?=(?:lager|pint|tulip|grenade|stein|glass|draft|pour)\b)", re.I)
 _ML = re.compile(r"(\d+(?:\.\d+)?)\s*ml\b", re.I)
 _MULTI = re.compile(r"(\d+)\s*(?:pk|pack|-pack|x)\b", re.I)                 # 4pk, 6 pack, 4x
 _MULTI2 = re.compile(r"\b(\d+)\s*/\s*(\d+(?:\.\d+)?)\s*(?:oz)\b", re.I)      # 4/16oz
@@ -145,6 +146,9 @@ class PourParser:
                 if 0 < oz <= 128:
                     mult = _MULTI.search(src) if packaged else None
                     return (oz * int(mult.group(1)) if mult else oz), ("package" if packaged else "draft")
+            bare = _BARE.search(src) if src is mods else None
+            if bare and 2 <= float(bare.group(1)) <= 64:
+                return float(bare.group(1)), ("package" if packaged else "draft")
             ml = _ML.search(src)
             if ml:
                 return round(float(ml.group(1)) / 29.5735, 1), ("package" if packaged else "draft")

@@ -108,9 +108,9 @@
     }
   },
   "pours": {
-    "_comment": "Overrides for sdp/pours.py. keywords maps a word found in a beer's modifier or name to fluid ounces. Every value is an assumption about how the taprooms ring draft; correct them from the 'could not be sized' list on the Beer volume panel. default_draft_oz stays null until that list has been read.",
+    "_comment": "Overrides for sdp/pours.py. keywords maps a word found in a beer's MODIFIER to fluid ounces (built in: pint 16, half pint 8, crowler 32, growler 64, howler 32 - add glassware such as \"sample\" or \"grenade stein\" here once someone who pours it has said what it holds). items maps a whole item name to ounces. flight_oz is the total ounces in a flight; null leaves flights on the unsized list. default_draft_oz stays null until that list has been read.",
     "keywords": {},
-    "flight_oz": 20,
+    "flight_oz": null,
     "default_draft_oz": null,
     "items": {
       "_comment": "Exact item name -> ounces, for beers rung with no size anywhere. Examples: \"Half Time Tiger Hawk\": 16   or   \"Mich Ultra\": {\"oz\": 12, \"pour\": \"package\"}. Work down the 'could not be sized' list on the Beer page."
