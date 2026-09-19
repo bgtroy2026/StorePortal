@@ -33,6 +33,9 @@
  *   {"a":"acks","s":<sid>}         → acknowledgements on digest exceptions, for the locations this person covers
  *   {"a":"ack","s":<sid>,"loc","key","state","note","head"} → acknowledge / resolve / reopen one exception
  *
+ *   {"a":"depletions_put","s":<sid>,"rows":[[...]]} → admin uploads the brand x market depletion roll-up
+ *   {"a":"depletions","k":<key>}  → the same rows, for the nightly pipeline (HMAC of PORTAL_SECRET, like scorecard)
+ *
  * Time-driven (no request): morningTick() runs every 15 minutes once installTriggers() has been run ONCE from
  * the editor. It starts the nightly refresh on GitHub, emails the morning digest when the build lands, and
  * emails an alert if it has not landed by 8 AM Central. See the MORNING section below.
@@ -76,6 +79,8 @@ function handle(body) {
   if (req.a === 'view') return doView(String(req.s || ''), String(req.p || ''), String(req.l || ''));
   if (req.a === 'acks') return doAcks(String(req.s || ''));
   if (req.a === 'ack') return doAck(String(req.s || ''), req);
+  if (req.a === 'depletions') return doDepletions(String(req.k || ''));
+  if (req.a === 'depletions_put') return doDepletionsPut(String(req.s || ''), req);
   return { ok: false, error: 'unknown action' };
 }
 
@@ -720,4 +725,54 @@ function previewDigestToMe() {
   var p = PropertiesService.getScriptProperties(), was = p.getProperty('DIGEST_MODE');
   p.setProperty('DIGEST_MODE', 'preview');
   try { return sendDigests(); } finally { if (was) p.setProperty('DIGEST_MODE', was); else p.deleteProperty('DIGEST_MODE'); }
+}
+
+
+// =====================================================================================================
+// DEPLETIONS: brand x taproom-market case equivalents
+// =====================================================================================================
+// The roll-up is built on the Mac from the VIP exports (tools/build_depletions.py). It is coarse -- no accounts,
+// no prices -- but it is still the company's sales data, and the repository that builds the portal is public. So it
+// does not travel through the repository at all. An Admin uploads it from the portal; it rests in a "Depletions"
+// tab of the roster workbook; the nightly pipeline collects it exactly as it collects the scorecard, proving
+// itself with an HMAC of PORTAL_SECRET. No new credential, no new permission, nothing public.
+
+var DEP_HEADER = ['location_id', 'brand', 'premise', 'ce_ty', 'ce_ly', 'accounts', 'as_of'];
+
+function doDepletionsPut(sid, req) {
+  var s = readSid(sid);
+  if (!s) return { ok: false, error: 'expired session' };
+  if (!/^admin/i.test(String(s.r || ''))) return { ok: false, error: 'not permitted' };
+  var rows = req.rows;
+  if (!rows || !rows.length || rows.length > 6000) return { ok: false, error: 'expected 1-6000 rows' };
+  var out = [];
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    if (!r || r.length < 7) return { ok: false, error: 'row ' + (i + 1) + ' is short' };
+    var loc = String(r[0]).toLowerCase().replace(/[^a-z0-9-]/g, ''), prem = String(r[2]).toUpperCase() === 'ON' ? 'ON' : 'OFF';
+    var ty = Number(r[3]), ly = Number(r[4]), acc = Number(r[5]);
+    if (!loc || !String(r[1]).trim() || isNaN(ty) || isNaN(ly)) return { ok: false, error: 'row ' + (i + 1) + ' is malformed' };
+    out.push([loc, cellSafe(String(r[1]).slice(0, 80)), prem, ty, ly, isNaN(acc) ? 0 : acc, cellSafe(String(r[6]).slice(0, 10))]);
+  }
+  var ss = SpreadsheetApp.openById(prop('SHEET_ID'));
+  var sh = ss.getSheetByName('Depletions') || ss.insertSheet('Depletions');
+  sh.clearContents();
+  sh.getRange(1, 1, 1, DEP_HEADER.length).setValues([DEP_HEADER]);
+  sh.getRange(1, 7, out.length + 1, 1).setNumberFormat('@');          // as_of stays text; Sheets would otherwise turn it into a date
+  sh.getRange(1, 2, out.length + 1, 1).setNumberFormat('@');          // so does a brand that looks like a number
+  sh.getRange(2, 1, out.length, DEP_HEADER.length).setValues(out);
+  sh.setFrozenRows(1);
+  logEvent(s.e, s.n, s.r, 'depletions upload: ' + out.length + ' rows, as of ' + out[0][6]);
+  return { ok: true, rows: out.length, as_of: out[0][6] };
+}
+
+function doDepletions(k) {
+  var secret = prop('PORTAL_SECRET');
+  if (!secret) return { ok: false, error: 'PORTAL_SECRET script property is not set' };
+  var want = Utilities.base64Encode(Utilities.computeHmacSha256Signature('depletions', secret, Utilities.Charset.UTF_8));
+  if (!k || k !== want) return { ok: false, error: 'bad key' };
+  var sh = SpreadsheetApp.openById(prop('SHEET_ID')).getSheetByName('Depletions');
+  if (!sh || sh.getLastRow() < 2) return { ok: true, rows: [] };
+  var vals = sh.getRange(2, 1, sh.getLastRow() - 1, DEP_HEADER.length).getDisplayValues();
+  return { ok: true, header: DEP_HEADER, rows: vals, fetched_at: new Date().toISOString() };
 }

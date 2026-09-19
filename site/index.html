@@ -2034,10 +2034,25 @@ function beerMixPanel(){
       return '<tr><td class="n">'+esc(b)+'</td>'+sh.map(function(v){ return '<td class="r" style="background:rgba(42,120,214,'+(v&&mx?(0.04+0.34*(v/mx)).toFixed(2):0)+')">'+(v==null?'—':fp(v,1))+'</td>'; }).join('')+'<td class="r">'+fn(tot[b])+'</td></tr>'; }).join('')
     +'</table></div>')+'</div>';
 }
+/* Admin-only: hand the depletion roll-up to the sign-in backend, which keeps it in the roster workbook for the
+   nightly build to collect. It never goes near the (public) repository. */
+function depUploadHtml(){
+  if(!/^admin/i.test((P&&P.role)||'') || !sessionSid()) return '';
+  return '<div class="src noprint" style="margin-top:10px">Admin: <label class="ackb" style="display:inline-block;cursor:pointer">Upload depletions.csv<input type="file" id="depFile" accept=".csv" style="display:none"></label> <span id="depMsg"></span> · built on the Mac with <code>tools/build_depletions.py</code>; shows here after the next refresh.</div>';
+}
+function parseCsv(t){ var rows=[],row=[],cur='',q=false; for(var i=0;i<t.length;i++){ var c=t[i]; if(q){ if(c==='"'){ if(t[i+1]==='"'){cur+='"';i++;} else q=false; } else cur+=c; } else if(c==='"') q=true; else if(c===','){row.push(cur);cur='';} else if(c==='\n'||c==='\r'){ if(c==='\r'&&t[i+1]==='\n')i++; row.push(cur);cur=''; if(row.length>1||row[0]!=='')rows.push(row); row=[]; } else cur+=c; } if(cur!==''||row.length){row.push(cur);rows.push(row);} return rows; }
+document.addEventListener('change',function(e){
+  if(!e.target||e.target.id!=='depFile'||!e.target.files[0]) return;
+  var msg=$('depMsg'), rd=new FileReader();
+  rd.onload=function(){ var rows=parseCsv(String(rd.result)); if(!rows.length||rows[0][0]!=='location_id'){ msg.textContent='That does not look like depletions.csv.'; return; }
+    rows=rows.slice(1); msg.textContent='Uploading '+rows.length+' rows…';
+    scriptPost(JSON.stringify({a:'depletions_put',s:sessionSid(),rows:rows})).then(function(r){return r.json();}).then(function(j){ msg.textContent=j&&j.ok?('Uploaded '+j.rows+' rows, as of '+j.as_of+'.'):('Refused: '+((j&&j.error)||'unknown')); }).catch(function(){ msg.textContent='Could not reach the sign-in service.'; }); };
+  rd.readAsText(e.target.files[0]);
+});
 function marketPanel(){
   var ids=locIds().filter(function(l){ var mk=(D.market||{})[l]; return mk&&mk.rows&&mk.rows.length; });
   if(!ids.length) return '<div class="grid" style="margin-top:14px">'+panel('Taproom vs the market around it','Brand velocity at the bar beside distributor depletions nearby',
-    '<div class="empty">No depletion file loaded. It is built on the Mac from the VIP exports the Sales Portal already downloads — <code>python3 tools/build_depletions.py</code> — and carries brand-by-market case equivalents only: no accounts, no prices.</div>')+'</div>';
+    '<div class="empty">No depletion file loaded. It is built on the Mac from the VIP exports the Sales Portal already downloads — <code>python3 tools/build_depletions.py</code> — and carries brand-by-market case equivalents only: no accounts, no prices.</div>'+depUploadHtml())+'</div>';
   return ids.map(function(l){ var mk=D.market[l];
     return '<div class="grid" style="margin-top:14px">'+panel('Taproom vs the market around it — '+esc(locName(l)),'Taproom: units, last 28 days, vs the same 28 days last year · Market: distributor case equivalents within the market radius, year to date as of '+esc(mk.as_of||'?')+', vs the same span last year',
       '<div class="tw"><table class="t"><tr><th>Brand</th><th class="r">Taproom units</th><th class="r">Share of taproom beer</th><th class="r">Taproom vs LY</th><th class="r">Market CE</th><th class="r">Share of market</th><th class="r">Market vs LY</th><th class="r">On-premise CE</th><th class="r">Buying accounts</th><th>Reading</th></tr>'
@@ -2048,7 +2063,7 @@ function marketPanel(){
         return '<tr><td class="n">'+esc(r[0])+'</td><td class="r">'+(r[1]==null?'—':fn(r[1]))+'</td><td class="r">'+fp(r[2],1)+'</td><td class="r"'+c(r[3])+'>'+(r[3]==null?'—':(r[3]>=0?'+':'')+fp(r[3],0))+'</td>'
           +'<td class="r">'+(r[4]==null?'—':fn(r[4]))+'</td><td class="r">'+fp(r[5],1)+'</td><td class="r"'+c(r[6])+'>'+(r[6]==null?'—':(r[6]>=0?'+':'')+fp(r[6],0))+'</td><td class="r">'+(r[7]==null?'—':fn(r[7]))+'</td><td class="r">'+(r[8]==null?'—':fn(r[8]))+'</td><td class="tg" style="white-space:normal">'+rd+'</td></tr>'; }).join('')
       +'</table></div>'
-      +notice(mk.matched+' brands matched by name between Toast and VIP.'+(mk.taproom_has_ly?'':' This taproom has no sales a year ago to compare against.')+' This is a side-by-side, not yet a test of which moves first: that needs the depletion history to build up week by week, which it does each time the file is rebuilt.')); }).join('')+'</div>';
+      +notice(mk.matched+' brands matched by name between Toast and VIP.'+(mk.taproom_has_ly?'':' This taproom has no sales a year ago to compare against.')+' This is a side-by-side, not yet a test of which moves first: that needs the depletion history to build up week by week, which it does each time the file is rebuilt.')+depUploadHtml()); }).join('')+'</div>';
 }
 
 /* =========================================================================================

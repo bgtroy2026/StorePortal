@@ -601,7 +601,7 @@ def load_inputs(con) -> dict:
                         [(r["location_id"], r["count_date"], r["bucket"], r["value"], r["source"]) for r in inv])
     def _f(v):
         try:
-            return float(v) if str(v).strip() != "" else None
+            return float(str(v).replace(",", "")) if str(v).strip() != "" else None
         except ValueError:
             return None
     fl = [{"location_id": r["location_id"], "drawer": r.get("drawer") or "*", "toast_expected": _f(r.get("toast_expected")),
@@ -609,6 +609,12 @@ def load_inputs(con) -> dict:
     con.execute("DELETE FROM drawer_floats"); _upsert(con, "drawer_floats", fl)
     dep = [{"location_id": r["location_id"], "brand": r["brand"], "premise": (r.get("premise") or "ALL").upper(), "ce_ty": _f(r.get("ce_ty")) or 0.0,
             "ce_ly": _f(r.get("ce_ly")) or 0.0, "accounts": int(_f(r.get("accounts")) or 0), "as_of": r.get("as_of")} for r in inputs.read_depletions() if r.get("location_id") and r.get("brand")]
+    # The uploaded roll-up (via the roster workbook) wins over a local CSV; the CSV remains for local development.
+    for slug, ds, p_, j in iter_raw("depletions"):
+        up = [{"location_id": r[0], "brand": r[1].lstrip("'"), "premise": (r[2] or "ALL").upper(), "ce_ty": _f(r[3]) or 0.0, "ce_ly": _f(r[4]) or 0.0,
+               "accounts": int(_f(r[5]) or 0), "as_of": str(r[6]).lstrip("'")} for r in (j.get("rows") or []) if len(r) >= 7 and r[0] and r[1]]
+        if up:
+            dep = up
     if dep:                                  # an absent file leaves the last loaded depletions in place
         con.execute("DELETE FROM depletions"); _upsert(con, "depletions", dep)
     return {"activations": len(a), "targets": len(t), "inventory_counts": len(inv), "floats": len(fl), "depletions": len(dep)}

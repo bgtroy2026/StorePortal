@@ -139,6 +139,14 @@ def cmd_pull(a):
                 failed.append("scorecard"); log.error("Scorecard pull failed (%s: %s) — continuing with other sources", type(e).__name__, e)
         else:
             log.warning("APPS_SCRIPT_URL / PORTAL_SECRET not set — skipping the Leadership Scorecard")
+    if a.source in ("all", "scorecard"):
+        # Rides with the scorecard: same backend, same proof. Optional in the same way weather is.
+        if env("APPS_SCRIPT_URL") and env("PORTAL_SECRET"):
+            try:
+                from . import depletions
+                depletions.pull()
+            except Exception as e:
+                log.warning("depletions not pulled (%s: %s) — the taproom-vs-market view keeps its last load", type(e).__name__, e)
     if a.source in ("all", "tripleseat"):
         # The refresh token is the piece that makes this unattended; without it the consent step has not been
         # done yet and there is nothing to run. It may live in the warehouse (after a rotation) or the secret.
