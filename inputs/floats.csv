@@ -1,0 +1,5 @@
+location_id,drawer,toast_expected,actual_float,notes
+# What each cash drawer should open with. One row per location with drawer = * covers every drawer there; add rows with a drawer name to override one.
+# toast_expected = the starting cash Toast is configured to expect (Toast Web > Payments > Cash drawers).  actual_float = the cash actually put in the drawer at open.
+# When the two differ by the amount the drawers are short every night, the Cash page says so and the shortage stops reading as a people problem.
+# Example:  omaha,*,500,100,Floats were cut to $100 in the spring; Toast still expects $500

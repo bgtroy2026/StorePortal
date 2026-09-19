@@ -3,6 +3,8 @@
   activations.csv       market activations, events, promos — overlaid on sales trends
   targets.csv           monthly targets per location (sales, COGS %, labor %, guests)
   inventory_counts.csv  inventory value per bucket per count date (until the MarginEdge count-sheet endpoint is wired)
+  floats.csv            what each cash drawer should open with, per location (feeds the cash float test)
+  depletions.csv        distributor depletions by brand x taproom market (built by tools/build_depletions.py)
 """
 from __future__ import annotations
 
@@ -30,3 +32,11 @@ def read_targets() -> list[dict]:
 
 def read_inventory_counts() -> list[dict]:
     return _read("inventory_counts.csv")
+
+
+def read_floats() -> list[dict]:
+    return _read("floats.csv")
+
+
+def read_depletions() -> list[dict]:
+    return _read("depletions.csv")

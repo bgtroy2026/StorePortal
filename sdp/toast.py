@@ -171,7 +171,7 @@ def _existing_days(slug: str) -> set[str]:
 
 
 def pull(locations: list[dict], days_back: int, incremental_days: int, warehouse_days: set[tuple[str, str]] | None = None,
-         max_minutes: float | None = None) -> dict:
+         max_minutes: float | None = None, newest_first: bool = False) -> dict:
     """Pull Toast for each configured restaurant. `warehouse_days` = (slug, business_date) already loaded in the DB,
     so a fresh runner (no raw/ cache) still only re-pulls the incremental window plus missing days.
 
@@ -215,10 +215,20 @@ def pull(locations: list[dict], days_back: int, incremental_days: int, warehouse
             if d > end - timedelta(days=incremental_days) or iso(d) not in have:
                 days.append(d)
             d += timedelta(days=1)
+        loc_deadline = deadline
+        if newest_first and deadline:
+            # Share what is left of the budget evenly across the taprooms still to come, so the first one in the
+            # list cannot spend the whole run healing its own history while the other five get nothing.
+            left = len(locations) - locations.index(loc)
+            loc_deadline = time.monotonic() + max(0.0, deadline - time.monotonic()) / max(left, 1)
+        if newest_first:
+            # When healing history under a time budget, the recent past is worth more than last autumn: whatever
+            # the budget reaches should be the days people actually look at.
+            days.sort(reverse=True)
         n_orders = 0
         t0, last_note = time.monotonic(), time.monotonic()
         if days:
-            log.info("Toast %s: %d business days to pull (%s..%s)", slug, len(days), iso(days[0]), iso(days[-1]))
+            log.info("Toast %s: %d business days to pull (%s..%s)", slug, len(days), iso(min(days)), iso(max(days)))
         for n, d in enumerate(days, 1):
             # progress every ~2 minutes, with a rate-based estimate — a silent hour-long backfill is unreviewable
             if time.monotonic() - last_note > 120:
@@ -230,6 +240,9 @@ def pull(locations: list[dict], days_back: int, incremental_days: int, warehouse
                 if not stopped:
                     log.warning("Toast: time budget reached — stopping cleanly; the next run continues where this left off")
                 stopped = True
+                break
+            if newest_first and loc_deadline and time.monotonic() > loc_deadline:
+                log.info("Toast %s: this taproom's share of the heal budget is spent (%d of %d days) — moving on", slug, n - 1, len(days))
                 break
             orders = t.orders_for_business_date(guid, d)
             n_orders += len(orders)

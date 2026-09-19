@@ -1,0 +1,15 @@
+{
+  "_comment": "What counts as each taproom's market for the taproom-vs-distribution view (tools/build_depletions.py). An account belongs to a market when it is within radius_miles of the taproom; accounts missing from the geocode cache fall back to the city lists. Markets may overlap (North Liberty sits between Solon and Iowa City) and each is read on its own.",
+  "radius_miles": 12,
+  "cities": {
+    "solon": ["Solon", "North Liberty", "Ely", "Mount Vernon", "Lisbon", "Swisher", "Shueyville"],
+    "iowa-city": ["Iowa City", "Coralville", "North Liberty", "Tiffin", "University Heights", "Hills"],
+    "cedar-rapids": ["Cedar Rapids", "Marion", "Hiawatha", "Robins", "Fairfax"],
+    "des-moines": ["Des Moines", "West Des Moines", "Ankeny", "Urbandale", "Clive", "Johnston", "Waukee", "Altoona", "Windsor Heights", "Pleasant Hill", "Grimes"],
+    "omaha": ["Omaha", "Bellevue", "Papillion", "La Vista", "Ralston", "Elkhorn", "Council Bluffs"],
+    "prairie-village": ["Prairie Village", "Overland Park", "Leawood", "Mission", "Kansas City", "Shawnee", "Lenexa", "Merriam", "Fairway", "Roeland Park", "Mission Hills", "Westwood"]
+  },
+  "states": {
+    "solon": ["IA"], "iowa-city": ["IA"], "cedar-rapids": ["IA"], "des-moines": ["IA"], "omaha": ["NE", "IA"], "prairie-village": ["KS", "MO"]
+  }
+}

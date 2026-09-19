@@ -35,6 +35,13 @@ JOBS = [("Server", 7.25), ("Bartender", 8.0), ("Line Cook", 17.0), ("Prep Cook",
 VENDORS = [("Sysco", "Food"), ("US Foods", "Food"), ("Capital City Fruit", "Food"), ("Big Grove Production", "Beer"),
            ("Johnson Brothers", "Liquor"), ("Southern Glazer's", "Wine"), ("Coca-Cola Bottling", "NA Bev"), ("Ecolab", "Other"), ("Big Grove Merch", "Retail")]
 DINING = ["DINE_IN", "TAKE_OUT", "DINE_IN", "DINE_IN", "ONLINE", "DINE_IN", "BAR"]
+# Real dining-option names as this account returns them, weighted roughly as they occur. The delivery partners
+# matter: channel mix and commission-adjusted margin are read off these names.
+DINING_NAMES = [("Dine In", 62), ("Bar", 14), ("Take Out", 8), ("Online Ordering - Takeout", 5), ("Doordash - Delivery", 5),
+                ("Doordash - Takeout", 2), ("Curbside", 1), ("Thanx", 2), ("Toast Delivery Services", 1)]
+# How draft is actually rung: brand name on the item, pour size as a modifier — and sometimes no modifier at all,
+# which is the case the pour parser has to report rather than guess.
+DRAFT_MODS = [("16oz", 58), ("10oz", 14), ("Crowler", 5), ("Pint", 8), ("5oz Taster", 4), ("", 11)]
 FIRST_NAMES = ["Avery", "Brooke", "Caleb", "Dana", "Eli", "Faith", "Gus", "Hana", "Ivan", "Jules", "Kara", "Liam", "Mia", "Nora"]
 LAST_NAMES = ["Alder", "Boone", "Cruz", "Diaz", "Ellis", "Ford", "Gray", "Hart", "Ingram", "Jansen", "Keller", "Lowe", "Meyer", "Nash"]
 
@@ -77,7 +84,7 @@ def gen_toast(loc: dict, loc_idx: int, start: date, end: date, events: dict[str,
     # Lookup tables, mirroring config/v2 and labor/v1/employees, so mock mode exercises the same guid ->
     # name resolution the real pull depends on (the bug that made the portal show raw guids).
     W("toast", slug, "config-diningOptions", "all",
-      {"diningOptions": [{"guid": _g("do:" + b), "name": b.replace("_", " ").title(), "behavior": b} for b in sorted(set(DINING))]})
+      {"diningOptions": [{"guid": _g("do:" + n_), "name": n_, "behavior": ("DINE_IN" if n_ in ("Dine In", "Bar") else "TAKE_OUT")} for n_, w in DINING_NAMES]})
     W("toast", slug, "config-revenueCenters", "all",
       {"revenueCenters": [{"guid": _g(f"rc:{slug}:{n}"), "name": n} for n in ("Bar", "Dining", "Patio")]})
     W("toast", slug, "config-salesCategories", "all",
@@ -129,7 +136,12 @@ def gen_toast(loc: dict, loc_idx: int, start: date, end: date, events: dict[str,
                 t = round(line * 0.07, 2)
                 amount += line; tax += t
                 if not voided: day_sales.setdefault(iso(d), {})[b] = day_sales.setdefault(iso(d), {}).get(b, 0) + line
-                sels.append({"guid": _g(f"sel:{og}:{j}"), "entityType": "MenuItemSelection", "item": {"guid": _g(f"item:{slug}:{name}")}, "itemGroup": {"guid": _g(f"grp:{slug}:{grp}")},
+                mods = []
+                if grp == "Draft" and "Flight" not in name:
+                    mm = rnd.choices([m for m, w in DRAFT_MODS], weights=[w for m, w in DRAFT_MODS])[0]
+                    if mm:
+                        mods = [{"guid": _g(f"mod:{og}:{j}"), "displayName": mm, "price": 0.0}]
+                sels.append({"guid": _g(f"sel:{og}:{j}"), "entityType": "MenuItemSelection", "modifiers": mods, "item": {"guid": _g(f"item:{slug}:{name}")}, "itemGroup": {"guid": _g(f"grp:{slug}:{grp}")},
                              "salesCategory": {"guid": _g(f"sc:{slug}:{sc}"), "name": sc}, "displayName": name, "quantity": q, "preDiscountPrice": pre, "price": line, "tax": t,
                              "voided": False, "createdDate": _ts(d, hour + 0.1 * j), "appliedDiscounts": ([{"guid": _g(f"disc:{og}:{j}"), "discountAmount": disc, "name": "Happy Hour", "discountType": "PERCENT"}] if disc else [])})
             # Toast includes service charges INSIDE the check amount, so net sales contains them while the
@@ -151,11 +163,21 @@ def gen_toast(loc: dict, loc_idx: int, start: date, end: date, events: dict[str,
             refund = round(total, 2) if (not voided and rnd.random() < 0.004) else 0.0
             pay = {"guid": _g(f"pay:{og}"), "type": ptype, "cardType": ("VISA" if ptype == "CREDIT" else None), "amount": total, "tipAmount": tip, "paidDate": _ts(d, hour + 0.8),
                    "refundStatus": ("FULL" if refund else "NONE"), "refund": ({"refundAmount": refund, "tipRefundAmount": 0, "refundDate": _ts(d + timedelta(days=1), 10)} if refund else None)}
-            orders.append({"guid": og, "entityType": "Order", "businessDate": int(d.strftime("%Y%m%d")), "openedDate": _ts(d, hour), "closedDate": _ts(d, hour + 0.9), "modifiedDate": _ts(d, hour + 1),
-                           "diningOption": {"guid": _g("do:" + rnd.choice(DINING)), "behavior": rnd.choice(DINING)}, "revenueCenter": {"guid": _g(f"rc:{slug}:{'Bar' if hour > 20 else rnd.choice(['Dining', 'Dining', 'Patio'])}")},
+            dname = rnd.choices([n_ for n_, w in DINING_NAMES], weights=[w for n_, w in DINING_NAMES])[0]
+            # ~1 check in 6 belongs to an identified loyalty member, drawn from a pool so some come back.
+            member = f"{slug}-m{int(rnd.paretovariate(1.2)) % 400}" if rnd.random() < 0.17 else None
+            chk_disc = []
+            if member and rnd.random() < 0.2 and amount > 12:
+                chk_disc = [{"guid": _g(f"ldisc:{og}"), "discountAmount": 5.0, "name": "$5 OFF Your Purchase - 700 Cheers", "discountType": "FIXED",
+                             "loyaltyDetails": {"vendor": "INTEGRATION", "referenceId": _g(f"lref:{og}")}}]
+                amount = round(amount - 5.0, 2); total = round(amount + tax, 2)
+                pay["amount"] = total
+            orders.append({"guid": og, "entityType": "Order", "source": ("DoorDash" if dname.startswith("Doordash") else "Online" if "Online" in dname else "In Store"), "businessDate": int(d.strftime("%Y%m%d")), "openedDate": _ts(d, hour), "closedDate": _ts(d, hour + 0.9), "modifiedDate": _ts(d, hour + 1),
+                           "diningOption": {"guid": _g("do:" + dname)}, "revenueCenter": {"guid": _g(f"rc:{slug}:{'Bar' if hour > 20 else rnd.choice(['Dining', 'Dining', 'Patio'])}")},
                            "server": {"guid": rnd.choice(servers)}, "numberOfGuests": guests, "voided": voided, "voidDate": (_ts(d, hour + 0.5) if voided else None),
                            "checks": [{"guid": cg, "entityType": "Check", "amount": amount, "taxAmount": tax, "totalAmount": total, "voided": voided, "paymentStatus": "CLOSED",
-                                       "selections": sels, "payments": [pay], "appliedDiscounts": [], "appliedServiceCharges": ([{"chargeAmount": svc, "gratuity": True, "name": "Auto grat"}] if svc else [])}]})
+                                       "selections": sels, "payments": [pay], "appliedDiscounts": chk_disc,
+                                       "appliedLoyaltyInfo": ({"guid": _g(f"loy:{og}"), "vendor": "INTEGRATION", "loyaltyIdentifier": member} if member else None), "appliedServiceCharges": ([{"chargeAmount": svc, "gratuity": True, "name": "Auto grat"}] if svc else [])}]})
         W("toast", slug, "orders", iso(d), {"businessDate": iso(d), "orders": orders})
         n_orders_total += n
         d += timedelta(days=1)
@@ -425,6 +447,16 @@ def generate(locations: list[dict], days: int = 120, toast: bool = True) -> None
               {"locations": [{"id": 3000 + i, "name": l.get("tripleseat_name") or l["name"]} for i, l in enumerate(locations)]})
     forward = end + timedelta(days=180)
     for i, loc in enumerate(locations):
+        wr = random.Random(f"wx:{loc['slug']}")
+        wx = []
+        for n in range(days + 9):
+            dd = start + timedelta(n)
+            base = 58 + 28 * math.sin((dd.timetuple().tm_yday - 105) / 365 * 2 * math.pi)
+            wet = wr.random() < 0.27
+            wx.append({"date": iso(dd), "tmax_f": round(base + wr.uniform(-9, 9), 1), "tmin_f": round(base - 20 + wr.uniform(-6, 6), 1),
+                       "precip_in": round(wr.uniform(0.1, 1.4), 2) if wet else 0.0, "code": 63 if wet else 1,
+                       "kind": "forecast" if dd > end else "observed"})
+        write_raw("weather", loc["slug"], "daily", "latest", {"days": wx})
         no, nt, day_sales, day_labor = gen_toast(loc, i, start, end, events, write=toast)
         ni = gen_marginedge(loc, i, start, end, day_sales, day_labor)
         ne, nl = gen_tripleseat(loc, i, start, end, forward)

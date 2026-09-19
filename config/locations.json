@@ -1,5 +1,5 @@
 {
-  "_comment": "One entry per taproom. toast_guid from `python -m sdp toast-diag` (Toast standard-API credentials); marginedge_unit_id optional \u2014 units are matched by me_name. All six units are on the 'Store Director Portal' Toast credential; Solon's GUID was read from Toast Web (restaurantInfo.restaurantGuid) because it did not appear in /partners/v1/restaurants.",
+  "_comment": "One entry per taproom. toast_guid from `python -m sdp toast-diag` (Toast standard-API credentials); marginedge_unit_id optional \u2014 units are matched by me_name. All six units are on the 'Store Director Portal' Toast credential; Solon's GUID was read from Toast Web (restaurantInfo.restaurantGuid) because it did not appear in /partners/v1/restaurants. lat/lon are city-level coordinates used only for daily weather. seats is optional (null = unknown): fill it in to get sales-per-seat on the Locations page.",
   "locations": [
     {
       "slug": "solon",
@@ -12,7 +12,10 @@
       "opened": "2013-09-01",
       "state": "IA",
       "tripleseat_location_id": "",
-      "tripleseat_name": "Solon"
+      "tripleseat_name": "Solon",
+      "lat": 41.807,
+      "lon": -91.494,
+      "seats": null
     },
     {
       "slug": "iowa-city",
@@ -25,7 +28,10 @@
       "opened": "2017-06-01",
       "state": "IA",
       "tripleseat_location_id": "",
-      "tripleseat_name": "Iowa City"
+      "tripleseat_name": "Iowa City",
+      "lat": 41.65,
+      "lon": -91.53,
+      "seats": null
     },
     {
       "slug": "cedar-rapids",
@@ -38,7 +44,10 @@
       "opened": "2021-09-01",
       "state": "IA",
       "tripleseat_location_id": "",
-      "tripleseat_name": "Cedar Rapids"
+      "tripleseat_name": "Cedar Rapids",
+      "lat": 41.975,
+      "lon": -91.665,
+      "seats": null
     },
     {
       "slug": "des-moines",
@@ -51,7 +60,10 @@
       "opened": "2022-11-01",
       "state": "IA",
       "tripleseat_location_id": "",
-      "tripleseat_name": "Des Moines"
+      "tripleseat_name": "Des Moines",
+      "lat": 41.586,
+      "lon": -93.635,
+      "seats": null
     },
     {
       "slug": "omaha",
@@ -64,7 +76,10 @@
       "opened": "2024-01-01",
       "state": "NE",
       "tripleseat_location_id": "",
-      "tripleseat_name": "Omaha"
+      "tripleseat_name": "Omaha",
+      "lat": 41.238,
+      "lon": -96.013,
+      "seats": null
     },
     {
       "slug": "prairie-village",
@@ -77,7 +92,10 @@
       "opened": "",
       "state": "KS",
       "tripleseat_location_id": "",
-      "tripleseat_name": "Prairie Village"
+      "tripleseat_name": "Prairie Village",
+      "lat": 38.99,
+      "lon": -94.634,
+      "seats": null
     }
   ]
 }

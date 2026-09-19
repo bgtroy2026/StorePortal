@@ -4,6 +4,7 @@
   python -m sdp transform
   python -m sdp check                               invariant checks against the loaded warehouse (exit 1 on failure)
   python -m sdp pull --incremental-days N            widen the forced re-pull window for one run (heals recent history)
+  python -m sdp pull --source toast --heal           re-pull days that predate modifier / loyalty capture, newest first
   python -m sdp build       [--dev-json] [--no-encrypt]
   python -m sdp all         [--mock] ...            pull -> transform -> build
   python -m sdp restore | persist                   warehouse state <-> GitHub release asset
@@ -35,6 +36,28 @@ def _warehouse_days() -> set[tuple[str, str]]:
     con = sqlite3.connect(DB_PATH)
     try:
         return set(con.execute("SELECT DISTINCT location_id, business_date FROM toast_orders").fetchall())
+    except sqlite3.OperationalError:
+        return set()
+    finally:
+        con.close()
+
+
+def _unhealed_days() -> set[tuple[str, str]]:
+    """Business days loaded BEFORE the warehouse kept Toast modifiers, loyalty identification and order source.
+
+    Those fields are read out of the order JSON at transform time, and raw JSON is not kept between runs — so the
+    only way a past day gains them is to be pulled again. `pull --heal` treats these days as missing. It is a
+    deliberate, manual mode rather than part of the nightly run: a 400-day re-pull is hours of API calls, and the
+    nightly run's job is to have yesterday's numbers published before anyone is at work.
+    """
+    if not DB_PATH.exists():
+        return set()
+    con = sqlite3.connect(DB_PATH)
+    try:
+        return set(con.execute("""
+            SELECT o.location_id, o.business_date FROM (SELECT DISTINCT location_id, business_date FROM toast_orders) o
+            WHERE EXISTS (SELECT 1 FROM toast_order_items i WHERE i.location_id=o.location_id AND i.business_date=o.business_date)
+              AND NOT EXISTS (SELECT 1 FROM toast_order_items i WHERE i.location_id=o.location_id AND i.business_date=o.business_date AND i.modifiers IS NOT NULL)""").fetchall())
     except sqlite3.OperationalError:
         return set()
     finally:
@@ -92,8 +115,13 @@ def cmd_pull(a):
             try:
                 from . import toast
                 t_cfg = cfg["toast"]
+                have_days = set() if a.backfill else _warehouse_days()
+                if getattr(a, "heal", False) and not a.backfill:
+                    stale = _unhealed_days()
+                    log.info("heal: %d location-days predate modifier/loyalty capture and will be re-pulled, newest first", len(stale))
+                    have_days -= stale
                 toast.pull(locs, days_back=cfg["backfill_days"], incremental_days=inc_days,
-                           warehouse_days=(set() if a.backfill else _warehouse_days()),
+                           warehouse_days=have_days, newest_first=bool(getattr(a, "heal", False)),
                            max_minutes=a.max_minutes or t_cfg.get("max_minutes_per_run"))
             except Exception as e:
                 failed.append("toast"); log.error("Toast pull failed (%s: %s) — continuing with other sources", type(e).__name__, e)
@@ -124,6 +152,14 @@ def cmd_pull(a):
                 failed.append("tripleseat"); log.error("Tripleseat pull failed (%s: %s) — continuing with other sources", type(e).__name__, e)
         else:
             log.warning("TRIPLESEAT_CLIENT_ID / TRIPLESEAT_CLIENT_SECRET not set — skipping Tripleseat")
+    if a.source in ("all", "weather"):
+        # Keyless and optional: weather is context, never a reason to fail a run. It does not count towards
+        # `attempted`, so a weather outage on its own can never trip the "every source failed" exit below.
+        try:
+            from . import weather
+            weather.pull(locs, days_back=cfg["backfill_days"])
+        except Exception as e:
+            log.warning("weather not pulled (%s: %s) — the portal will show sales without it", type(e).__name__, e)
     if attempted and len(failed) == len(attempted):
         raise SystemExit("every configured source failed: " + ", ".join(failed))
     if failed:
@@ -229,13 +265,16 @@ def main(argv=None):
         p.add_argument("--mock-days", type=int, default=120)
         p.add_argument("--mock-no-toast", action="store_true", help="mock the MarginEdge-only phase (no Toast raw data)")
         p.add_argument("--max-minutes", type=float, default=None, help="stop the MarginEdge pull cleanly after N minutes (default from settings)")
-        p.add_argument("--source", choices=["all", "toast", "marginedge", "tripleseat", "scorecard"], default="all")
+        p.add_argument("--source", choices=["all", "toast", "marginedge", "tripleseat", "scorecard", "weather"], default="all")
         p.add_argument("--phase", choices=["all", "recent", "history"], default="all",
                        help="MarginEdge only: 'recent' fetches the last few weeks so the site can publish, 'history' walks backwards")
         p.add_argument("--code", default=None, help="Tripleseat authorization code (ts-exchange)")
         p.add_argument("--backfill", action="store_true", help="pull the full backfill window even if a warehouse exists")
         p.add_argument("--dev-json", action="store_true", help="also write site/data/dev.json (unencrypted, local preview)")
         p.add_argument("--no-encrypt", action="store_true", help="skip bundles; write dev.json only")
+        p.add_argument("--heal", action="store_true",
+                       help="Toast: re-pull days loaded before modifiers/loyalty/source were captured, newest first, within the "
+                            "time budget. Run by hand after the morning refresh; repeat until it reports nothing left.")
         p.add_argument("--incremental-days", type=int, default=None,
                        help="override settings.incremental_days for this run — re-pulls that many days even where the "
                             "warehouse already has them. Use to heal history after a transform fix, then drop back.")

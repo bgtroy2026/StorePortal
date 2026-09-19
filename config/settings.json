@@ -20,7 +20,9 @@
     "labor_source_priority": [
       "toast",
       "marginedge"
-    ]
+    ],
+    "provisional": true,
+    "_provisional_comment": "While true, every MarginEdge-sourced panel in the portal carries a 'provisional' badge. Set to false once onboarding is finished and the data-entry practices have settled."
   },
   "category_map": {
     "_comment": "Maps Toast sales-category names and MarginEdge category types onto the five portal buckets used for COGS% and sales mix.",
@@ -83,5 +85,32 @@
     "requests_per_second": 5,
     "days_forward": 180,
     "scope": "read"
+  },
+  "inventory": {
+    "_comment": "How often each category is EXPECTED to be counted, in days. Drives the count-compliance score; it does not change any dollar figure.",
+    "expected_count_days": {
+      "Food": 7,
+      "Beer": 7,
+      "Liquor": 7,
+      "Wine": 7,
+      "NA Bev": 7,
+      "Retail": 30,
+      "Other": 30
+    }
+  },
+  "channels": {
+    "_comment": "Marketplace commission as a fraction of net sales (0.25 = 25%). null = not entered: the portal then shows channel sales and says the margin is unknown rather than assuming a rate.",
+    "commission": {
+      "DoorDash": null,
+      "Uber Eats": null,
+      "Grubhub": null,
+      "Toast Delivery": null
+    }
+  },
+  "pours": {
+    "_comment": "Overrides for sdp/pours.py. keywords maps a word found in a beer's modifier or name to fluid ounces. Every value is an assumption about how the taprooms ring draft; correct them from the 'could not be sized' list on the Beer volume panel. default_draft_oz stays null until that list has been read.",
+    "keywords": {},
+    "flight_oz": 20,
+    "default_draft_oz": null
   }
 }

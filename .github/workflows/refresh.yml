@@ -37,11 +37,15 @@ on:
         description: "Rebuild and republish the site from the stored warehouse — no API pulls (use for code/design changes)"
         type: boolean
         default: false
+      heal:
+        description: "Toast: re-pull days that predate modifier / loyalty capture, newest first (hours — run after the morning refresh, with source = toast)"
+        type: boolean
+        default: false
       source:
         description: "Limit the pull to one source (lets Toast be re-pulled without restarting MarginEdge)"
         type: choice
         default: all
-        options: [all, toast, marginedge, tripleseat, scorecard]
+        options: [all, toast, marginedge, tripleseat, scorecard, weather]
 
 permissions:
   contents: write     # release asset (warehouse state)
@@ -106,7 +110,7 @@ jobs:
       # pull turns a ~27-minute deploy into about a minute.
       - name: Pull (recent window + all other sources)
         if: ${{ !inputs.mock && !inputs.diag && !inputs.build_only }}
-        run: python -m sdp pull --source ${{ inputs.source || 'all' }} --phase recent ${{ inputs.backfill && '--backfill' || '' }} ${{ inputs.incremental_days && format('--incremental-days {0}', inputs.incremental_days) || '' }}
+        run: python -m sdp pull --source ${{ inputs.source || 'all' }} --phase recent ${{ inputs.backfill && '--backfill' || '' }} ${{ inputs.incremental_days && format('--incremental-days {0}', inputs.incremental_days) || '' }} ${{ inputs.heal && '--heal' || '' }}
 
       - name: Pull (mock data)
         if: ${{ inputs.mock && !inputs.diag }}

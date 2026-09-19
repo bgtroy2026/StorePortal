@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS toast_orders (           -- grain: one order (may hol
   voided_value      REAL DEFAULT 0,               -- what a voided order had rung before it was voided; 0 otherwise.
                                                   -- net_sales/gross_sales stay 0 for voids so sales math is unaffected.
   refunds           REAL DEFAULT 0,
-  source_hash       TEXT
+  source_hash       TEXT,
+  source            TEXT                           -- Toast order source: In Store / Online / API / a delivery partner
 );
 CREATE INDEX IF NOT EXISTS ix_toast_orders_loc_date ON toast_orders(location_id, business_date);
 
@@ -57,7 +58,13 @@ CREATE TABLE IF NOT EXISTS toast_order_items (      -- grain: one selection (men
   price             REAL DEFAULT 0,                -- net of item-level discounts
   tax               REAL DEFAULT 0,
   voided            INTEGER DEFAULT 0,
-  hour_local        INTEGER                        -- 0-23, from selection createdDate in location tz
+  hour_local        INTEGER,                       -- 0-23, from selection createdDate in location tz
+  -- Pour size. Draft beer is sold under the brand name alone ("Easy Eddy") and the size lives in a modifier,
+  -- so without these three columns a pint and a crowler are the same row. `modifiers` is kept verbatim so the
+  -- parser in sdp/pours.py can be improved later and re-run over history WITHOUT re-pulling Toast.
+  modifiers         TEXT,                          -- modifier display names, ' | ' joined, as rung
+  size_oz           REAL,                          -- fluid ounces per unit, NULL when no size could be read
+  pour              TEXT                           -- 'draft' | 'package' | NULL (not beer, or unknowable)
 );
 CREATE INDEX IF NOT EXISTS ix_toast_items_loc_date ON toast_order_items(location_id, business_date);
 CREATE INDEX IF NOT EXISTS ix_toast_items_item ON toast_order_items(item_guid);
@@ -363,3 +370,48 @@ CREATE TABLE IF NOT EXISTS toast_discounts (
   PRIMARY KEY (discount_guid, scope)
 );
 CREATE INDEX IF NOT EXISTS ix_toast_disc_day ON toast_discounts (location_id, business_date);
+
+-- A check on which the guest identified themselves to the loyalty programme, whether or not they redeemed
+-- anything. toast_discounts already shows REDEMPTIONS; this is the wider population -- members who simply
+-- came in -- which is what loyalty share of sales and repeat rate are actually measured on.
+-- `member` is a truncated SHA-256 of the loyalty identifier, never the identifier itself: all the portal needs
+-- is "same person again", and a phone number or card number has no business in a warehouse that feeds a
+-- static site.
+CREATE TABLE IF NOT EXISTS toast_loyalty (
+  check_guid      TEXT PRIMARY KEY,
+  order_guid      TEXT,
+  location_id     TEXT NOT NULL,
+  business_date   TEXT NOT NULL,
+  vendor          TEXT,
+  member          TEXT,
+  net             REAL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS ix_toast_loy_day ON toast_loyalty (location_id, business_date);
+CREATE INDEX IF NOT EXISTS ix_toast_loy_member ON toast_loyalty (member);
+
+-- Daily weather per taproom (Open-Meteo, keyless). Observed for the past, forecast for the next week;
+-- `kind` says which, so a forecast never gets read back as something that happened.
+CREATE TABLE IF NOT EXISTS weather_daily (
+  location_id TEXT NOT NULL, date TEXT NOT NULL,
+  tmax_f REAL, tmin_f REAL, precip_in REAL, code INTEGER,
+  kind TEXT DEFAULT 'observed',
+  PRIMARY KEY (location_id, date)
+);
+
+-- What each cash drawer is SUPPOSED to open with (inputs/floats.csv). The float test in metrics can see that
+-- three drawers are short by the same amount every night; only this can say whether that amount is simply the
+-- difference between the float Toast expects and the float the taproom actually uses.
+CREATE TABLE IF NOT EXISTS drawer_floats (
+  location_id TEXT NOT NULL, drawer TEXT NOT NULL,
+  toast_expected REAL, actual_float REAL, notes TEXT,
+  PRIMARY KEY (location_id, drawer)
+);
+
+-- Distributor depletions rolled up to brand x taproom market (inputs/depletions.csv, built on the Mac from
+-- the VIP exports by tools/build_depletions.py). Case equivalents, this year to date and the same span last
+-- year. Deliberately coarse: no accounts, no prices.
+CREATE TABLE IF NOT EXISTS depletions (
+  location_id TEXT NOT NULL, brand TEXT NOT NULL, premise TEXT NOT NULL,
+  ce_ty REAL DEFAULT 0, ce_ly REAL DEFAULT 0, accounts INTEGER DEFAULT 0, as_of TEXT,
+  PRIMARY KEY (location_id, brand, premise)
+);

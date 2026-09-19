@@ -5,6 +5,7 @@ Idempotent: every table is upserted on its natural key, so re-pulling a business
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sqlite3
@@ -12,6 +13,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from . import inputs
+from .pours import PourParser
 from .toast import CONFIG_RESOURCES
 from .util import DB_PATH, ROOT, iter_raw, load_json, locations, log, settings
 
@@ -195,8 +197,9 @@ def load_toast(con, bk: Buckets) -> dict:
             jobs[(slug, r["job_guid"])] = r["title"]
         _upsert(con, "toast_jobs", rows)
 
+    pours = PourParser()
     for slug, ds, p, j in iter_raw("toast", dataset="orders"):
-        orders, items, pays, discs = [], [], [], []
+        orders, items, pays, discs, loy = [], [], [], [], []
         for o in j.get("orders", []):
             bd = _bd(o.get("businessDate"))
             net = tax = tips = disc = svc = refunds = 0.0
@@ -212,6 +215,14 @@ def load_toast(con, bk: Buckets) -> dict:
                     disc += float(d.get("discountAmount") or 0)
                     discs.append(_disc_row(d, o, c, slug, bd, "check"))
                 svc += sum(float(s.get("chargeAmount") or 0) for s in (c.get("appliedServiceCharges") or []))
+                # Loyalty identification, independent of whether anything was redeemed. The identifier is hashed
+                # on the way in and the original is never stored.
+                li = c.get("appliedLoyaltyInfo") or {}
+                ident = li.get("loyaltyIdentifier") or li.get("maskedLoyaltyIdentifier")
+                if ident and not o.get("voided"):
+                    loy.append({"check_guid": c["guid"], "order_guid": o["guid"], "location_id": slug, "business_date": bd,
+                                "vendor": li.get("vendor"), "member": hashlib.sha256(("bg-loyalty:" + str(ident)).encode()).hexdigest()[:16],
+                                "net": round(float(c.get("amount") or 0), 2)})
                 for s in c.get("selections") or []:
                     # An item rung, discounted, then voided keeps its appliedDiscounts. Toast excludes those
                     # from Sales discounts and we must too: counting them inflates discounts AND gross by the
@@ -226,11 +237,22 @@ def load_toast(con, bk: Buckets) -> dict:
                     sc = ((s.get("salesCategory") or {}).get("name")
                           or salescat.get((slug, (s.get("salesCategory") or {}).get("guid")))
                           or (meta[2] if meta else None))
+                    # Modifier names verbatim. Draft is rung as the brand alone and the pour size is a modifier,
+                    # so this is the only place a pint can be told from a crowler.
+                    mods = " | ".join(str(m.get("displayName") or "").strip() for m in (s.get("modifiers") or []) if m.get("displayName"))[:240]
+                    bucket = bk.from_toast(sc)
+                    size_oz, pour = None, None
+                    if bucket == "Beer":
+                        try:
+                            size_oz, pour = pours.parse(s.get("displayName") or (meta[0] if meta else None), mods, sc)
+                        except Exception:             # a pour size is never worth losing the day's sales over
+                            size_oz, pour = None, None
                     items.append({"selection_guid": s["guid"], "order_guid": o["guid"], "check_guid": c["guid"], "location_id": slug, "business_date": bd,
                                   "item_guid": (s.get("item") or {}).get("guid"), "item_name": s.get("displayName") or (meta[0] if meta else None),
-                                  "item_group_guid": (s.get("itemGroup") or {}).get("guid"), "sales_category": sc, "bucket": bk.from_toast(sc),
+                                  "item_group_guid": (s.get("itemGroup") or {}).get("guid"), "sales_category": sc, "bucket": bucket,
                                   "quantity": float(s.get("quantity") or 0), "pre_discount_price": float(s.get("preDiscountPrice") or 0), "price": float(s.get("price") or 0),
-                                  "tax": float(s.get("tax") or 0), "voided": 1 if (s.get("voided") or o.get("voided")) else 0, "hour_local": _hour(s.get("createdDate") or o.get("openedDate"))})
+                                  "tax": float(s.get("tax") or 0), "voided": 1 if (s.get("voided") or o.get("voided")) else 0, "hour_local": _hour(s.get("createdDate") or o.get("openedDate")),
+                                  "modifiers": mods, "size_oz": size_oz, "pour": pour})
                 for pm in c.get("payments") or []:
                     rf = (pm.get("refund") or {})
                     ra = float(rf.get("refundAmount") or 0)
@@ -245,17 +267,20 @@ def load_toast(con, bk: Buckets) -> dict:
                            # Zeroed on a void for the same reason as net and gross — otherwise a voided order's
                            # discounts survive into the daily totals with no sales to sit against.
                            "discounts": 0 if voided else round(disc, 2), "service_charges": 0 if voided else round(svc, 2),
-                           "gross_sales": 0 if voided else round(net + disc, 2), "voided_value": voided_value, "refunds": round(refunds, 2), "source_hash": None})
+                           "gross_sales": 0 if voided else round(net + disc, 2), "voided_value": voided_value, "refunds": round(refunds, 2), "source_hash": None,
+                           "source": o.get("source")})
         # replace the whole business day for this location so deleted orders disappear
         if orders:
             con.execute("DELETE FROM toast_order_items WHERE location_id=? AND business_date=?", (slug, orders[0]["business_date"]))
             con.execute("DELETE FROM toast_payments WHERE location_id=? AND business_date=?", (slug, orders[0]["business_date"]))
             con.execute("DELETE FROM toast_orders WHERE location_id=? AND business_date=?", (slug, orders[0]["business_date"]))
             con.execute("DELETE FROM toast_discounts WHERE location_id=? AND business_date=?", (slug, orders[0]["business_date"]))
+            con.execute("DELETE FROM toast_loyalty WHERE location_id=? AND business_date=?", (slug, orders[0]["business_date"]))
         stats["orders"] += _upsert(con, "toast_orders", orders)
         stats["items"] += _upsert(con, "toast_order_items", items)
         stats["payments"] += _upsert(con, "toast_payments", pays)
         stats["discounts"] = stats.get("discounts", 0) + _upsert(con, "toast_discounts", [d for d in discs if d])
+        stats["loyalty"] = stats.get("loyalty", 0) + _upsert(con, "toast_loyalty", loy)
 
     # Scheduled shifts. /labor/v1/shifts carries no businessDate (unlike time entries), so it is derived the
     # way Toast defines a business day: anything before the restaurant's closeout hour belongs to the night
@@ -534,7 +559,19 @@ def load_inputs(con) -> dict:
     if inv:  # CSV rows never override API-derived counts for the same location/date/bucket
         con.executemany("INSERT OR IGNORE INTO me_inventory_counts (location_id, count_date, bucket, value, source) VALUES (?,?,?,?,?)",
                         [(r["location_id"], r["count_date"], r["bucket"], r["value"], r["source"]) for r in inv])
-    return {"activations": len(a), "targets": len(t), "inventory_counts": len(inv)}
+    def _f(v):
+        try:
+            return float(v) if str(v).strip() != "" else None
+        except ValueError:
+            return None
+    fl = [{"location_id": r["location_id"], "drawer": r.get("drawer") or "*", "toast_expected": _f(r.get("toast_expected")),
+           "actual_float": _f(r.get("actual_float")), "notes": r.get("notes")} for r in inputs.read_floats() if r.get("location_id")]
+    con.execute("DELETE FROM drawer_floats"); _upsert(con, "drawer_floats", fl)
+    dep = [{"location_id": r["location_id"], "brand": r["brand"], "premise": (r.get("premise") or "ALL").upper(), "ce_ty": _f(r.get("ce_ty")) or 0.0,
+            "ce_ly": _f(r.get("ce_ly")) or 0.0, "accounts": int(_f(r.get("accounts")) or 0), "as_of": r.get("as_of")} for r in inputs.read_depletions() if r.get("location_id") and r.get("brand")]
+    if dep:                                  # an absent file leaves the last loaded depletions in place
+        con.execute("DELETE FROM depletions"); _upsert(con, "depletions", dep)
+    return {"activations": len(a), "targets": len(t), "inventory_counts": len(inv), "floats": len(fl), "depletions": len(dep)}
 
 
 # ---------------------------------------------------------------- derived
@@ -628,6 +665,48 @@ def load_scorecard(con) -> dict:
     return {"cells": n}
 
 
+def resize_beer(con) -> dict:
+    """Re-read the pour size of every beer sale whose modifiers were captured.
+
+    Sizes are parsed when a day is loaded, but the parser's keyword table lives in config and WILL be corrected
+    once real modifier text has been read ("Imperial" turns out to be a 20 oz pour, say). Because the modifier
+    text is stored verbatim, that correction can reach the whole history here in a few seconds, instead of
+    needing every day re-pulled from Toast. Rows loaded before modifiers were captured (modifiers IS NULL) are
+    left alone: their size is unknowable, and the portal reports them as such.
+    """
+    pp = PourParser()
+    cur = con.execute("SELECT selection_guid, item_name, modifiers, sales_category, size_oz, pour FROM toast_order_items WHERE bucket='Beer' AND modifiers IS NOT NULL")
+    changed, n, memo = [], 0, {}
+    for g, name, mods, sc, oz, pour in cur:
+        n += 1
+        k = (name, mods, sc)                          # a few hundred distinct strings across a million rows
+        if k not in memo:
+            try:
+                memo[k] = pp.parse(name, mods, sc)
+            except Exception:
+                memo[k] = (None, None)
+        noz, npour = memo[k]
+        if noz != oz or npour != pour:
+            changed.append((noz, npour, g))
+    if changed:
+        con.executemany("UPDATE toast_order_items SET size_oz=?, pour=? WHERE selection_guid=?", changed)
+    return {"beer_rows": n, "resized": len(changed)}
+
+
+def load_weather(con) -> dict:
+    rows = []
+    for slug, ds, p, j in iter_raw("weather"):
+        for r in j.get("days", []):
+            rows.append({"location_id": slug, "date": r["date"], "tmax_f": r.get("tmax_f"), "tmin_f": r.get("tmin_f"),
+                         "precip_in": r.get("precip_in"), "code": r.get("code"), "kind": r.get("kind") or "observed"})
+    # A forecast row must never outlive the day it was forecasting: once that day has passed, either an
+    # observation replaces it (same primary key) or it is removed, so nothing reads a prediction as history.
+    n = _upsert(con, "weather_daily", rows)
+    if rows:
+        con.execute("DELETE FROM weather_daily WHERE kind='forecast' AND date < ?", (min(r["date"] for r in rows if r["kind"] == "forecast") if any(r["kind"] == "forecast" for r in rows) else "0000",))
+    return {"days": n}
+
+
 def run() -> dict:
     cfg = settings()
     bk = Buckets(cfg["category_map"])
@@ -636,6 +715,14 @@ def run() -> dict:
                                 "timezone": l.get("timezone"), "opened": l.get("opened"), "state": l.get("state")} for l in locations()])
     s = {"toast": load_toast(con, bk), "marginedge": load_marginedge(con, bk), "tripleseat": load_tripleseat(con),
          "scorecard": load_scorecard(con), "inputs": load_inputs(con)}
+    # Derived, optional steps. Each is isolated: they add context to the portal, and none of them is worth the
+    # nightly publish. A failure is logged loudly and the run carries on without that one thing.
+    for name, fn in (("pours", resize_beer), ("weather", load_weather)):
+        try:
+            s[name] = fn(con)
+        except Exception as e:
+            log.error("transform: optional step '%s' failed (%s: %s) — continuing without it", name, type(e).__name__, e)
+            s[name] = {"error": str(e)}
     rebuild_daily_summary(con)
     con.execute("INSERT OR REPLACE INTO meta VALUES ('last_transform', ?)", (datetime.utcnow().isoformat(timespec="seconds") + "Z",))
     con.commit()
