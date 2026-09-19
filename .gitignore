@@ -26,3 +26,6 @@ _deploy/*.log
 
 # deploy token (kept outside the repo; listed here as belt-and-braces)
 .storeportal-token
+
+# working files that are not part of the portal (VIP exports and the like) — never publish
+potential/
