@@ -15,7 +15,7 @@ from pathlib import Path
 from . import inputs
 from .pours import PourParser
 from .toast import CONFIG_RESOURCES
-from .util import DB_PATH, ROOT, iter_raw, load_json, locations, log, settings
+from .util import DB_PATH, ROOT, iter_raw, load_json, locations, log, settings, to_local
 
 SCHEMA = (Path(__file__).parent / "schema.sql").read_text()
 
@@ -87,13 +87,51 @@ def _bd(v) -> str:
     return f"{s[:4]}-{s[4:6]}-{s[6:8]}" if len(s) == 8 and s.isdigit() else s
 
 
-def _hour(ts: str | None) -> int | None:
-    if not ts:
-        return None
-    try:
-        return int(ts[11:13])  # local-offset timestamps from Toast carry the restaurant's offset
-    except Exception:
-        return None
+def _hour(ts: str | None, tz: str | None = None) -> int | None:
+    d = to_local(ts, tz)                # Toast timestamps are UTC; the hour that matters is the restaurant's
+    return d.hour if d else None
+
+
+def fix_item_hours(con) -> dict:
+    """One-time repair: `hour_local` was stored as the UTC hour. Shift history onto the restaurant's clock.
+
+    The timestamp itself was never kept for items, only the hour, so history is repaired arithmetically: for each
+    taproom and business date, add that date's UTC offset (it differs either side of a DST change). Guarded twice,
+    because shifting hours that are ALREADY local would be worse than the bug: a meta flag makes it run once, and
+    it only runs at all if the data looks like UTC — more trade recorded between midnight and 4am than between
+    11am and 3pm, which is true of no taproom on earth in local time and of every one in UTC.
+    """
+    if con.execute("SELECT 1 FROM meta WHERE key='item_hours_local'").fetchone():
+        return {"skipped": "already done"}
+    late, lunch = con.execute("""SELECT COALESCE(SUM(CASE WHEN hour_local BETWEEN 0 AND 3 THEN 1 ELSE 0 END),0),
+                                        COALESCE(SUM(CASE WHEN hour_local BETWEEN 11 AND 14 THEN 1 ELSE 0 END),0)
+                                 FROM toast_order_items WHERE hour_local IS NOT NULL""").fetchone()
+    out = {"late": late, "lunch": lunch, "shifted": 0}
+    if late > lunch and late > 1000:
+        from zoneinfo import ZoneInfo
+        for loc in locations():
+            tz = ZoneInfo(loc.get("timezone") or "America/Chicago")
+            by_off: dict[int, list] = {}
+            for (bd,) in con.execute("SELECT DISTINCT business_date FROM toast_order_items WHERE location_id=?", (loc["slug"],)):
+                try:
+                    y, m, d = (int(x) for x in bd.split("-"))
+                    off = int(datetime(y, m, d, 12, tzinfo=tz).utcoffset().total_seconds() // 3600)
+                except Exception:
+                    continue
+                by_off.setdefault(off, []).append(bd)
+            for off, dates in by_off.items():
+                for i in range(0, len(dates), 400):
+                    chunk = dates[i:i + 400]
+                    cur = con.execute(f"""UPDATE toast_order_items SET hour_local=(hour_local + 24 + ?) % 24
+                                          WHERE location_id=? AND hour_local IS NOT NULL AND business_date IN ({','.join('?' * len(chunk))})""",
+                                      (off, loc["slug"], *chunk))
+                    out["shifted"] += cur.rowcount
+        log.info("item hours: shifted %d rows from UTC onto the restaurant's clock (one-time)", out["shifted"])
+    else:
+        log.info("item hours: already on the restaurant's clock (midnight-4am rows %d vs 11am-3pm rows %d) — nothing shifted", late, lunch)
+    con.execute("INSERT OR REPLACE INTO meta VALUES ('item_hours_local', ?)", (datetime.utcnow().isoformat(timespec="seconds") + "Z",))
+    con.commit()
+    return out
 
 
 class Buckets:
@@ -198,6 +236,7 @@ def load_toast(con, bk: Buckets) -> dict:
         _upsert(con, "toast_jobs", rows)
 
     pours = PourParser()
+    tzs = {l["slug"]: l.get("timezone") or "America/Chicago" for l in locations()}
     for slug, ds, p, j in iter_raw("toast", dataset="orders"):
         orders, items, pays, discs, loy = [], [], [], [], []
         for o in j.get("orders", []):
@@ -251,7 +290,7 @@ def load_toast(con, bk: Buckets) -> dict:
                                   "item_guid": (s.get("item") or {}).get("guid"), "item_name": s.get("displayName") or (meta[0] if meta else None),
                                   "item_group_guid": (s.get("itemGroup") or {}).get("guid"), "sales_category": sc, "bucket": bucket,
                                   "quantity": float(s.get("quantity") or 0), "pre_discount_price": float(s.get("preDiscountPrice") or 0), "price": float(s.get("price") or 0),
-                                  "tax": float(s.get("tax") or 0), "voided": 1 if (s.get("voided") or o.get("voided")) else 0, "hour_local": _hour(s.get("createdDate") or o.get("openedDate")),
+                                  "tax": float(s.get("tax") or 0), "voided": 1 if (s.get("voided") or o.get("voided")) else 0, "hour_local": _hour(s.get("createdDate") or o.get("openedDate"), tzs.get(slug)),
                                   "modifiers": mods, "size_oz": size_oz, "pour": pour})
                 for pm in c.get("payments") or []:
                     rf = (pm.get("refund") or {})
@@ -302,9 +341,10 @@ def load_toast(con, bk: Buckets) -> dict:
             if not a:
                 continue
             try:
-                start = datetime.strptime(a[:19], "%Y-%m-%dT%H:%M:%S")
+                start = to_local(a, tzs.get(slug))      # the closeout hour is a LOCAL hour, so the start must be too
+                end_ = to_local(b, tzs.get(slug)) if b else None
                 bd = (start - timedelta(days=1)).date().isoformat() if start.hour < co else start.date().isoformat()
-                hrs = ((datetime.strptime(b[:19], "%Y-%m-%dT%H:%M:%S") - start).total_seconds() / 3600.0) if b else 0.0
+                hrs = ((end_ - start).total_seconds() / 3600.0) if end_ else 0.0
             except Exception:
                 continue
             jg = (x.get("jobReference") or {}).get("guid")
@@ -713,10 +753,14 @@ def run() -> dict:
     con = connect()
     _upsert(con, "locations", [{"location_id": l["slug"], "name": l["name"], "short": l.get("short"), "toast_guid": l.get("toast_guid"), "marginedge_unit_id": str(l.get("marginedge_unit_id") or ""),
                                 "timezone": l.get("timezone"), "opened": l.get("opened"), "state": l.get("state")} for l in locations()])
+    # Before anything is loaded: rows written from here on are on the restaurant's clock, so history has to be
+    # moved onto it first, or the two would be indistinguishable afterwards.
+    hours_fix = fix_item_hours(con)
     s = {"toast": load_toast(con, bk), "marginedge": load_marginedge(con, bk), "tripleseat": load_tripleseat(con),
          "scorecard": load_scorecard(con), "inputs": load_inputs(con)}
     # Derived, optional steps. Each is isolated: they add context to the portal, and none of them is worth the
     # nightly publish. A failure is logged loudly and the run carries on without that one thing.
+    s["item_hours"] = hours_fix
     for name, fn in (("pours", resize_beer), ("weather", load_weather)):
         try:
             s[name] = fn(con)

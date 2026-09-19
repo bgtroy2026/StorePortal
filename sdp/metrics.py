@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta
 
 from . import insights
 from .transform import connect
-from .util import locations, log, settings
+from .util import locations, log, settings, to_local
 
 DAILY_COLS = ["business_date", "net_sales", "gross_sales", "discounts", "tax", "tips", "refunds", "orders", "checks", "guests",
               "sales_food", "sales_beer", "sales_liquor", "sales_wine", "sales_nabev", "sales_retail", "sales_other", "sales_svc", "sales_unattr",
@@ -271,7 +271,7 @@ def _labor_by_hour(con, lid: str, since: date, through: date) -> list:
 
     Two conventions are inherited from the sales side so the two can be divided by each other honestly:
     the weekday comes from the POS BUSINESS DATE (not the calendar date, so a 1am hour still belongs to the
-    night before), and the hour comes from the local-offset timestamp exactly as `hour_local` does for items.
+    night before), and the hour is the restaurant's local hour, converted from Toast's UTC exactly as `hour_local` is.
     A shift crossing midnight therefore lands on hours 22, 23, 0, 1 of the same business day, matching where
     the sales from those hours land.
     """
@@ -283,13 +283,12 @@ def _labor_by_hour(con, lid: str, since: date, through: date) -> list:
     if not rows:
         return []
 
+    tz = next((l.get("timezone") for l in locations() if l["slug"] == lid), None) or "America/Chicago"
+
     def parse(ts):
-        # Toast sends local-offset timestamps; the offset is the restaurant's, so the wall-clock reading is
-        # the local one. Take it literally rather than converting, which is what hour_local does for items.
-        try:
-            return datetime.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S")
-        except Exception:
-            return None
+        # Toast timestamps are UTC. They are converted to the restaurant's wall clock here, exactly as
+        # `hour_local` is for items, so that the two can be divided by each other hour for hour.
+        return to_local(ts, tz)
 
     buckets: dict[tuple[int, int], list] = {}
     days: dict[tuple[int, int], set] = {}

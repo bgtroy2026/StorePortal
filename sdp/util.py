@@ -135,3 +135,28 @@ class Http:
         r = self.s.post(url, json=json_body, headers=headers, timeout=self.timeout)
         r.raise_for_status()
         return r
+
+
+def to_local(ts: str | None, tz: str | None = None):
+    """A Toast timestamp as a NAIVE datetime on the restaurant's own wall clock.
+
+    Toast sends ISO-8601 in UTC ("2026-09-05T23:18:00.000+0000"). For eighteen features the portal read the hour
+    straight out of that string, on the belief that the offset was the restaurant's — so every "hour" in the
+    portal was a UTC hour: the dinner peak sat at 11 PM and midnight, lunch did not exist, and the hourly heatmap
+    (drawn 10am-11pm) cut the busiest part of the evening off its right-hand edge. Sales and labour were wrong by
+    the SAME five hours, so they still lined up with each other, which is why nothing looked broken.
+
+    An offset, when present, is honoured and converted; a string with none is taken as already local.
+    """
+    if not ts:
+        return None
+    from zoneinfo import ZoneInfo
+    for fmt in ("%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%S%z"):
+        try:
+            return datetime.strptime(ts, fmt).astimezone(ZoneInfo(tz or "America/Chicago")).replace(tzinfo=None)
+        except ValueError:
+            continue
+    try:
+        return datetime.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S")
+    except ValueError:
+        return None
