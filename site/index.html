@@ -182,6 +182,43 @@ table.t td.n{font-weight:700;color:var(--navy);white-space:normal;min-width:120p
   table.t th,table.t td{padding:5px 6px}
   table.t td.n{min-width:96px}
 }
+/* ---------- v2 ---------- */
+.seg button{white-space:nowrap}
+.tg{color:var(--muted)}
+.src{font-size:11.5px;color:var(--muted);line-height:1.45}
+header nav{flex:1;min-width:0;scrollbar-width:thin}
+header nav button{padding:8px 9px;font-size:12.5px}
+header .brand{font-size:14px;white-space:nowrap}
+.prov{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;font-size:9.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+  background:#fff4d6;color:#8a5a00;border:1px solid #f0d48a;vertical-align:1px;cursor:help}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.92em;background:#f1f1ee;padding:1px 4px;border-radius:4px}
+.ackbtns{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end}
+.ackb{border:1px solid var(--border);background:#fff;color:var(--ink2);border-radius:6px;font-size:11px;font-weight:600;padding:3px 8px;cursor:pointer}
+.ackb:hover{border-color:var(--navy);color:var(--navy)}
+.acknote{border:1px solid var(--border);border-radius:6px;font:inherit;font-size:12px;padding:3px 7px;min-width:180px}
+tr.resolved td{opacity:.55}
+tr.resolved td.n{text-decoration:line-through;text-decoration-color:var(--muted)}
+.fcw{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px}
+.fcd{border:1px solid var(--border);border-radius:10px;padding:9px 10px;min-width:0}
+.fcd.wet{background:#f2f7fd;border-color:#cfe0f5}
+.fcd .fd{font-size:11.5px;font-weight:700;color:var(--navy)}
+.fcd .fv{font-size:19px;font-weight:700;color:var(--navy);margin:3px 0}
+.fcd .fw{font-size:11px;color:var(--ink2);line-height:1.35}
+.onepager{background:#fff;border:1px solid var(--border);border-radius:12px;padding:22px 26px;max-width:900px;margin:0 auto 18px}
+.onepager .oph{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid var(--navy);padding-bottom:8px;margin-bottom:10px}
+.onepager .opt{font-size:22px;font-weight:700;color:var(--navy)}
+.onepager .opl{font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:700;margin:12px 0 4px}
+.onepager .opc{display:grid;grid-template-columns:1.25fr 1fr;gap:22px}
+.onepager .oplines{height:74px;background:repeating-linear-gradient(to bottom,transparent,transparent 23px,var(--grid) 23px,var(--grid) 24px)}
+.onepager table.t td,.onepager table.t th{padding:4px 6px}
+@media (max-width:720px){#nav{flex:0 0 100%;order:3}.filters .seg{max-width:100%;overflow-x:auto}.fcw{grid-template-columns:repeat(2,minmax(0,1fr))}.onepager{padding:14px}.onepager .opc{grid-template-columns:1fr}}
+@media print{
+  header,.filters,.noprint,.pt{display:none !important}
+  body{background:#fff;font-size:11.5px} main{padding:0;max-width:none}
+  .onepager{border:0;border-radius:0;padding:0;margin:0;max-width:none;page-break-after:always}
+  .onepager:last-child{page-break-after:auto}
+  .panel{break-inside:avoid;border-color:#ccc}
+}
 </style>
 </head>
 <body>
@@ -213,7 +250,8 @@ table.t td.n{font-weight:700;color:var(--navy);white-space:normal;min-width:120p
   <div class="seg" id="rangeSeg"></div>
   <input type="date" id="d0"> <span style="color:var(--muted)">to</span> <input type="date" id="d1">
   <label>Compare</label>
-  <div class="seg" id="cmpSeg"><button data-c="prior" class="on">Prior period</button><button data-c="ly">Last year</button></div>
+  <div class="seg" id="cmpSeg"><button data-c="prior" class="on">Prior period</button><button data-c="ly" title="Same weekdays a year ago (364 days back), with holidays matched to the same holiday">Last year</button></div>
+  <button id="opBtn" class="ackb" title="A printable one-page week for the selected taproom" style="padding:6px 10px">Weekly one-pager</button>
   <div class="fresh" id="fresh"></div>
  </div>
  <main id="main"></main>
@@ -412,14 +450,14 @@ var K=null; // daily key index
    bought to produce it, hence the null purchase key. */
 var BUCKETS=[['Food','f','pf','s1'],['Beer','b','pb','s2'],['Liquor','l','pl','s3'],['Wine','w','pw','s4'],['NA Bev','n','pn','s5'],['Retail','r',null,'s6'],['Other','x','po','sx'],['Unattributed','sv',null,'s7']];
 var LOCCOL=['s1','s2','s3','s4','s5','s6','s7','s8'];
-var PAGES=[['overview','Overview'],['sales','Sales'],['labor','Labor'],['cogs','COGS & Purchasing'],['inventory','Inventory'],['events','Events'],['activations','Activations'],['scorecard','Scorecard'],['locations','Locations']];
+var PAGES=[['overview','Overview'],['sales','Sales'],['menu','Menu & Guests'],['beer','Beer'],['labor','Labor'],['cogs','COGS'],['inventory','Inventory'],['events','Events'],['activations','Activations'],['scorecard','Scorecard'],['locations','Locations']];
 var charts=[];
 function css(v){return getComputedStyle(document.documentElement).getPropertyValue('--'+v).trim();}
 function fm(n,d){ if(n==null||isNaN(n))return '—'; d=d==null?0:d; return '$'+Number(n).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d}); }
 function fk(n){ if(n==null||isNaN(n))return '—'; return Math.abs(n)>=1e6?'$'+(n/1e6).toFixed(2)+'M':Math.abs(n)>=1e4?'$'+(n/1e3).toFixed(1)+'k':fm(n); }
 function fn(n,d){ if(n==null||isNaN(n))return '—'; return Number(n).toLocaleString(undefined,{maximumFractionDigits:d||0}); }
 function fp(x,d){ if(x==null||isNaN(x)||!isFinite(x))return '—'; return (x*100).toFixed(d==null?1:d)+'%'; }
-function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;');}
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function pd(s){var p=s.split('-');return new Date(+p[0],+p[1]-1,+p[2]);}
 function ds(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
 function addDays(s,n){var d=pd(s);d.setDate(d.getDate()+n);return ds(d);}
@@ -452,31 +490,48 @@ function startApp(data,profile){
   D.locations.forEach(function(l){ls.appendChild(new Option(l.name,l.id));});
   S.loc=D.locations.length>1?'all':D.locations[0].id; ls.value=S.loc;
   ls.onchange=function(){S.loc=ls.value;render();};
-  var seg=$('rangeSeg'); [['l7','Last 7'],['l28','Last 28'],['mtd','MTD'],['qtd','QTD'],['ytd','YTD'],['l91','Last 91']].forEach(function(p){
+  var seg=$('rangeSeg'); [['l7','Last 7'],['l28','Last 28'],['mtd','MTD'],['lm','Last month'],['qtd','QTD'],['ytd','YTD'],['l91','Last 91']].forEach(function(p){
     var b=document.createElement('button');b.textContent=p[1];b.dataset.p=p[0];b.onclick=function(){S.preset=p[0];applyPreset();render();};seg.appendChild(b);});
   $('d0').onchange=$('d1').onchange=function(){S.preset='custom';S.d0=$('d0').value;S.d1=$('d1').value;render();};
   $('cmpSeg').querySelectorAll('button').forEach(function(b){b.onclick=function(){S.cmp=b.dataset.c;render();};});
   var nav=$('nav'); PAGES.filter(function(p){ return p[0]!=='scorecard' || hasScorecard(); }).forEach(function(p){var b=document.createElement('button');b.textContent=p[1];b.dataset.p=p[0];b.onclick=function(){S.page=p[0];render();};nav.appendChild(b);});
-  applyPreset(); render();
+  $('opBtn').onclick=function(){ S.page='onepager'; render(); };
+  applyPreset();
+  if(readHash()){ ls.value=S.loc; $('d0').value=S.d0; $('d1').value=S.d1; }
+  loadAcks();
+  render();
 }
 function applyPreset(){
   var T=D.meta.through, t=pd(T);
+  var lm1=new Date(t.getFullYear(),t.getMonth(),0), lm0=new Date(lm1.getFullYear(),lm1.getMonth(),1);
+  if(S.preset==='lm'){ S.d0=ds(lm0)<D.meta.since?D.meta.since:ds(lm0); S.d1=ds(lm1); $('d0').value=S.d0; $('d1').value=S.d1; return; }
   var map={l7:addDays(T,-6),l28:addDays(T,-27),l91:addDays(T,-90),mtd:ds(new Date(t.getFullYear(),t.getMonth(),1)),qtd:ds(new Date(t.getFullYear(),Math.floor(t.getMonth()/3)*3,1)),ytd:ds(new Date(t.getFullYear(),0,1))};
   if(map[S.preset]){S.d0=map[S.preset];S.d1=T;}
   $('d0').value=S.d0;$('d1').value=S.d1;
 }
 /* ---- data access ---- */
 function locIds(){return S.loc==='all'?D.locations.map(function(l){return l.id;}):[S.loc];}
-function rowsIn(lid,a,b){ return (D.daily[lid]||[]).filter(function(r){return r[0]>=a&&r[0]<=b;}); }
+/* `set` maps a date to HOW MANY current days are compared with it. Two current days can share one last-year twin
+   (a day displaced off a holiday lands on a date that is already somebody else's), and counting that twin once
+   would make last year a day short and this year look 3-4% better than it was. */
+function rowsIn(lid,a,b,set){ var src=D.daily[lid]||[]; if(!set) return src.filter(function(r){return r[0]>=a&&r[0]<=b;}); var out=[]; src.forEach(function(r){ var n=set[r[0]]||0; while(n-->0) out.push(r); }); return out; }
 function sumRows(rows){ var s={}; D.meta.daily_keys.forEach(function(k){if(k!=='d')s[k]=0;}); rows.forEach(function(r){D.meta.daily_keys.forEach(function(k,i){if(k!=='d')s[k]+=(r[i]||0);});}); s.days=rows.length; return s; }
-function agg(a,b){ var all=[]; locIds().forEach(function(l){all=all.concat(rowsIn(l,a,b));}); return sumRows(all); }
-function byDate(a,b){ var m={}; locIds().forEach(function(l){rowsIn(l,a,b).forEach(function(r){var o=m[r[0]]||(m[r[0]]={});D.meta.daily_keys.forEach(function(k,i){if(k!=='d')o[k]=(o[k]||0)+(r[i]||0);});});}); return Object.keys(m).sort().map(function(d){m[d].d=d;return m[d];}); }
-function cmpWindow(){ var n=(pd(S.d1)-pd(S.d0))/864e5+1; if(S.cmp==='ly'){var a=pd(S.d0),b=pd(S.d1);a.setFullYear(a.getFullYear()-1);b.setFullYear(b.getFullYear()-1);return [ds(a),ds(b)];} return [addDays(S.d0,-n),addDays(S.d0,-1)]; }
-function hasData(a,b){ return locIds().some(function(l){return rowsIn(l,a,b).length>0;}); }
+function agg(a,b,set){ var all=[]; locIds().forEach(function(l){all=all.concat(rowsIn(l,a,b,set));}); return sumRows(all); }
+function byDate(a,b,set){ var m={}; locIds().forEach(function(l){rowsIn(l,a,b,set).forEach(function(r){var o=m[r[0]]||(m[r[0]]={});D.meta.daily_keys.forEach(function(k,i){if(k!=='d')o[k]=(o[k]||0)+(r[i]||0);});});}); return Object.keys(m).sort().map(function(d){m[d].d=d;return m[d];}); }
+function cmpWindow(){ var n=(pd(S.d1)-pd(S.d0))/864e5+1; if(S.cmp==='ly'){ var set={}, lo=null, hi=null; rangeDates(S.d0,S.d1).forEach(function(d){ var x=lyDate(d); set[x]=(set[x]||0)+1; if(!lo||x<lo)lo=x; if(!hi||x>hi)hi=x; }); return [lo,hi,set]; } return [addDays(S.d0,-n),addDays(S.d0,-1)]; }
+/* For a last-year comparison, "has data" means the WHOLE of last year's window was traded — by every selected
+   taproom that has any history that far back. A year-to-date against a warehouse that starts in August would
+   otherwise compare nine months with two and call it growth. */
+function hasData(a,b,set){
+  if(!set) return locIds().some(function(l){return rowsIn(l,a,b).length>0;});
+  var need=Object.keys(set).length, ok=false;
+  var bad=locIds().some(function(l){ var have={}; (D.daily[l]||[]).forEach(function(r){ if(set[r[0]]) have[r[0]]=1; }); var n=Object.keys(have).length; if(n) ok=true; return n>0 && n<need*0.95; });
+  return ok && !bad;
+}
 function targetsFor(a,b){ // sum monthly targets prorated by days in range
   var t={sales:0,guests:0,cogs:[],labor:[]}; locIds().forEach(function(l){ var tg=D.targets[l]||{}; var d=pd(a); while(ds(d)<=b){ var m=ds(d).slice(0,7); var x=tg[m]; if(x){ var dim=new Date(d.getFullYear(),d.getMonth()+1,0).getDate(); t.sales+=(x[0]||0)/dim; t.guests+=(x[3]||0)/dim; if(x[1])t.cogs.push(x[1]); if(x[2])t.labor.push(x[2]); } d.setDate(d.getDate()+1);} });
   var avg=function(z){return z.length?z.reduce(function(p,c){return p+c;},0)/z.length:null;}; t.cogs=avg(t.cogs); t.labor=avg(t.labor); return t; }
-function kpis(a,b){ var s=agg(a,b); return {net:s.net,gross:s.gross,disc:s.disc,guests:s.guests,orders:s.orders,checks:s.checks,avgCheck:s.checks?s.net/s.checks:null,ppa:s.guests?s.net/s.guests:null,
+function kpis(a,b,set){ var s=agg(a,b,set); return {net:s.net,gross:s.gross,disc:s.disc,guests:s.guests,orders:s.orders,checks:s.checks,avgCheck:s.checks?s.net/s.checks:null,ppa:s.guests?s.net/s.guests:null,
   labor:s.lc,laborPct:s.net?s.lc/s.net:null,hours:s.lh,splh:s.lh?s.net/s.lh:null,purch:s.p,purchPct:s.net?s.p/s.net:null,tips:s.tips,ref:s.ref,days:s.days,
   food:s.f,beer:s.b,liquor:s.l,wine:s.w,nabev:s.n,retail:s.r,other:s.x,pf:s.pf,pb:s.pb,pl:s.pl,pw:s.pw,pn:s.pn,po:s.po}; }
 
@@ -495,7 +550,9 @@ function tile(label,val,dl,extra){ return '<div class="tile"><div class="l">'+la
 function panel(title,hint,body,cls){
   var id='p'+(panel._n=(panel._n||0)+1);
   var plain=esc(String(title).replace(/<[^>]*>/g,''));
-  return '<div class="panel '+(cls||'')+'" id="'+id+'"><div class="ph"><h3>'+title+'</h3>'
+  // Anything built on MarginEdge is badged while onboarding is still settling (config: marginedge.provisional).
+  var badge=(isProv() && PROV_RX.test(String(title)) && String(title).indexOf('class="prov"')<0 && !/noprov/.test(cls||''))?provBadge():'';
+  return '<div class="panel '+(cls||'')+'" id="'+id+'"><div class="ph"><h3>'+title+badge+'</h3>'
     +'<div class="pt">'
       +'<input class="find" type="search" data-find="'+id+'" placeholder="Filter…" aria-label="Filter '+plain+'">'
       +'<button class="csv" data-csv="'+id+'" title="Download this table as CSV" aria-label="Download '+plain+' as CSV">CSV</button>'
@@ -591,20 +648,24 @@ function mk(id,cfg){ if(!window.Chart){$(id).parentNode.innerHTML='<div class="e
 function lineCfg(labels,sets){ return {type:'line',data:{labels:labels,datasets:sets.map(function(s){return Object.assign({borderWidth:2,pointRadius:0,pointHoverRadius:4,tension:.25,fill:false},s);})},options:baseOpts()}; }
 
 /* ---- pages ---- */
-function render(){
+function render(noHash){
   killCharts();
+  _wx={};
+  if(!noHash) writeHash();
+  logView(); ensureRange();
   // The scorecard comes from a Google Sheet, not the POS: location, date range and the prior-period
   // comparison are all meaningless against it, so the filter bar is hidden rather than left there
   // looking operative.
   var sc=(S.page==='scorecard');
   $('filters').style.display=sc?'none':'';
+  panel._n=0;
   document.body.classList.toggle('sheetmode',sc);
   document.querySelectorAll('#rangeSeg button').forEach(function(b){b.classList.toggle('on',b.dataset.p===S.preset);});
   document.querySelectorAll('#cmpSeg button').forEach(function(b){b.classList.toggle('on',b.dataset.c===S.cmp);});
   document.querySelectorAll('#nav button').forEach(function(b){b.classList.toggle('on',b.dataset.p===S.page);});
   var m=$('main'); m.innerHTML='';
   if(S.page==='scorecard' && !hasScorecard()) S.page='overview';
-  ({overview:pgOverview,sales:pgSales,labor:pgLabor,cogs:pgCogs,inventory:pgInventory,events:pgEvents,activations:pgActivations,scorecard:pgScorecard,locations:pgLocations})[S.page](m);
+  ({overview:pgOverview,sales:pgSales,menu:pgMenu,beer:pgBeer,onepager:pgOnePager,labor:pgLabor,cogs:pgCogs,inventory:pgInventory,events:pgEvents,activations:pgActivations,scorecard:pgScorecard,locations:pgLocations})[S.page](m);
   // Some panels fill their tables asynchronously (drilldowns, lazily fetched detail), so run once now and
   // once after the current task settles rather than assuming everything is in the DOM already.
   syncCsvButtons(); setTimeout(syncCsvButtons,0);
@@ -618,7 +679,7 @@ function digestBlock(){
   locIds().forEach(function(l){
     var d=(D.digest||{})[l]; if(!d||!d.length) return;
     var loc=(D.locations.filter(function(x){return x.id===l;})[0]||{name:l});
-    groups.push({name:loc.name, items:d});
+    groups.push({name:loc.name, id:l, items:d});
   });
   var multi=locIds().length>1;
   if(!groups.length){
@@ -632,10 +693,11 @@ function digestBlock(){
     groups.map(function(g){
       return (multi?'<div class="hint" style="margin-top:10px"><b>'+esc(g.name)+'</b></div>':'')
         +'<table class="t">'+g.items.map(function(i){
-          return '<tr><td style="width:18px;color:'+col[i[0]]+'">'+(i[0]==='good'?'▼':ico[i[0]])+'</td>'
+          var _a=ACKS&&ACKS[g.id+'|'+i[4]];
+          return '<tr'+(_a&&_a.state==='resolved'?' class="resolved"':'')+'><td style="width:18px;color:'+col[i[0]]+'">'+(i[0]==='good'?'▼':ico[i[0]])+'</td>'
             +'<td style="width:74px"><span class="pill">'+esc(i[1])+'</span></td>'
             +'<td class="n" style="white-space:normal">'+esc(i[2])+'</td>'
-            +'<td class="r" style="color:var(--muted)">'+esc(i[3]||'')+'</td></tr>';
+            +'<td class="r" style="color:var(--muted)">'+esc(i[3]||'')+'</td>'+ackCell(g.id,i)+'</tr>';
         }).join('')+'</table>';
     }).join(''));
 }
@@ -676,17 +738,18 @@ function pacingBlock(){
 }
 
 function pgOverview(m){
-  var a=S.d0,b=S.d1, cw=cmpWindow(), k=kpis(a,b), kp=hasData(cw[0],cw[1])?kpis(cw[0],cw[1]):null, tg=targetsFor(a,b);
+  var a=S.d0,b=S.d1, cw=cmpWindow(), k=kpis(a,b), kp=hasData(cw[0],cw[1],cw[2])?kpis(cw[0],cw[1],cw[2]):null, tg=targetsFor(a,b);
   var h='<div class="grid tiles">'
    +tile('Net sales',fk(k.net),delta(k.net,kp&&kp.net),tg.sales?'<span class="tg">target '+fk(tg.sales)+' · '+fp(k.net/tg.sales,0)+'</span>':'')
    +(hasToast()?tile('Guests',fn(k.guests),delta(k.guests,kp&&kp.guests))+tile('Avg check',fm(k.avgCheck,2),delta(k.avgCheck,kp&&kp.avgCheck))+tile('Per-person avg',fm(k.ppa,2),delta(k.ppa,kp&&kp.ppa)):tileNT('Guests · avg check · PPA'))
    +tile('Labor %',fp(k.laborPct),delta(k.laborPct,kp&&kp.laborPct,true),tg.labor?'<span class="tg">target '+fp(tg.labor,0)+'</span>':'')
-   +tile('Purchases % (COGS proxy)',fp(k.purchPct),delta(k.purchPct,kp&&kp.purchPct,true),tg.cogs?'<span class="tg">target '+fp(tg.cogs,0)+'</span>':'')
+   +tile('Purchases % (COGS proxy)'+provBadge(),fp(k.purchPct),delta(k.purchPct,kp&&kp.purchPct,true),tg.cogs?'<span class="tg">target '+fp(tg.cogs,0)+'</span>':'')
    +(hasToast()?tile('Sales / labor hour',fm(k.splh,0),delta(k.splh,kp&&kp.splh))+tile('Discounts',fk(k.disc),delta(k.disc,kp&&kp.disc,true),'<span class="tg">'+fp(k.gross?k.disc/k.gross:null)+' of gross</span>'):tile('Prime cost %',fp(k.net?(k.labor+k.purch)/k.net:null),delta(k.net?(k.labor+k.purch)/k.net:null,kp&&kp.net?(kp.labor+kp.purch)/kp.net:null,true),'<span class="tg">labor + purchases</span>'))
    +(hasEvents()?tile('Event revenue',fk(evRows().filter(function(e){return evIsDef(e.status)&&e.d>=a&&e.d<=b;}).reduce(function(p,c){return p+evValue(c);},0)),'','<span class="tg">private events (Tripleseat)</span>'):'')
    +'</div>';
   var pb=pacingBlock();
   if(pb) h+='<div class="grid" style="margin-top:14px">'+pb+'</div>';
+  h+='<div class="grid" style="margin-top:14px">'+forecastPanel()+'</div>';
   h+='<div class="grid cols2" style="margin-top:14px">'
    +panel('Net sales by day','Current range vs comparison window; activations marked ●',chartBox('c_trend',true))
    +panel('Sales mix','Share of net sales by category',chartBox('c_mix')+'<div id="mixLegend" class="legend"></div>')
@@ -699,12 +762,13 @@ function pgOverview(m){
   if(db) h+='<div class="grid" style="margin-top:14px">'+db+'</div>';
   m.innerHTML=h;
   // trend
-  var cur=byDate(a,b), prev=kp?byDate(cw[0],cw[1]):[];
+  var cur=byDate(a,b), prev=kp?byDate(cw[0],cw[1],cw[2]):[];
+  if(kp&&cw[2]){ var pm={}; prev.forEach(function(r){pm[r.d]=r;}); prev=cur.map(function(r){ return pm[lyDate(r.d)]||{net:null}; }); }   // line each day up with ITS last-year twin
   var acts={}; D.activations.forEach(function(x){ if(locIds().indexOf(x.loc)<0)return; var d=x.s; while(d<=(x.e||x.s)){acts[d]=(acts[d]?acts[d]+', ':'')+x.name;d=addDays(d,1);} });
   var sets=[{label:'Net sales',data:cur.map(function(r){return r.net;}),borderColor:css('s1'),pointRadius:cur.map(function(r){return acts[r.d]?5:0;}),pointBackgroundColor:css('s2'),pointBorderColor:'#fff'}];
   if(prev.length) sets.push({label:S.cmp==='ly'?'Last year':'Prior period',data:prev.map(function(r){return r.net;}),borderColor:css('axis'),borderDash:[4,4]});
   var lc=lineCfg(cur.map(function(r){return fdate(r.d);}),sets); lc.options.plugins.legend={display:prev.length>0,position:'bottom'};
-  lc.options.plugins.tooltip.callbacks.afterTitle=function(items){var d=cur[items[0].dataIndex];return d&&acts[d.d]?'● '+acts[d.d]:'';};
+  lc.options.plugins.tooltip.callbacks.afterTitle=function(items){var d=cur[items[0].dataIndex]; if(!d) return ''; var out=[], hn=holidays(+d.d.slice(0,4))[d.d]; if(hn) out.push(hn); if(acts[d.d]) out.push('● '+acts[d.d]); if(locIds().length===1){ var wt=wxText(wxFor(locIds()[0],d.d)); if(wt) out.push(wt); } return out.join('\n');};
   mk('c_trend',lc);
   // mix
   var mix=BUCKETS.map(function(bk){return [bk[0],k[{f:'food',b:'beer',l:'liquor',w:'wine',n:'nabev',r:'retail',x:'other'}[bk[1]]],css(bk[3])];}).filter(function(x){return x[1]>0;});
@@ -725,7 +789,7 @@ function pgOverview(m){
 }
 
 function pgSales(m){
-  var a=S.d0,b=S.d1,k=kpis(a,b),cw=cmpWindow(),kp=hasData(cw[0],cw[1])?kpis(cw[0],cw[1]):null;
+  var a=S.d0,b=S.d1,k=kpis(a,b),cw=cmpWindow(),kp=hasData(cw[0],cw[1],cw[2])?kpis(cw[0],cw[1],cw[2]):null;
   var T=hasToast();
   var h='<div class="grid tiles">'+tile('Net sales',fk(k.net),delta(k.net,kp&&kp.net))
     +(T?tile('Orders',fn(k.orders),delta(k.orders,kp&&kp.orders))+tile('Checks',fn(k.checks),delta(k.checks,kp&&kp.checks))+tile('Gross sales',fk(k.gross),delta(k.gross,kp&&kp.gross))+tile('Tips',fk(k.tips),'<span class="tg">'+fp(k.net?k.tips/k.net:null)+' of net</span>')+tile('Refunds',fk(k.ref),delta(k.ref,kp&&kp.ref,true))
@@ -733,14 +797,15 @@ function pgSales(m){
     +'</div>';
   h+='<div class="grid cols2" style="margin-top:14px">'
     +panel('Net sales by category over time','Stacked by week',chartBox('c_cat',true))
-    +panel('Hourly heatmap','Average net sales by hour and weekday, last 8 weeks (from item timestamps)',T?'<div id="heat"></div>':needToast('The hourly heatmap'))
-    +panel('Top items — last 28 days','Ranked by net sales; category color shown',T?'<div id="topItems"></div>':needToast('Item ranking'))
-    +panel('Dining option & tender — last 28 days','How guests ordered and paid',T?'<div id="dining"></div>':needToast('Dining-option and tender mix'))
-    +panel('Discounts & comps — last 28 days','By reason, with loyalty redemptions identified',T?'<div id="disc"></div>':needToast('The discount breakdown'))
-    +panel('Revenue centre — last 28 days','Where in the building the sale happened',T?'<div id="revctr"></div>':needToast('The revenue-centre split'))
+    +panel('Hourly heatmap — '+win('last 8 weeks'),'Average net sales by hour and weekday (from item timestamps)',T?'<div id="heat"></div>':needToast('The hourly heatmap'))
+    +panel('Top items — '+win('last 28 days','items'),'Ranked by net sales; category color shown',T?'<div id="topItems"></div>':needToast('Item ranking'))
+    +panel('Dining option & tender — '+win('last 28 days'),'How guests ordered and paid',T?'<div id="dining"></div>':needToast('Dining-option and tender mix'))
+    +panel('Discounts & comps — '+win('last 28 days'),'By reason, with loyalty redemptions identified',T?'<div id="disc"></div>':needToast('The discount breakdown'))
+    +panel('Revenue centre — '+win('last 28 days'),'Where in the building the sale happened',T?'<div id="revctr"></div>':needToast('The revenue-centre split'))
     +panel('Tender detail — last 28 days','By card brand, with tip rate and refunds',T?'<div id="tender"></div>':needToast('Tender detail'))
     +panel('Voids — last 28 days','Rung and then removed · counted apart from comps, which are a different decision',T?'<div id="voids"></div>':needToast('The void audit'))
     +'</div>';
+  var wxp=weatherEffectPanel(); if(wxp) h+='<div class="grid" style="margin-top:14px">'+wxp+'</div>';
   m.innerHTML=h;
   var cur=byDate(a,b), wk={}; cur.forEach(function(r){var d=pd(r.d);d.setDate(d.getDate()-((d.getDay()+6)%7));var w=ds(d);var o=wk[w]||(wk[w]={_n:0});o._n++;BUCKETS.forEach(function(bk){o[bk[1]]=(o[bk[1]]||0)+(r[bk[1]]||0);});});
   var wks=Object.keys(wk).sort();
@@ -749,14 +814,14 @@ function pgSales(m){
   if(!T) return;
   // heatmap
   var hrs=[]; for(var i=10;i<24;i++)hrs.push(i);
-  var grid={}, max=0; locIds().forEach(function(l){(D.hourly[l]||[]).forEach(function(r){var key=r[0]+':'+r[1];grid[key]=(grid[key]||0)+r[2];});});
+  var grid={}, max=0; locIds().forEach(function(l){X('hourly',l).forEach(function(r){var key=r[0]+':'+r[1];grid[key]=(grid[key]||0)+r[2];});});
   Object.keys(grid).forEach(function(k2){if(grid[k2]>max)max=grid[k2];});
   var dn=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'], hh='<div class="heat"><div></div>'+hrs.map(function(x){return '<div class="h">'+(x>12?x-12+'p':x===12?'12p':x+'a')+'</div>';}).join('');
   [1,2,3,4,5,6,0].forEach(function(d){ hh+='<div class="h" style="text-align:left;line-height:26px">'+dn[d]+'</div>'+hrs.map(function(x){var v=grid[d+':'+x]||0;var t=max?v/max:0;return '<div class="c" data-t="'+dn[d]+' '+x+':00 — '+fm(v)+'" style="background:rgba(42,120,214,'+(0.08+0.92*t).toFixed(2)+')"></div>';}).join(''); });
   $('heat').innerHTML=hh+'</div>';
   // Discounts by reason. Toast attributes loyalty redemptions to a provider in the discount record, so the
   // loyalty share is readable here without integrating the loyalty platform separately.
-  var dd={}; locIds().forEach(function(l){(D.discounts&&D.discounts[l]||[]).forEach(function(r){
+  var dd={}; locIds().forEach(function(l){X('discounts',l).forEach(function(r){
     var k=r[0]+'||'+(r[1]||''); var o=dd[k]||(dd[k]={name:r[0],vendor:r[1],amt:0,n:0}); o.amt+=r[2]; o.n+=r[3];});});
   var dl=Object.keys(dd).map(function(k){return dd[k];}).sort(function(a,b){return b.amt-a.amt;});
   var dtot=dl.reduce(function(p,c){return p+c.amt;},0);
@@ -769,15 +834,15 @@ function pgSales(m){
     +'</table></div>'):'<div class="empty">No discounts recorded in this window.</div>';
 
   // top items (sum across selected locations)
-  var ti={}; locIds().forEach(function(l){(D.top_items[l]||[]).forEach(function(r){var o=ti[r[0]]||(ti[r[0]]={b:r[1],q:0,n:0});o.q+=r[2];o.n+=r[3];});});
+  var ti={}; locIds().forEach(function(l){X('top_items',l).forEach(function(r){var o=ti[r[0]]||(ti[r[0]]={b:r[1],q:0,n:0});o.q+=r[2];o.n+=r[3];});});
   var list=Object.keys(ti).map(function(n){return [n,ti[n]];}).sort(function(x,y){return y[1].n-x[1].n;}).slice(0,20);
   var tot=list.reduce(function(p,c){return p+c[1].n;},0);
   $('topItems').innerHTML='<div class="tw"><table class="t"><tr><th>#</th><th>Item</th><th>Category</th><th class="r">Qty</th><th class="r">Net</th><th class="r">Share</th></tr>'+list.map(function(x,i){var bk=BUCKETS.filter(function(z){return z[0]===x[1].b;})[0];return '<tr><td>'+(i+1)+'</td><td class="n">'+esc(x[0])+'</td><td><i class="sw" style="background:'+css(bk?bk[3]:'sx')+'"></i>'+esc(x[1].b)+'</td><td class="r">'+fn(x[1].q)+'</td><td class="r">'+fm(x[1].n)+'</td><td class="r">'+fp(x[1].n/tot)+'</td></tr>';}).join('')+'</table></div>';
-  var rc={}; locIds().forEach(function(l){(D.revctr&&D.revctr[l]||[]).forEach(function(r){var o=rc[r[0]]||(rc[r[0]]={n:0,c:0});o.n+=r[1];o.c+=r[2];});});
+  var rc={}; locIds().forEach(function(l){X('revctr',l).forEach(function(r){var o=rc[r[0]]||(rc[r[0]]={n:0,c:0});o.n+=r[1];o.c+=r[2];});});
   var rl=Object.keys(rc).sort(function(x,y){return rc[y].n-rc[x].n;}), rt=rl.reduce(function(p,c){return p+rc[c].n;},0);
   if($('revctr')) $('revctr').innerHTML=rl.length?('<table class="t"><tr><th>Revenue centre</th><th class="r">Net</th><th class="r">Orders</th><th class="r">Share</th></tr>'+rl.map(function(x){return '<tr><td class="n">'+esc(x)+'</td><td class="r">'+fm(rc[x].n)+'</td><td class="r">'+fn(rc[x].c)+'</td><td class="r">'+fp(rc[x].n/rt)+'</td></tr>';}).join('')+'</table>'):'<div class="empty">No revenue centres configured in Toast for this location.</div>';
   tenderAndVoids();
-  var dg={},pay={}; locIds().forEach(function(l){(D.dining[l]||[]).forEach(function(r){var o=dg[r[0]]||(dg[r[0]]={n:0,c:0});o.n+=r[1];o.c+=r[2];});(D.payments[l]||[]).forEach(function(r){var o=pay[r[0]]||(pay[r[0]]={a:0,t:0,c:0});o.a+=r[1];o.t+=r[2];o.c+=r[3];});});
+  var dg={},pay={}; locIds().forEach(function(l){X('dining',l).forEach(function(r){var o=dg[r[0]]||(dg[r[0]]={n:0,c:0});o.n+=r[1];o.c+=r[2];});X('payments',l).forEach(function(r){var o=pay[r[0]]||(pay[r[0]]={a:0,t:0,c:0});o.a+=r[1];o.t+=r[2];o.c+=r[3];});});
   var dl=Object.keys(dg).sort(function(x,y){return dg[y].n-dg[x].n;}), dt=dl.reduce(function(p,c){return p+dg[c].n;},0);
   var pl=Object.keys(pay).sort(function(x,y){return pay[y].a-pay[x].a;}), pt=pl.reduce(function(p,c){return p+pay[c].a;},0);
   $('dining').innerHTML='<table class="t"><tr><th>Dining option</th><th class="r">Net</th><th class="r">Orders</th><th class="r">Share</th></tr>'+dl.map(function(x){return '<tr><td class="n">'+esc(x.replace(/_/g,' '))+'</td><td class="r">'+fm(dg[x].n)+'</td><td class="r">'+fn(dg[x].c)+'</td><td class="r">'+fp(dg[x].n/dt)+'</td></tr>';}).join('')+'</table>'
@@ -785,17 +850,18 @@ function pgSales(m){
 }
 
 function pgLabor(m){
-  var a=S.d0,b=S.d1,k=kpis(a,b),cw=cmpWindow(),kp=hasData(cw[0],cw[1])?kpis(cw[0],cw[1]):null,tg=targetsFor(a,b);
+  var a=S.d0,b=S.d1,k=kpis(a,b),cw=cmpWindow(),kp=hasData(cw[0],cw[1],cw[2])?kpis(cw[0],cw[1],cw[2]):null,tg=targetsFor(a,b);
   var T=hasToast();
   m.innerHTML='<div class="grid tiles">'+tile('Labor cost',fk(k.labor),delta(k.labor,kp&&kp.labor,true))+tile('Labor %',fp(k.laborPct),delta(k.laborPct,kp&&kp.laborPct,true),tg.labor?'<span class="tg">target '+fp(tg.labor,0)+'</span>':'')
     +(T?tile('Hours',fn(k.hours),delta(k.hours,kp&&kp.hours,true))+tile('Sales / labor hour',fm(k.splh,0),delta(k.splh,kp&&kp.splh))+tile('Avg wage',fm(k.hours?k.labor/k.hours:null,2),''):tileNT('Hours · SPLH · avg wage'))+'</div>'
     +'<div class="grid cols2" style="margin-top:14px">'+panel('Labor % by day','Daily labor cost ÷ net sales; dashed = target'+(T?'':' · labor cost from the MarginEdge P&amp;L'),chartBox('c_lab',true))
     +(T?panel('Hours vs sales by day','Bars: labor hours · line: net sales',chartBox('c_hrs',true)):panel('Labor by P&amp;L category','MarginEdge P&amp;L labor lines by month','<div id="pnlLabor"></div>'))
-    +(T?panel('By job — last 28 days','Hours, cost and average rate','<div id="jobs"></div>'):panel('By job','Hours, cost and average rate',needToast('Job-level labor')))+'</div>'
+    +(T?panel('By job — '+win('last 28 days'),'Hours, cost and average rate','<div id="jobs"></div>'):panel('By job','Hours, cost and average rate',needToast('Job-level labor')))+'</div>'
     +(T?'<div class="grid cols2" style="margin-top:14px">'
         +panel('Sales and labor by hour','Average day, last 8 weeks · bars: net sales · line: labor % of sales',chartBox('c_splh',true))
         +panel('Labor % by hour and weekday','Where the schedule and the trade disagree · darker = more of the hour\'s sales spent on labor · shading caps at 60% so one pre-open hour does not flatten the rest','<div id="heatLab"></div>')
       +'</div>':'')
+    +(T?'<div class="grid" style="margin-top:14px">'+staffingPanel()+'</div>':'')
     +(hasCash()?'<div class="grid cols2" style="margin-top:14px">'
         +panel('Cash drawer — last 28 days','Over and short, with corrections already netted out','<div id="cashDay"></div>')
         +panel('Drawers and cash movement — last 28 days','Grouped by drawer; the person column is who performed the count','<div id="cashWho"></div>')
@@ -814,20 +880,20 @@ function pgLabor(m){
   if(!T){ $('pnlLabor').innerHTML=pnlSectionTable('labor'); return; }
   mk('c_hrs',{type:'bar',data:{labels:cur.map(function(r){return fdate(r.d);}),datasets:[{label:'Labor hours',data:cur.map(function(r){return r.lh;}),backgroundColor:css('s3'),borderRadius:3,fmt:'int'}]},options:baseOpts({scales:{x:{grid:{display:false},ticks:{maxRotation:0,autoSkip:true,maxTicksLimit:10}},y:{beginAtZero:true,grid:{color:css('grid')},border:{display:false},ticks:{callback:function(v){return fn(v)+' h';}}}}})});
   hourlyLaborViews(); scheduleViews(); serverPanel(); cashPanels();
-  var jb={}; locIds().forEach(function(l){(D.labor_jobs[l]||[]).forEach(function(r){var o=jb[r[0]]||(jb[r[0]]={h:0,c:0,s:0});o.h+=r[1];o.c+=r[2];o.s+=r[3];});});
+  var jb={}; locIds().forEach(function(l){X('labor_jobs',l).forEach(function(r){var o=jb[r[0]]||(jb[r[0]]={h:0,c:0,s:0});o.h+=r[1];o.c+=r[2];o.s+=r[3];});});
   var jl=Object.keys(jb).sort(function(x,y){return jb[y].c-jb[x].c;}), jt=jl.reduce(function(p,c){return p+jb[c].c;},0);
   $('jobs').innerHTML='<table class="t"><tr><th>Job</th><th class="r">Hours</th><th class="r">Cost</th><th class="r">Avg rate</th><th class="r">Shifts</th><th class="r">Share</th></tr>'+jl.map(function(x){return '<tr><td class="n">'+esc(x)+'</td><td class="r">'+fn(jb[x].h)+'</td><td class="r">'+fm(jb[x].c)+'</td><td class="r">'+fm(jb[x].h?jb[x].c/jb[x].h:null,2)+'</td><td class="r">'+fn(jb[x].s)+'</td><td class="r">'+fp(jb[x].c/jt)+'</td></tr>';}).join('')+'</table>';
 }
 
 function pgCogs(m){
-  var a=S.d0,b=S.d1,k=kpis(a,b),cw=cmpWindow(),kp=hasData(cw[0],cw[1])?kpis(cw[0],cw[1]):null,tg=targetsFor(a,b);
+  var a=S.d0,b=S.d1,k=kpis(a,b),cw=cmpWindow(),kp=hasData(cw[0],cw[1],cw[2])?kpis(cw[0],cw[1],cw[2]):null,tg=targetsFor(a,b);
   var rows=[['Food',k.food,k.pf],['Beer',k.beer,k.pb],['Liquor',k.liquor,k.pl],['Wine',k.wine,k.pw],['NA Bev',k.nabev,k.pn],['Other / supplies',k.other+k.retail,k.po]];
   m.innerHTML='<div class="grid tiles">'+tile('Purchases',fk(k.purch),delta(k.purch,kp&&kp.purch,true))+tile('Purchases % of net',fp(k.purchPct),delta(k.purchPct,kp&&kp.purchPct,true),tg.cogs?'<span class="tg">target '+fp(tg.cogs,0)+'</span>':'')
     +tile('Food cost % (purchases)',fp(k.food?k.pf/k.food:null),delta(k.food?k.pf/k.food:null,kp&&kp.food?kp.pf/kp.food:null,true))+tile('Beer cost % (purchases)',fp(k.beer?k.pb/k.beer:null),delta(k.beer?k.pb/k.beer:null,kp&&kp.beer?kp.pb/kp.beer:null,true))
     +tile('Liquor cost %',fp(k.liquor?k.pl/k.liquor:null),'')+tile('Wine cost %',fp(k.wine?k.pw/k.wine:null),'')+'</div>'
     +'<div class="hint" style="margin:8px 2px 0;font-size:11.5px;color:var(--muted)">Purchases-based cost % is a proxy; the Inventory page shows count-adjusted actual usage (beginning + purchases − ending) where counts exist.</div>'
     +'<div class="grid cols2" style="margin-top:14px">'+panel('Purchases by category by week','Invoice line totals from MarginEdge',chartBox('c_purch',true))+panel('Category cost % in range','Purchases ÷ category net sales','<div id="catTbl"></div>')
-    +panel('Top vendors — last 28 days','Invoice totals by vendor','<div id="vend"></div>')+panel('Purchases vs sales by day','Bars: purchases (invoice date) · line: net sales',chartBox('c_pvs',true))
+    +panel('Top vendors — '+win('last 28 days'),'Invoice totals by vendor','<div id="vend"></div>')+panel('Purchases vs sales by day','Bars: purchases (invoice date) · line: net sales',chartBox('c_pvs',true))
     +panel('P&amp;L by month (MarginEdge)','Income, COGS, labor and controllable expenses as MarginEdge reports them','<div id="pnlTbl"></div>')+panel('COGS by P&amp;L category','Inventory-adjusted where MarginEdge has counts','<div id="pnlCogs"></div>')+'</div>'
     +'<div class="grid cols2" style="margin-top:14px">'
       +panel('Invoice hygiene — last 8 weeks','What is still open, what is credited, and which account paid','<div id="invHyg"></div>')
@@ -844,7 +910,7 @@ function pgCogs(m){
   mk('c_purch',{type:'bar',data:{labels:wks.map(function(w){return wkLabel(w,wk[w]);}),datasets:BUCKETS.filter(function(bk){return bk[2];}).map(function(bk){return {label:bk[0],data:wks.map(function(w){return wk[w][bk[2]]||0;}),backgroundColor:css(bk[3]),borderWidth:2,borderColor:'#fff',borderSkipped:false};})},
     options:baseOpts({scales:{x:{stacked:true,grid:{display:false}},y:{stacked:true,beginAtZero:true,grid:{color:css('grid')},border:{display:false},ticks:{callback:function(v){return fk(v);}}}},plugins:{legend:{display:true,position:'bottom'},tooltip:{callbacks:{label:function(c){return ' '+c.dataset.label+': '+fk(c.parsed.y);}}}}})});
   $('catTbl').innerHTML='<table class="t"><tr><th>Category</th><th class="r">Net sales</th><th class="r">Purchases</th><th class="r">Cost %</th></tr>'+rows.map(function(r){return '<tr><td class="n">'+r[0]+'</td><td class="r">'+fm(r[1])+'</td><td class="r">'+fm(r[2])+'</td><td class="r">'+fp(r[1]?r[2]/r[1]:null)+'</td></tr>';}).join('')+'<tr><td class="n">Total</td><td class="r">'+fm(k.net)+'</td><td class="r">'+fm(k.purch)+'</td><td class="r">'+fp(k.purchPct)+'</td></tr></table>';
-  var vd={}; locIds().forEach(function(l){(D.vendors[l]||[]).forEach(function(r){var o=vd[r[0]]||(vd[r[0]]={t:0,n:0,b:r[3]});o.t+=r[1];o.n+=r[2];});});
+  var vd={}; locIds().forEach(function(l){X('vendors',l).forEach(function(r){var o=vd[r[0]]||(vd[r[0]]={t:0,n:0,b:r[3]});o.t+=r[1];o.n+=r[2];});});
   var vl=Object.keys(vd).sort(function(x,y){return vd[y].t-vd[x].t;}).slice(0,15), vt=vl.reduce(function(p,c){return p+vd[c].t;},0);
   $('vend').innerHTML='<table class="t"><tr><th>Vendor</th><th>Mostly</th><th class="r">Invoices</th><th class="r">Total</th><th class="r">Share</th></tr>'+vl.map(function(x){return '<tr><td class="n">'+esc(x)+'</td><td>'+esc(vd[x].b||'')+'</td><td class="r">'+fn(vd[x].n)+'</td><td class="r">'+fm(vd[x].t)+'</td><td class="r">'+fp(vd[x].t/vt)+'</td></tr>';}).join('')+'</table>';
   $('pnlTbl').innerHTML=pnlSummaryTable(); $('pnlCogs').innerHTML=pnlSectionTable('cogs');
@@ -870,7 +936,8 @@ function pnlSectionTable(sec){ var m=pnlMonths(), ms=Object.keys(m).sort().slice
   return h+'</table>'; }
 
 function pgInventory(m){
-  var h='<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(640px,1fr))">';
+  var cpn=compliancePanel();
+  var h=(cpn?'<div class="grid" style="margin-bottom:14px">'+cpn+'</div>':'')+'<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(640px,1fr))">';
   locIds().forEach(function(l){
     var loc=D.locations.filter(function(x){return x.id===l;})[0], inv=D.inventory[l]||[];
     if(!inv.length){h+=panel(loc.name,'No inventory counts yet','<div class="empty">Add counts to inputs/inventory_counts.csv or enable the MarginEdge inventory endpoint.</div>');return;}
@@ -1178,8 +1245,9 @@ function cashPanels(){
           +'typically '+fm(k.typical)+' (range '+fm(k.low)+'–'+fm(k.high)+'). '
           +'Cash that goes missing goes missing by a different amount each night. A shortfall this consistent, '
           +'across this many drawers, points at the expected starting cash being set wrong rather than at anyone '
-          +'handling it. Worth checking the float each drawer is set to open with before anything else.</div>';}).join('')
+          +'handling it. '+floatVerdict(l,k)+'</div>';}).join('')
         :'')
+      +floatNotes(cons)
       +(dr.length?'<div class="hint" style="margin-bottom:6px">By drawer — the unit that means something. Toast attributes a close-out to whoever performed it, which at close is usually one manager doing every drawer, so the person is not the variable here.</div>'
         +'<table class="t"><tr><th>Drawer</th><th class="r">Balanced</th><th class="r">Over</th><th class="r">Short</th><th class="r">Short $</th><th class="r">Typical short</th></tr>'
         +dr.slice(0,14).map(function(k){var v=draw[k];return '<tr><td class="n">'+esc(k)+'</td><td class="r">'+(v[0]?fn(v[0]):'—')+'</td>'
@@ -1504,12 +1572,15 @@ function benchmarkPanel(rows){
     {k:'splh',  label:'Sales / labor hour',fmt:'money0',good:1},
     {k:'labor', label:'Labor %',           fmt:'pct',   good:-1},
     {k:'purch', label:'Purchases %',       fmt:'pct',   good:-1},
-    {k:'disc',  label:'Discount %',        fmt:'pct',   good:-1}
+    {k:'disc',  label:'Discount %',        fmt:'pct',   good:-1},
+    {k:'count', label:'Counts made',       fmt:'pct',   good:1}
   ];
+  if(rows.some(function(r){return r.l.seats;})) metrics.push({k:'seat', label:'Sales / seat / day', fmt:'money', good:1});
   var vals=rows.map(function(r){var s=r.s;return {
     name:r.l.name, partial:r.partial,
     ppa:s.guests?s.net/s.guests:null, check:s.checks?s.net/s.checks:null, splh:s.lh?s.net/s.lh:null,
-    labor:s.net?s.lc/s.net:null, purch:s.net?s.p/s.net:null, disc:s.net?s.disc/s.net:null };});
+    labor:s.net?s.lc/s.net:null, purch:s.net?s.p/s.net:null, disc:s.net?s.disc/s.net:null,
+    count:((D.compliance||{})[r.l.id]||{}).score, seat:(r.l.seats&&s.days)?s.net/s.days/r.l.seats:null };});
   if(vals.length<2) return '';
   function median(k){var v=vals.map(function(x){return x[k];}).filter(function(x){return x!=null;}).sort(function(a,b){return a-b;});
     if(!v.length) return null; var m=Math.floor(v.length/2); return v.length%2?v[m]:(v[m-1]+v[m])/2; }
@@ -1541,12 +1612,12 @@ function pgLocations(m){
   var a=S.d0,b=S.d1,cw=cmpWindow();
   // A location that opened partway through the window has no comparable prior period: comparing a full range
   // against days before it existed reports growth that is really just the opening. Suppress the delta instead.
-  var rows=D.locations.map(function(l){ var s=sumRows(rowsIn(l.id,a,b)), p=sumRows(rowsIn(l.id,cw[0],cw[1]));
+  var rows=D.locations.map(function(l){ var s=sumRows(rowsIn(l.id,a,b)), p=sumRows(rowsIn(l.id,cw[0],cw[1],cw[2]));
     return {l:l,s:s,p:p,partial:(l.first_date&&cw[0]<l.first_date)}; });
   var anyNew=rows.some(function(r){return r.partial;});
   m.innerHTML='<div class="panel"><h3>Location scorecard</h3><div class="hint">All locations for the selected range; change vs '+(S.cmp==='ly'?'last year':'prior period')+(anyNew?'. Locations marked <span class="pill">new</span> opened partway through this window, so there is no comparable prior period and their change is shown as —.':'')+'</div><div style="overflow-x:auto"><table class="t"><tr><th>Location</th><th class="r">Net sales</th><th class="r">Δ</th><th class="r">Guests</th><th class="r">Avg check</th><th class="r">PPA</th><th class="r">Labor %</th><th class="r">Purch %</th><th class="r">SPLH</th><th class="r">Discounts</th></tr>'
     +rows.map(function(r,i){var s=r.s,p=r.p;var d=(p.net&&!r.partial)?(s.net-p.net)/p.net:null;return '<tr><td class="n"><i class="sw" style="background:'+css(LOCCOL[i%8])+'"></i>'+esc(r.l.name)+(r.partial?' <span class="pill" title="Opened '+fdate(r.l.first_date)+' — no comparable prior period">new</span>':'')+'</td><td class="r">'+fm(s.net)+'</td><td class="r" style="color:'+(d>=0?'var(--good)':'var(--bad)')+';font-weight:700">'+(d!=null?(d>=0?'+':'')+fp(d):'—')+'</td><td class="r">'+fn(s.guests)+'</td><td class="r">'+fm(s.checks?s.net/s.checks:null,2)+'</td><td class="r">'+fm(s.guests?s.net/s.guests:null,2)+'</td><td class="r">'+fp(s.net?s.lc/s.net:null)+'</td><td class="r">'+fp(s.net?s.p/s.net:null)+'</td><td class="r">'+fm(s.lh?s.net/s.lh:null,0)+'</td><td class="r">'+fm(s.disc)+'</td></tr>';}).join('')+'</table></div></div>'
-    +'<div class="grid" style="margin-top:14px">'+benchmarkPanel(rows)+'</div>'
+    +'<div class="grid" style="margin-top:14px">'+benchmarkPanel(rows)+'</div>'+rampPanel()
     +'<div class="grid cols2" style="margin-top:14px">'+panel('Net sales by week by location','',chartBox('c_locs',true))+panel('Labor % by week by location','',chartBox('c_loclab',true))+'</div>';
   var wkAll={}; D.locations.forEach(function(l){rowsIn(l.id,a,b).forEach(function(r){var d=pd(r[0]);d.setDate(d.getDate()-((d.getDay()+6)%7));var w=ds(d);var o=wkAll[w]||(wkAll[w]={_n:0});if(l.id===D.locations[0].id)o._n++;var q=o[l.id]||(o[l.id]={net:0,lc:0});q.net+=r[K.net];q.lc+=r[K.lc];});});
   var wks=Object.keys(wkAll).sort();
@@ -1689,9 +1760,520 @@ function showUsage(){
           +'</table></div></div>'):'')
         +(rec.length?('<div class="hint" style="margin-top:14px">Recent activity</div><div class="tw"><table class="t">'
           +rec.slice(0,20).map(function(r2){return '<tr><td>'+new Date(r2[0]).toLocaleString()+'</td><td class="n">'+esc(r2[2]||r2[1])+'</td><td>'+esc(r2[3])+'</td></tr>';}).join('')
-          +'</table></div>'):'');
+          +'</table></div>'):'')
+        +usageViewsHtml(j.views);
     }catch(e){ $('usageBody').innerHTML='<div class="empty">Could not reach the sign-in service. '+esc(e.message)+'</div>'; }
   })();
+}
+
+/* =========================================================================================
+   V2 — bookmarkable views, date-range for the fixed panels, fair comparisons, beer volume,
+   menu & guests, staffing, counting discipline, weather, acknowledgements, one-pager.
+   ========================================================================================= */
+
+/* ---------- bookmarkable views ----------
+   The whole view — page, taproom, range, comparison — lives in the URL hash, so a link pasted into an email
+   opens exactly what the sender was looking at, and the browser's back button works. The hash rather than the
+   query string because GitHub Pages serves one static file and the sign-in redirect must not lose it. */
+function readHash(){
+  var h=(location.hash||'').replace(/^#/,''); if(!h) return false;
+  var q={};
+  try{ h.split('&').forEach(function(kv){var i=kv.indexOf('='); if(i>0) q[decodeURIComponent(kv.slice(0,i))]=decodeURIComponent(kv.slice(i+1));}); }
+  catch(e){ return false; }                     // a mangled link must open the portal, not a blank page
+  var ok=false;
+  if(q.page && (PAGES.some(function(p){return p[0]===q.page;})||q.page==='onepager')){ S.page=q.page; ok=true; }
+  if(q.loc && (q.loc==='all'?D.locations.length>1:D.locations.some(function(l){return l.id===q.loc;}))){ S.loc=q.loc; ok=true; }
+  if(q.cmp==='ly'||q.cmp==='prior'){ S.cmp=q.cmp; ok=true; }
+  if(q.r){
+    if(q.r==='custom' && /^\d{4}-\d\d-\d\d$/.test(q.d0||'') && /^\d{4}-\d\d-\d\d$/.test(q.d1||'') && q.d0<=q.d1){ S.preset='custom'; S.d0=q.d0; S.d1=q.d1; ok=true; }
+    else if(['l7','l28','mtd','qtd','ytd','l91','lm'].indexOf(q.r)>=0){ S.preset=q.r; applyPreset(); ok=true; }
+  }
+  return ok;
+}
+var _hashWritten='';
+function writeHash(){
+  var parts=['page='+S.page,'loc='+S.loc,'r='+S.preset];
+  if(S.preset==='custom'){ parts.push('d0='+S.d0,'d1='+S.d1); }
+  if(S.cmp!=='prior') parts.push('cmp='+S.cmp);
+  var h='#'+parts.join('&');
+  if(h===location.hash){ _hashWritten=h; return; }
+  // The first write of a session replaces rather than pushes, or the back button's first press would do nothing.
+  var first=!_hashWritten; _hashWritten=h;
+  try{ history[first?'replaceState':'pushState'](null,'',h); }catch(e){ location.hash=h; }
+}
+window.addEventListener('popstate',function(){ if(!D) return; if(readHash()){ var ls=$('locSel'); if(ls) ls.value=S.loc; $('d0').value=S.d0; $('d1').value=S.d1; render(true); } });
+
+/* ---------- page views ----------
+   One beacon per page per session. This is a record of which pages earn their keep, not a click stream — and
+   it is how the next round of priorities gets decided on evidence rather than on which page was most fun to
+   build. Fire-and-forget: a failed beacon must never be visible. */
+var _viewed={};
+function logView(){
+  var sid=sessionSid(); if(!sid) return;
+  var k=S.page; if(_viewed[k]) return; _viewed[k]=1;
+  try{ navigator.sendBeacon(CFG.API_URL, JSON.stringify({a:'view',s:sid,p:S.page,l:S.loc})); }catch(e){}
+}
+
+/* ---------- the date range, for panels that used to be fixed at 28/56 days ----------
+   The headline bundle pre-aggregates items, tenders, jobs and the rest over a fixed window to stay small. The
+   daily grain lives in each taproom's detail bundle and is fetched only when the range is moved off the default,
+   so the first paint costs nothing extra. Until it arrives (or if it cannot be fetched) the panels fall back to
+   the fixed window AND SAY SO in their title, because a table quietly showing different dates from the picker
+   above it is exactly the kind of thing that gets a number quoted wrongly in a meeting. */
+var _rangeBusy=false, _rangeFailed={};
+function rangeWanted(){ return S.preset!=='l28'; }
+function rangeReady(){ return locIds().every(function(l){ return DETAIL[l] && DETAIL[l].range; }); }
+function useRange(){ return rangeWanted() && rangeReady(); }
+function ensureRange(){
+  if(!rangeWanted()||rangeReady()||_rangeBusy) return;
+  var need=locIds().filter(function(l){ return !(DETAIL[l]&&DETAIL[l].range) && DETAIL_KEYS[l] && !_rangeFailed[l]; });
+  if(!need.length) return;
+  _rangeBusy=true;
+  Promise.all(need.map(function(l){ return loadDetail(l).then(function(d){ if(!d||!d.range) _rangeFailed[l]=1; }).catch(function(){ _rangeFailed[l]=1; }); }))
+    .then(function(){ _rangeBusy=false; render(true); });
+}
+function win(fixed,kind){
+  if(useRange()){
+    // Item-level history is kept for fewer days than the rest. Say so in the title rather than let a
+    // year-to-date heading sit over a table that quietly starts in March.
+    if(kind==='items'){ var lo=S.d0; locIds().forEach(function(l){ var is=DETAIL[l].range.items_since; if(is&&is>lo) lo=is; }); if(lo>S.d0) return fdate(lo)+' – '+fdate(S.d1)+' <span class="tg" style="font-weight:400">· item history starts '+fdate(lo)+'</span>'; }
+    return fdate(S.d0)+' – '+fdate(S.d1);
+  }
+  if(rangeWanted()) return fixed+(_rangeBusy?' <span class="tg" style="font-weight:400">· loading your date range…</span>':' <span class="tg" style="font-weight:400">· fixed window</span>');
+  return fixed;
+}
+function _dayIdx(R,d){ return Math.round((pd(d)-pd(R.days[0]))/864e5); }
+function rAgg(l,tbl,nm){
+  var R=DETAIL[l].range, t=R[tbl]; if(!t) return [];
+  var i0=Math.max(0,_dayIdx(R,S.d0)), i1=_dayIdx(R,S.d1), acc={};
+  t.rows.forEach(function(r){ if(r[0]<i0||r[0]>i1) return; var o=acc[r[1]]; if(!o){ o=acc[r[1]]=[]; for(var j=2;j<r.length;j++) o.push(0); } for(var j2=2;j2<r.length;j2++) o[j2-2]+=r[j2]; });
+  return Object.keys(acc).map(function(i){ return [t.names[i]].concat(acc[i]); });
+}
+/* X(kind, loc) returns rows in exactly the shape the fixed payload uses, so every panel below is unchanged. */
+function X(kind,l){
+  if(!useRange()) return (D[kind]||{})[l]||[];
+  if(kind==='top_items') return rAgg(l,'items').map(function(r){return [r[0][0],r[0][1],r[1],r[2]];}).sort(function(a,b){return b[3]-a[3];}).slice(0,60);
+  if(kind==='dining') return rAgg(l,'dining').sort(function(a,b){return b[1]-a[1];});
+  if(kind==='revctr') return rAgg(l,'revctr').sort(function(a,b){return b[1]-a[1];});
+  if(kind==='payments') return rAgg(l,'payments').sort(function(a,b){return b[1]-a[1];});
+  if(kind==='labor_jobs') return rAgg(l,'jobs').sort(function(a,b){return b[2]-a[2];});
+  if(kind==='discounts') return rAgg(l,'discounts').map(function(r){return [r[0][0],r[0][1]||null,r[1],r[2]];}).sort(function(a,b){return b[2]-a[2];});
+  if(kind==='vendors') return rAgg(l,'vendors').map(function(r){return [r[0],r[1],r[2],null];}).sort(function(a,b){return b[1]-a[1];});
+  if(kind==='hourly'){
+    var R=DETAIL[l].range, i0=Math.max(0,_dayIdx(R,S.d0)), i1=_dayIdx(R,S.d1), cell={}, days={};
+    (R.hourly||[]).forEach(function(r){ if(r[0]<i0||r[0]>i1) return; var k=dow(R.days[r[0]])+':'+r[1]; cell[k]=(cell[k]||0)+r[2]; (days[k]||(days[k]={}))[r[0]]=1; });
+    return Object.keys(cell).map(function(k){ var p=k.split(':'), n=Object.keys(days[k]).length; return [+p[0],+p[1],cell[k]/n,n]; });
+  }
+  return (D[kind]||{})[l]||[];
+}
+
+/* ---------- a fair "last year" ----------
+   Same calendar DATE last year is the wrong day of the week, and in a taproom the weekday is most of the
+   number: a Saturday against last year's Friday reads as a 40% swing that never happened. So "last year" means
+   364 days back — the same weekday — with one correction. Holidays move: the Fourth of July is a Saturday one
+   year and a Friday the year before, and Thanksgiving is never 364 days apart from itself. A holiday is
+   therefore compared with the SAME HOLIDAY last year, and an ordinary day whose 364-day twin happened to be a
+   holiday is compared with the week before that instead, so neither side of a comparison is a holiday unless
+   both are. */
+function nthDow(y,m,dw,n){ var d=new Date(y,m,1), c=0; while(true){ if(d.getDay()===dw){ c++; if(c===n) return ds(d);} d.setDate(d.getDate()+1);} }
+function lastDow(y,m,dw){ var d=new Date(y,m+1,0); while(d.getDay()!==dw) d.setDate(d.getDate()-1); return ds(d); }
+function easter(y){ var a=y%19,b=Math.floor(y/100),c=y%100,d=Math.floor(b/4),e=b%4,f=Math.floor((b+8)/25),g=Math.floor((b-f+1)/3),h=(19*a+b-d-g+15)%30,i=Math.floor(c/4),k=c%4,l=(32+2*e+2*i-h-k)%7,m=Math.floor((a+11*h+22*l)/451),mo=Math.floor((h+l-7*m+114)/31),da=((h+l-7*m+114)%31)+1; return ds(new Date(y,mo-1,da)); }
+var _hol={};
+function holidays(y){
+  if(_hol[y]) return _hol[y];
+  var tg=nthDow(y,10,4,4), H={};
+  H[y+'-01-01']="New Year's Day"; H[y+'-02-14']="Valentine's Day"; H[nthDow(y,1,0,2)]='Super Bowl Sunday';   /* set after Valentine's so it wins when they collide (2027) */ H[y+'-03-17']="St Patrick's Day";
+  H[easter(y)]='Easter'; H[nthDow(y,4,0,2)]="Mother's Day"; H[lastDow(y,4,1)]='Memorial Day'; H[nthDow(y,5,0,3)]="Father's Day";
+  H[y+'-07-04']='Independence Day'; H[nthDow(y,8,1,1)]='Labor Day'; H[y+'-10-31']='Halloween';
+  H[addDays(tg,-1)]='Thanksgiving Eve'; H[tg]='Thanksgiving'; H[addDays(tg,1)]='Black Friday';
+  H[y+'-12-24']='Christmas Eve'; H[y+'-12-25']='Christmas Day'; H[y+'-12-31']="New Year's Eve";
+  return (_hol[y]=H);
+}
+function lyDate(d){
+  var y=+d.slice(0,4), name=holidays(y)[d];
+  if(name){ var P=holidays(y-1); for(var k in P) if(P[k]===name) return k; }
+  var c=addDays(d,-364), PH=holidays(+c.slice(0,4));
+  if(PH[c]){ var c2=addDays(c,-7); return PH[c2]?addDays(c,7):c2; }
+  return c;
+}
+function rangeDates(a,b){ var out=[],d=a; while(d<=b){ out.push(d); d=addDays(d,1);} return out; }
+
+/* ---------- provisional badge ---------- */
+function isProv(){ return !!(D && D.meta && D.meta.provisional && D.meta.provisional.marginedge); }
+function provBadge(){ return isProv()?' <span class="prov" title="'+esc(D.meta.provisional.note||'')+'">provisional</span>':''; }
+var PROV_RX=/purchas|vendor|inventory|on hand|p&amp;l|p&l|invoice|cogs|cost %|unit price|counting|keg/i;
+
+/* ---------- acknowledgements on exceptions ---------- */
+var ACKS=null, ACKS_OK=false;
+function loadAcks(){
+  var sid=sessionSid(); if(!sid) return;
+  scriptPost(JSON.stringify({a:'acks',s:sid})).then(function(r){return r.json();}).then(function(j){
+    if(!j||!j.ok) return;                      // an older sign-in backend answers "unknown action": hide the feature
+    ACKS_OK=true; ACKS={}; (j.acks||[]).forEach(function(a){ ACKS[a.loc+'|'+a.key]=a; });
+    if(S.page==='overview' && !document.querySelector('.acknote')) render(true);
+  }).catch(function(){});
+}
+function ackCell(loc,item){
+  if(!ACKS_OK||!item[4]) return '';
+  var a=ACKS[loc+'|'+item[4]], st=a?a.state:'open';
+  var who=a&&st!=='open'?('<div class="tg" style="font-size:11px;white-space:normal">'+(st==='resolved'?'Resolved':'Acknowledged')+' by '+esc(a.by)+' · '+new Date(a.at).toLocaleDateString(undefined,{month:'short',day:'numeric'})+(a.note?' — '+esc(a.note):'')+'</div>'):'';
+  var btns=st==='open'
+    ?'<button class="ackb" data-ack="ack" data-loc="'+esc(loc)+'" data-key="'+esc(item[4])+'" data-head="'+esc(item[2])+'">Acknowledge</button><button class="ackb" data-ack="resolved" data-loc="'+esc(loc)+'" data-key="'+esc(item[4])+'" data-head="'+esc(item[2])+'">Resolve…</button>'
+    :(st==='ack'?'<button class="ackb" data-ack="resolved" data-loc="'+esc(loc)+'" data-key="'+esc(item[4])+'" data-head="'+esc(item[2])+'">Resolve…</button>':'')
+      +'<button class="ackb" data-ack="open" data-loc="'+esc(loc)+'" data-key="'+esc(item[4])+'" data-head="'+esc(item[2])+'">Reopen</button>';
+  return '<td style="white-space:normal;min-width:150px">'+who+'<div class="ackbtns">'+btns+'</div></td>';
+}
+document.addEventListener('click',function(e){
+  var b=e.target.closest&&e.target.closest('button[data-ack]'); if(!b) return;
+  var state=b.dataset.ack, note='';
+  if(state==='resolved'){
+    var cell=b.parentNode;
+    if(!cell.querySelector('input')){
+      cell.innerHTML='<input class="acknote" type="text" maxlength="300" placeholder="What was done? (optional)"><button class="ackb" data-ack="resolved" data-go="1" data-loc="'+esc(b.dataset.loc)+'" data-key="'+esc(b.dataset.key)+'" data-head="'+esc(b.dataset.head)+'">Save</button>';
+      cell.querySelector('input').focus(); return;
+    }
+    note=cell.querySelector('input').value||'';
+  }
+  b.disabled=true; b.textContent='Saving…';
+  scriptPost(JSON.stringify({a:'ack',s:sessionSid(),loc:b.dataset.loc,key:b.dataset.key,state:state,note:note,head:b.dataset.head}))
+    .then(function(r){return r.json();}).then(function(j){
+      if(j&&j.ok){ ACKS[j.ack.loc+'|'+j.ack.key]=j.ack; render(true); }
+      else { b.disabled=false; b.textContent=(j&&j.error)||'Could not save'; }
+    }).catch(function(){ b.disabled=false; b.textContent='Could not save — try again'; });
+});
+
+/* ---------- helpers ---------- */
+function locName(l){ var x=D.locations.filter(function(z){return z.id===l;})[0]; return x?x.name:l; }
+function foz(v){ return v==null?'—':(v>=3968*2?fn(v/3968,1)+' bbl':fn(v)+' oz'); }
+function notice(t){ return '<div class="src" style="margin-top:8px">'+t+'</div>'; }
+function medianOf(v){ v=v.filter(function(x){return x!=null&&!isNaN(x);}).sort(function(a,b){return a-b;}); if(!v.length) return null; var m=Math.floor(v.length/2); return v.length%2?v[m]:(v[m-1]+v[m])/2; }
+
+/* =========================================================================================
+   BEER — volume, not dollars
+   ========================================================================================= */
+function pgBeer(m){
+  var ids=locIds(), B=ids.map(function(l){return [l,(D.beer||{})[l]];}).filter(function(x){return x[1]&&x[1].window;});
+  var h='';
+  if(!B.length){
+    m.innerHTML=panel('Beer volume','Ounces poured against ounces received',
+      '<div class="empty">Pour sizes have not been captured yet. Draft is rung under the brand name and the size rides along as a Toast modifier, which the warehouse began keeping with this release — so this page fills in from the next nightly refresh, and reaches back as far as Toast is re-pulled.</div>')
+      + beerMixPanel() + marketPanel();
+    wireBeer(); return;
+  }
+  var T={oz:0,q:0,sq:0,pkg:0,net:0,rec:0,kegs:0}, brands={}, sizes={}, uns={}, unp={}, days=0, since=null;
+  B.forEach(function(x){ var b=x[1], t=b.totals||{};
+    T.oz+=t.draft_oz||0; T.q+=t.draft_qty||0; T.sq+=t.draft_sized_qty||0; T.pkg+=t.pkg_qty||0; T.net+=t.net||0;
+    T.rec+=(b.supply&&b.supply.received_oz)||0; T.kegs+=(b.supply&&b.supply.kegs)||0;
+    days=Math.max(days,b.days||0); since=(!since||b.window[0]<since)?b.window[0]:since;
+    (b.brands||[]).forEach(function(r){ var o=brands[r[0]]||(brands[r[0]]={oz:0,q:0,u:0,p:0,n:0,rec:0}); o.oz+=r[1]||0;o.q+=r[2]||0;o.u+=r[3]||0;o.p+=r[4]||0;o.n+=r[5]||0; });
+    ((b.supply&&b.supply.by_brand)||[]).forEach(function(r){ var o=brands[r[0]]||(brands[r[0]]={oz:0,q:0,u:0,p:0,n:0,rec:0}); o.rec+=r[2]||0; });
+    (b.sizes||[]).forEach(function(r){ sizes[r[0]]=(sizes[r[0]]||0)+r[1]; });
+    (b.unsized||[]).forEach(function(r){ uns[r[0]]=(uns[r[0]]||0)+r[1]; });
+    ((b.supply&&b.supply.unparsed)||[]).forEach(function(r){ unp[r[0]]=(unp[r[0]]||0)+r[1]; });
+  });
+  var cov=T.q?T.sq/T.q:null, pt=T.rec?T.oz/T.rec:null;
+  h+='<div class="grid tiles">'
+    +tile('Draft poured',fn(T.oz/3968,1)+' bbl','<span class="tg">'+fn(T.oz)+' oz · '+fn(T.q)+' pours</span>')
+    +tile('Pours with a known size',fp(cov,0),'<span class="tg">'+fn(T.q-T.sq)+' pours could not be sized</span>')
+    +tile('Kegs received'+provBadge(),fn(T.kegs,1),'<span class="tg">'+fn(T.rec/3968,1)+' bbl on MarginEdge invoices</span>')
+    +tile('Poured ÷ received'+provBadge(),fp(pt,0),'<span class="tg">'+(pt==null?'no keg invoices recognised':'near 100% over a long window')+'</span>')
+    +tile('Packaged units',fn(T.pkg),'<span class="tg">cans and bottles, kept out of keg maths</span>')
+    +'</div>'
+    +'<div class="hint" style="margin:8px 2px 0;font-size:11.5px;color:var(--muted)">'+fdate(since)+' to '+fdate(D.meta.through)+' · '+days+' day'+(days===1?'':'s')+' with pour sizes captured. '
+      +'This is volume, so it needs no decision about what a transferred keg is worth. It is only as good as two readings: the pour size on each sale (from Toast modifiers) and the keg size on each invoice (from MarginEdge product names). Both lists of what could not be read are below — they are the to-do list. <b>One thing to confirm:</b> house beer reaches a taproom as a transfer, so “received” is only complete if those transfers are entered in MarginEdge as invoices. If they are not, received will read low and poured ÷ received high.'
+      +(days<14?' <b>Fewer than 14 days are captured so far; poured ÷ received means little until kegs bought before the window have been drunk.</b>':'')+'</div>';
+  var bl=Object.keys(brands).sort(function(a,b){return (brands[b].oz+brands[b].rec)-(brands[a].oz+brands[a].rec);});
+  h+='<div class="grid" style="margin-top:14px">'+panel('Draft by brand','Ounces poured, and ounces received where the keg could be matched to the brand by name',
+    '<div class="tw"><table class="t"><tr><th>Brand</th><th class="r">Poured</th><th class="r">Pours</th><th class="r">Avg pour</th><th class="r">Unsized</th><th class="r">Packaged</th><th class="r">Net sales</th><th class="r">Received</th><th class="r">Poured ÷ received</th></tr>'
+    +bl.slice(0,40).map(function(k){var o=brands[k], sized=o.q-o.u; var r=o.rec?o.oz/o.rec:null;
+      return '<tr><td class="n">'+esc(k)+'</td><td class="r">'+(o.oz?fn(o.oz)+' oz':'—')+'</td><td class="r">'+(o.q?fn(o.q):'—')+'</td><td class="r">'+(sized>0?fn(o.oz/sized,1)+' oz':'—')+'</td>'
+        +'<td class="r"'+(o.u?' style="color:var(--bad)"':'')+'>'+(o.u?fn(o.u):'—')+'</td><td class="r">'+(o.p?fn(o.p):'—')+'</td><td class="r">'+fm(o.n)+'</td>'
+        +'<td class="r">'+(o.rec?fn(o.rec)+' oz':'—')+'</td><td class="r">'+(r==null?'—':fp(r,0))+'</td></tr>';}).join('')
+    +'</table></div>')+'</div>';
+  var sl=Object.keys(sizes).sort(function(a,b){return sizes[b]-sizes[a];}), st=sl.reduce(function(p,c){return p+sizes[c];},0);
+  var ul=Object.keys(uns).sort(function(a,b){return uns[b]-uns[a];}), kl=Object.keys(unp).sort(function(a,b){return unp[b]-unp[a];});
+  h+='<div class="grid cols3" style="margin-top:14px">'
+    +panel('Pour sizes','How draft is actually being served',sl.length?'<table class="t"><tr><th>Size</th><th class="r">Pours</th><th class="r">Share</th></tr>'+sl.map(function(s){return '<tr><td class="n">'+fn(+s,1)+' oz</td><td class="r">'+fn(sizes[s])+'</td><td class="r">'+fp(sizes[s]/st,0)+'</td></tr>';}).join('')+'</table>':'<div class="empty">No sized pours yet.</div>')
+    +panel('Sales that could not be sized','Exactly as rung: item, then [modifiers]. Add the missing word to <code>pours.keywords</code> in config/settings.json and history re-sizes itself on the next build.',
+      ul.length?'<div class="tw"><table class="t"><tr><th>As rung</th><th class="r">Pours</th></tr>'+ul.slice(0,15).map(function(k){return '<tr><td class="n">'+esc(k)+'</td><td class="r">'+fn(uns[k])+'</td></tr>';}).join('')+'</table></div>':'<div class="empty">Every draft sale in the window has a size.</div>')
+    +panel('Beer invoices with no keg size','MarginEdge product names on beer invoices that did not read as a keg — cans and bottles belong here; a keg does not',
+      kl.length?'<div class="tw"><table class="t"><tr><th>Product</th><th class="r">Qty</th></tr>'+kl.slice(0,15).map(function(k){return '<tr><td class="n">'+esc(k)+'</td><td class="r">'+fn(unp[k],1)+'</td></tr>';}).join('')+'</table></div>':'<div class="empty">Every beer invoice line in the window read as a keg.</div>')
+    +'</div>';
+  var cy=B.filter(function(x){return x[1].count_yield;});
+  h+='<div class="grid" style="margin-top:14px">'+panel('Yield between counts'+'','Begin + received − end = what left the kegs; against what was rung. This is the real variance, and it needs two beer counts inside the captured window.',
+    cy.length?'<div class="tw"><table class="t"><tr><th>Taproom</th><th>From</th><th>To</th><th class="r">Begin</th><th class="r">Received</th><th class="r">End</th><th class="r">Left the kegs</th><th class="r">Rung</th><th class="r">Unaccounted</th><th class="r">Yield</th></tr>'
+      +cy.map(function(x){var c=x[1].count_yield; return '<tr><td class="n">'+esc(locName(x[0]))+'</td><td>'+fdate(c.from)+'</td><td>'+fdate(c.to)+'</td><td class="r">'+foz(c.begin_oz)+'</td><td class="r">'+foz(c.received_oz)+'</td><td class="r">'+foz(c.end_oz)+'</td><td class="r">'+foz(c.depleted_oz)+'</td><td class="r">'+foz(c.sold_oz)+'</td>'
+        +'<td class="r">'+foz(c.depleted_oz-c.sold_oz)+'</td><td class="r"'+(c.yield!=null&&c.yield<0.85?' style="color:var(--bad);font-weight:700"':'')+'>'+(c.yield==null?'—':fp(c.yield,0))+'</td></tr>';}).join('')+'</table></div>'
+      +notice('Only products counted on BOTH dates are used ('+cy.map(function(x){return esc(locName(x[0]))+': '+x[1].count_yield.products+' matched'+(x[1].count_yield.dropped?', '+x[1].count_yield.dropped+' on one sheet only and left out':'');}).join(' · ')+'), so a part-finished sheet cannot read as missing beer. ')
+      +notice('A healthy draft system yields somewhere in the high 80s to mid 90s: foam, line cleaning and tasters are real. Well below that is over-pouring, unrung beer or a count problem; above 100% is a count or keg-size problem, not a miracle.')
+      :'<div class="empty">Needs two beer counts, in kegs, both taken after pour sizes started being captured. Until then, poured ÷ received above is the nearest reading.</div>')+'</div>';
+  m.innerHTML=h+newBeersPanel()+beerMixPanel()+marketPanel();
+  wireBeer();
+}
+function wireBeer(){}
+function newBeersPanel(){
+  var rows=[]; locIds().forEach(function(l){ (((D.menu||{})[l]||{}).new_beers||[]).forEach(function(r){ rows.push([l].concat(r)); }); });
+  if(!rows.length) return '';
+  rows.sort(function(a,b){return b[2]<a[2]?-1:1;});
+  var w1=medianOf(rows.map(function(r){return r[3][0];}));
+  return '<div class="grid" style="margin-top:14px">'+panel('New releases — first four weeks','Beers first sold in the last 120 days · units per week from the day each went on · a week still in progress is left blank',
+    '<div class="tw"><table class="t"><tr><th>Beer</th><th>Taproom</th><th>First sold</th><th class="r">Week 1</th><th class="r">Week 2</th><th class="r">Week 3</th><th class="r">Week 4</th><th class="r">Wk 4 ÷ wk 1</th><th class="r">Units to date</th><th class="r">Net to date</th></tr>'
+    +rows.slice(0,40).map(function(r){var w=r[3], keep=(w[0]&&w[3]!=null)?w[3]/w[0]:null;
+      return '<tr><td class="n">'+esc(r[1])+'</td><td>'+esc(locName(r[0]))+'</td><td>'+fdate(r[2])+'</td>'+w.map(function(v){return '<td class="r">'+(v==null?'':fn(v))+'</td>';}).join('')
+        +'<td class="r"'+(keep!=null&&keep<0.5?' style="color:var(--bad)"':'')+'>'+(keep==null?'—':fp(keep,0))+'</td><td class="r">'+fn(r[4])+'</td><td class="r">'+fm(r[5])+'</td></tr>';}).join('')+'</table></div>'
+    +notice('Median first week: '+fn(w1)+' units. Week 4 ÷ week 1 is the number to watch: every release opens on curiosity, and the ones worth brewing again are the ones still selling when it has worn off.'))+'</div>';
+}
+function beerMixPanel(){
+  var locs=D.locations.filter(function(l){return ((D.beer_mix||{})[l.id]||[]).length;});
+  if(locs.length<2) return '';
+  var tot={}; locs.forEach(function(l){ D.beer_mix[l.id].forEach(function(r){ tot[r[0]]=(tot[r[0]]||0)+r[1]; }); });
+  var top=Object.keys(tot).sort(function(a,b){return tot[b]-tot[a];}).slice(0,18);
+  return '<div class="grid" style="margin-top:14px">'+panel('Brand mix by taproom — last 28 days','Each beer\'s share of that taproom\'s beer units. Shaded against the row: darker means it over-indexes there.',
+    '<div class="tw"><table class="t"><tr><th>Beer</th>'+locs.map(function(l){return '<th class="r">'+esc(l.short||l.name)+'</th>';}).join('')+'<th class="r">All units</th></tr>'
+    +top.map(function(b){ var sh=locs.map(function(l){ var r=D.beer_mix[l.id].filter(function(x){return x[0]===b;})[0]; return r?r[2]:null; }); var mx=Math.max.apply(null,sh.map(function(x){return x||0;}));
+      return '<tr><td class="n">'+esc(b)+'</td>'+sh.map(function(v){ return '<td class="r" style="background:rgba(42,120,214,'+(v&&mx?(0.04+0.34*(v/mx)).toFixed(2):0)+')">'+(v==null?'—':fp(v,1))+'</td>'; }).join('')+'<td class="r">'+fn(tot[b])+'</td></tr>'; }).join('')
+    +'</table></div>')+'</div>';
+}
+function marketPanel(){
+  var ids=locIds().filter(function(l){ var mk=(D.market||{})[l]; return mk&&mk.rows&&mk.rows.length; });
+  if(!ids.length) return '<div class="grid" style="margin-top:14px">'+panel('Taproom vs the market around it','Brand velocity at the bar beside distributor depletions nearby',
+    '<div class="empty">No depletion file loaded. It is built on the Mac from the VIP exports the Sales Portal already downloads — <code>python3 tools/build_depletions.py</code> — and carries brand-by-market case equivalents only: no accounts, no prices.</div>')+'</div>';
+  return ids.map(function(l){ var mk=D.market[l];
+    return '<div class="grid" style="margin-top:14px">'+panel('Taproom vs the market around it — '+esc(locName(l)),'Taproom: units, last 28 days, vs the same 28 days last year · Market: distributor case equivalents within the market radius, year to date as of '+esc(mk.as_of||'?')+', vs the same span last year',
+      '<div class="tw"><table class="t"><tr><th>Brand</th><th class="r">Taproom units</th><th class="r">Share of taproom beer</th><th class="r">Taproom vs LY</th><th class="r">Market CE</th><th class="r">Share of market</th><th class="r">Market vs LY</th><th class="r">On-premise CE</th><th class="r">Buying accounts</th><th>Reading</th></tr>'
+      +mk.rows.slice(0,30).map(function(r){ var rd='';
+        if(r[3]!=null&&r[6]!=null){ if(r[3]>0.1&&r[6]<0) rd='growing at the bar, shrinking around it'; else if(r[3]<-0.1&&r[6]>0.05) rd='market growing without the taproom'; else if(r[3]>0.1&&r[6]>0.05) rd='growing in both'; else if(r[3]<-0.1&&r[6]<-0.05) rd='shrinking in both'; }
+        else if(r[1]!=null&&r[4]==null) rd='taproom only'; else if(r[1]==null&&r[4]!=null) rd='not poured here';
+        function c(v){ return v==null?'':(v>=0?' style="color:var(--good)"':' style="color:var(--bad)"'); }
+        return '<tr><td class="n">'+esc(r[0])+'</td><td class="r">'+(r[1]==null?'—':fn(r[1]))+'</td><td class="r">'+fp(r[2],1)+'</td><td class="r"'+c(r[3])+'>'+(r[3]==null?'—':(r[3]>=0?'+':'')+fp(r[3],0))+'</td>'
+          +'<td class="r">'+(r[4]==null?'—':fn(r[4]))+'</td><td class="r">'+fp(r[5],1)+'</td><td class="r"'+c(r[6])+'>'+(r[6]==null?'—':(r[6]>=0?'+':'')+fp(r[6],0))+'</td><td class="r">'+(r[7]==null?'—':fn(r[7]))+'</td><td class="r">'+(r[8]==null?'—':fn(r[8]))+'</td><td class="tg" style="white-space:normal">'+rd+'</td></tr>'; }).join('')
+      +'</table></div>'
+      +notice(mk.matched+' brands matched by name between Toast and VIP.'+(mk.taproom_has_ly?'':' This taproom has no sales a year ago to compare against.')+' This is a side-by-side, not yet a test of which moves first: that needs the depletion history to build up week by week, which it does each time the file is rebuilt.')); }).join('')+'</div>';
+}
+
+/* =========================================================================================
+   MENU & GUESTS — attach, dayparts, movers, channels, loyalty
+   ========================================================================================= */
+function pgMenu(m){
+  var ids=locIds(), A={checks:0,beer:0,food:0,both:0,beers:0}, DP={}, vel={}, CH={}, chTot=0;
+  ids.forEach(function(l){ var mn=(D.menu||{})[l]; if(!mn||!mn.attach) return;
+    A.checks+=mn.attach.checks||0; A.beer+=mn.attach.beer_checks||0; A.food+=mn.attach.food_checks||0; A.both+=mn.attach.both||0; A.beers+=(mn.attach.beers_per_beer_check||0)*(mn.attach.beer_checks||0);
+    (mn.dayparts||[]).forEach(function(r){ var o=DP[r[0]]||(DP[r[0]]=[0,0,0,0,0]); for(var i=0;i<5;i++) o[i]+=r[i+1]||0; });
+    (mn.velocity||[]).forEach(function(r){ var k=r[0]+'||'+r[1], o=vel[k]||(vel[k]={n:r[0],b:r[1],q:0,net:0,pq:0,pnet:0}); o.q+=r[2]||0;o.net+=r[3]||0;o.pq+=r[4]||0;o.pnet+=r[5]||0; });
+  });
+  ids.forEach(function(l){ var c=(D.channels||{})[l]; if(!c) return; chTot+=c.total||0;
+    (c.rows||[]).forEach(function(r){ var o=CH[r[0]]||(CH[r[0]]={n:0,net:0,pnet:0,rate:r[5],after:0,tp:r[7],names:{}}); o.n+=r[1]||0;o.net+=r[2]||0;o.pnet+=r[4]||0; if(r[6]!=null)o.after+=r[6]; (r[8]||[]).forEach(function(x){o.names[x]=1;}); }); });
+  var L={net:0,red_amt:0,red_net:0,red_n:0,mem:null,red:{}};
+  ids.forEach(function(l){ var y=(D.loyalty||{})[l]; if(!y) return; L.net+=y.net||0; L.red_amt+=y.redeemed.amount||0; L.red_net+=y.redeemed.net||0; L.red_n+=y.redeemed.orders||0;
+    (y.redemptions||[]).forEach(function(r){ var o=L.red[r[0]]||(L.red[r[0]]=[0,0]); o[0]+=r[1];o[1]+=r[2]; });
+    if(y.members){ var M=L.mem||(L.mem={checks:0,net:0,members:0,span:0,rep:0,since:y.members.since,otherNet:0,otherChecks:0,visits:0}); var mm=y.members;
+      M.checks+=mm.checks;M.net+=mm.net;M.members+=mm.members;M.span+=mm.span_members;M.rep+=mm.repeat_members;M.visits+=(mm.visits_per_member||0)*mm.span_members; if(mm.since<M.since)M.since=mm.since;
+      M.base=(M.base||0)+(mm.share?mm.net/mm.share:0); if(mm.avg_check_other!=null){ M.otherNet+=mm.net/mm.share-mm.net; } } });
+  var tp=Object.keys(CH).filter(function(k){return CH[k].tp;}).reduce(function(p,k){return p+CH[k].net;},0);
+  var h='<div class="grid tiles">'
+    +tile('Beer checks that also had food',fp(A.beer?A.both/A.beer:null,0),'<span class="tg">'+fn(A.beer)+' checks with beer</span>')
+    +tile('Food checks that also had beer',fp(A.food?A.both/A.food:null,0),'<span class="tg">'+fn(A.food)+' checks with food</span>')
+    +tile('Beers per beer check',fn(A.beer?A.beers/A.beer:null,2),'')
+    +tile('Marketplace delivery',fp(chTot?tp/chTot:null,1),'<span class="tg">'+fk(tp)+' of net through DoorDash and the like</span>')
+    +(L.mem?tile('Sales from identified members',fp(L.mem.base?L.mem.net/L.mem.base:null,0),'<span class="tg">'+fn(L.mem.members)+' members · since '+fdate(L.mem.since)+'</span>')
+           +tile('Members who came back',fp(L.mem.span?L.mem.rep/L.mem.span:null,0),'<span class="tg">2+ visits in the last 13 weeks</span>')
+       :tile('Loyalty redemptions',fk(L.red_amt),'<span class="tg">'+fp(L.net?L.red_net/L.net:null,1)+' of net on checks that redeemed</span>'))
+    +'</div><div class="hint" style="margin:8px 2px 0;font-size:11.5px;color:var(--muted)">Last 28 days, from Toast. None of this needs a recipe: it is what was on the check, when, and how it was ordered.</div>';
+  var dpn=['Lunch','Afternoon','Dinner','Late'];
+  h+='<div class="grid cols2" style="margin-top:14px">'
+    +panel('By daypart — last 28 days','Lunch to 2pm · afternoon to 5 · dinner to 9 · late after · a check belongs to the hour its first item was rung',
+      '<table class="t"><tr><th>Daypart</th><th class="r">Checks</th><th class="r">Net</th><th class="r">Avg check</th><th class="r">Food on beer checks</th><th class="r">Beer on food checks</th></tr>'
+      +dpn.map(function(n){var o=DP[n]||[0,0,0,0,0];return '<tr><td class="n">'+n+'</td><td class="r">'+fn(o[0])+'</td><td class="r">'+fm(o[1])+'</td><td class="r">'+fm(o[0]?o[1]/o[0]:null,2)+'</td><td class="r">'+fp(o[2]?o[4]/o[2]:null,0)+'</td><td class="r">'+fp(o[3]?o[4]/o[3]:null,0)+'</td></tr>';}).join('')+'</table>'
+      +notice('The gap between dayparts is the opportunity: a late crowd drinking without eating is a snack menu; a lunch crowd eating without drinking is a half-pour or an NA list.'))
+    +panel('Channels — last 28 days','How the order arrived, and what is left after the marketplace takes its cut',
+      '<div class="tw"><table class="t"><tr><th>Channel</th><th class="r">Orders</th><th class="r">Net</th><th class="r">Share</th><th class="r">Avg check</th><th class="r">vs prior 28</th><th class="r">Commission</th><th class="r">Net after</th></tr>'
+      +Object.keys(CH).sort(function(a,b){return CH[b].net-CH[a].net;}).map(function(k){var o=CH[k], d=o.pnet?(o.net-o.pnet)/o.pnet:null;
+        return '<tr><td class="n" title="'+esc(Object.keys(o.names).join(', '))+'">'+esc(k)+(o.tp?' <span class="pill">marketplace</span>':'')+'</td><td class="r">'+fn(o.n)+'</td><td class="r">'+fm(o.net)+'</td><td class="r">'+fp(chTot?o.net/chTot:null,1)+'</td><td class="r">'+fm(o.n?o.net/o.n:null,2)+'</td>'
+          +'<td class="r"'+(d==null?'':(d>=0?' style="color:var(--good)"':' style="color:var(--bad)"'))+'>'+(d==null?'—':(d>=0?'+':'')+fp(d,0))+'</td><td class="r">'+(o.tp?(o.rate==null?'<span class="tg">not set</span>':fp(o.rate,0)):'')+'</td><td class="r">'+(o.tp?(o.rate==null?'—':fm(o.after)):'')+'</td></tr>';}).join('')+'</table></div>'
+      +(Object.keys(CH).some(function(k){return CH[k].tp&&CH[k].rate==null;})?notice('Commission rates are not entered, so the margin on marketplace orders is unknown rather than assumed. Put the contracted rate in <code>channels.commission</code> in config/settings.json (0.25 for 25%) and this column fills in. At a typical marketplace rate, a delivery order has to be worth more than a walk-in to be worth the same.'):''))
+    +'</div>';
+  var vl=Object.keys(vel).map(function(k){return vel[k];}), fall=vl.slice().sort(function(a,b){return (a.net-a.pnet)-(b.net-b.pnet);}).filter(function(x){return x.net-x.pnet<0;}).slice(0,8), rise=vl.slice().sort(function(a,b){return (b.net-b.pnet)-(a.net-a.pnet);}).filter(function(x){return x.net-x.pnet>0;}).slice(0,8);
+  function mv(list){ return '<table class="t"><tr><th>Item</th><th class="r">Units</th><th class="r">was</th><th class="r">Net</th><th class="r">Change</th></tr>'+list.map(function(x){var d=x.net-x.pnet;return '<tr><td class="n">'+esc(x.n)+' <span class="tg" style="font-weight:400">'+esc(x.b)+'</span></td><td class="r">'+fn(x.q)+'</td><td class="r">'+fn(x.pq)+'</td><td class="r">'+fm(x.net)+'</td><td class="r" style="color:'+(d>=0?'var(--good)':'var(--bad)')+';font-weight:700">'+(d>=0?'+':'−')+fm(Math.abs(d))+'</td></tr>';}).join('')+'</table>'; }
+  h+='<div class="grid cols2" style="margin-top:14px">'
+    +panel('Losing ground','Biggest dollar falls, last 28 days vs the 28 before — ranked by money, so a staple slipping 15% outranks a special that simply ended',fall.length?mv(fall):'<div class="empty">Nothing fell.</div>')
+    +panel('Gaining ground','Biggest dollar gains over the same two windows',rise.length?mv(rise):'<div class="empty">Nothing rose.</div>')+'</div>';
+  vl.sort(function(a,b){return b.net-a.net;});
+  h+='<div class="grid" style="margin-top:14px">'+panel('Item velocity — last 28 days','Every item that sold, with the 28 days before beside it',
+    '<div class="tw"><table class="t"><tr><th>Item</th><th>Category</th><th class="r">Units</th><th class="r">Units / day</th><th class="r">Net</th><th class="r">Prior units</th><th class="r">Prior net</th><th class="r">Change</th></tr>'
+    +vl.slice(0,80).map(function(x){var d=x.pnet?(x.net-x.pnet)/x.pnet:null;return '<tr><td class="n">'+esc(x.n)+'</td><td>'+esc(x.b)+'</td><td class="r">'+fn(x.q)+'</td><td class="r">'+fn(x.q/28,1)+'</td><td class="r">'+fm(x.net)+'</td><td class="r">'+fn(x.pq)+'</td><td class="r">'+fm(x.pnet)+'</td><td class="r"'+(d==null?'':(d>=0?' style="color:var(--good)"':' style="color:var(--bad)"'))+'>'+(d==null?'new':(d>=0?'+':'')+fp(d,0))+'</td></tr>';}).join('')+'</table></div>')+'</div>';
+  var rl=Object.keys(L.red).sort(function(a,b){return L.red[b][0]-L.red[a][0];});
+  h+='<div class="grid cols2" style="margin-top:14px">'
+    +panel('Loyalty — last 28 days','From Toast alone: redemptions arrive as discounts, and a member who identifies themselves is recorded on the check',
+      '<div class="grid tiles" style="margin-bottom:10px">'+tile('Redeemed',fk(L.red_amt),'<span class="tg">'+fn(L.red_n)+' orders</span>')+tile('Net on redeeming checks',fk(L.red_net),'<span class="tg">'+fp(L.net?L.red_net/L.net:null,1)+' of net</span>')
+        +(L.mem?tile('Member avg check',fm(L.mem.checks?L.mem.net/L.mem.checks:null,2),'')+tile('Visits per member',fn(L.mem.span?L.mem.visits/L.mem.span:null,1),'<span class="tg">13 weeks</span>'):'')+'</div>'
+      +(L.mem?'':notice('Member identification starts from the next nightly refresh: until now only redemptions were kept, which undercounts loyalty badly — most member visits redeem nothing. Members are stored as an anonymous code, never a phone number or a name. With more than one taproom selected, a member who visits two is counted at each.')))
+    +panel('What members redeem — last 28 days','By reward',rl.length?'<table class="t"><tr><th>Reward</th><th class="r">Value</th><th class="r">Times</th></tr>'+rl.slice(0,15).map(function(k){return '<tr><td class="n">'+esc(k)+'</td><td class="r">'+fm(L.red[k][0])+'</td><td class="r">'+fn(L.red[k][1])+'</td></tr>';}).join('')+'</table>':'<div class="empty">No loyalty redemptions in the window.</div>')
+    +'</div>';
+  m.innerHTML=h;
+}
+
+/* =========================================================================================
+   STAFFING — hours the trade asks for, against hours on the floor
+   ========================================================================================= */
+function staffingPanel(){
+  var ids=locIds(); if(ids.length!==1) return panel('Staffing against the trade','Hours the sales ask for, hour by hour','<div class="empty">Pick one taproom — a staffing pattern only means something for one building.</div>');
+  var l=ids[0], sales={}, labH={}, cost=0, hrs=0, net=0;
+  (D.hourly[l]||[]).forEach(function(r){ sales[r[0]+':'+r[1]]=r[2]; });
+  ((D.labor_hourly||{})[l]||[]).forEach(function(r){ var n=r[4]||1; labH[r[0]+':'+r[1]]=r[2]/n; cost+=r[3]; hrs+=r[2]; });
+  if(!hrs||!Object.keys(sales).length) return panel('Staffing against the trade','','<div class="empty">Needs hourly sales and time entries from Toast.</div>');
+  if(!cost) return panel('Staffing against the trade','','<div class="empty">Time entries here carry no hourly wage (salaried, or wages hidden from the API credential), so hours cannot be priced against sales.</div>');
+  var wage=cost/hrs, mo=D.meta.through.slice(0,7), tg=((D.targets[l]||{})[mo]||[])[2];
+  Object.keys(sales).forEach(function(k){ net+=sales[k]; });
+  var wkCost=0; Object.keys(labH).forEach(function(k){ wkCost+=labH[k]*wage; });
+  var own=net?wkCost/net:null, target=tg||own, src=tg?('the '+fp(tg,0)+' labor target for '+mo):('this taproom\'s own '+fp(own,1)+' average, because no labor target is set');
+  var hrsList=[]; for(var i=9;i<24;i++) hrsList.push(i); hrsList.push(0,1);
+  var dn=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'], rows=[], over=0, under=0, max=0, cells={};
+  [1,2,3,4,5,6,0].forEach(function(d){ hrsList.forEach(function(x){ var k=d+':'+x, s=sales[k]||0, a=labH[k]||0; if(!s&&!a) return;
+    var rec=s*target/wage, gap=a-rec; cells[k]={s:s,a:a,rec:rec,gap:gap}; if(s>0){ if(gap>0) over+=gap; else under-=gap; if(Math.abs(gap)>max) max=Math.abs(gap); rows.push({d:d,h:x,s:s,a:a,rec:rec,gap:gap}); } }); });
+  var hh='<div class="heat" style="grid-template-columns:44px repeat('+hrsList.length+',1fr)"><div></div>'+hrsList.map(function(x){return '<div class="h">'+hLabel(x)+'</div>';}).join('');
+  [1,2,3,4,5,6,0].forEach(function(d){ hh+='<div class="h" style="text-align:left;line-height:26px">'+dn[d]+'</div>'+hrsList.map(function(x){ var c=cells[d+':'+x];
+    if(!c) return '<div class="c" style="background:transparent"></div>';
+    if(!c.s) return '<div class="c" data-t="'+dn[d]+' '+hLabel(x)+' — '+fn(c.a,1)+' h on the clock, no sales (open, close or prep)" style="background:repeating-linear-gradient(45deg,#eceae4,#eceae4 3px,transparent 3px,transparent 6px)"></div>';
+    var t=max?Math.min(1,Math.abs(c.gap)/max):0, col=c.gap>0?'208,59,59':'42,120,214';
+    return '<div class="c" data-t="'+dn[d]+' '+hLabel(x)+' — '+fm(c.s)+' sales · '+fn(c.a,1)+' h worked · '+fn(c.rec,1)+' h asked for · '+(c.gap>0?'+':'')+fn(c.gap,1)+'" style="background:rgba('+col+','+(0.06+0.85*t).toFixed(2)+')"></div>'; }).join(''); });
+  hh+='</div>';
+  rows.sort(function(a,b){return b.gap-a.gap;});
+  function lst(list,sign){ return '<table class="t"><tr><th>When</th><th class="r">Avg sales</th><th class="r">Worked</th><th class="r">Asked for</th><th class="r">Gap</th></tr>'+list.map(function(r){return '<tr><td class="n">'+dn[r.d]+' '+hLabel(r.h)+'</td><td class="r">'+fm(r.s)+'</td><td class="r">'+fn(r.a,1)+' h</td><td class="r">'+fn(r.rec,1)+' h</td><td class="r" style="color:'+(sign>0?'var(--bad)':'var(--s1)')+';font-weight:700">'+(r.gap>0?'+':'')+fn(r.gap,1)+' h</td></tr>';}).join('')+'</table>'; }
+  return panel('Staffing against the trade','Average week, last 8 weeks · <span style="color:var(--bad)">red</span> = more hours on the floor than the sales asked for · <span style="color:var(--s1)">blue</span> = fewer · hatched = on the clock with no sales',
+    hh+'<div class="grid cols2" style="margin-top:14px"><div><div class="hint">Heaviest against the trade</div>'+lst(rows.slice(0,6),1)+'</div><div><div class="hint">Thinnest against the trade</div>'+lst(rows.slice(-6).reverse(),-1)+'</div></div>'
+    +notice('"Asked for" is that hour\'s average sales × '+src+', divided by the average wage of '+fm(wage,2)+'/h. Across a typical week that is '+fn(over,0)+' hours heavy and '+fn(under,0)+' hours thin in trading hours. It is a guide to where the schedule and the trade disagree, not a rota: it knows nothing about minimum cover, the kitchen needing two people however quiet it is, or a private event, and the hatched open-and-close hours are real work it cannot score.'));
+}
+
+/* =========================================================================================
+   COUNTING DISCIPLINE
+   ========================================================================================= */
+function compliancePanel(){
+  var ids=locIds().filter(function(l){ var c=(D.compliance||{})[l]; return c&&c.rows&&c.rows.length; });
+  if(!ids.length) return '';
+  var C=D.compliance[ids[0]];
+  return panel('Counting discipline','Share of the inventory counts each category should have had in the last '+C.weeks+' weeks that were actually made · the dollar figures below are only as good as this',
+    '<div class="tw"><table class="t"><tr><th>Taproom</th><th class="r">Score</th><th>Category</th><th>Last counted</th><th class="r">Days ago</th><th class="r">Counts made</th><th class="r">Expected</th><th>Cadence</th><th></th></tr>'
+    +ids.map(function(l){ var c=D.compliance[l]; return c.rows.map(function(r,i){ var ok=r[3]>=r[4];
+      return '<tr>'+(i===0?'<td class="n" rowspan="'+c.rows.length+'" style="vertical-align:top">'+esc(locName(l))+'</td><td class="r" rowspan="'+c.rows.length+'" style="vertical-align:top;font-size:18px;font-weight:700;color:'+(c.score>=0.9?'var(--good)':c.score>=0.75?'var(--ink)':'var(--bad)')+'">'+fp(c.score,0)+'</td>':'')
+        +'<td>'+esc(r[0])+'</td><td>'+(r[1]?fdate(r[1]):'never')+'</td><td class="r"'+(r[2]>r[5]*2?' style="color:var(--bad);font-weight:700"':'')+'>'+(r[2]==null?'—':fn(r[2]))+'</td><td class="r">'+r[3]+'</td><td class="r">'+r[4]+'</td><td class="tg">every '+r[5]+' days</td>'
+        +'<td>'+(r[6]?'<span class="pill" style="background:#fbe9e9;color:var(--bad)">latest sheet left it blank</span>':(ok?'':'<span class="pill">behind</span>'))+'</td></tr>'; }).join(''); }).join('')
+    +'</table></div>'+notice('A count is credited once per cadence period, so counting twice in a week does not make up for missing the next. Cadence per category is set in <code>inventory.expected_count_days</code> in config/settings.json.'));
+}
+
+/* =========================================================================================
+   A NEW TAPROOM'S RAMP
+   ========================================================================================= */
+function rampPanel(){
+  var T=D.meta.through, news=D.locations.filter(function(l){ return l.first_date && l.first_date>addDays(D.meta.since,21); });
+  var old=D.locations.filter(function(l){ return news.indexOf(l)<0; });
+  if(!news.length||!old.length) return '';
+  function wkOf(d){ var x=pd(d); x.setDate(x.getDate()-((x.getDay()+6)%7)); return ds(x); }
+  function weekly(l){ var w={}; (D.daily[l.id]||[]).forEach(function(r){ var k=wkOf(r[0]); var o=w[k]||(w[k]={net:0,n:0,g:0}); o.net+=r[K.net]||0; o.g+=r[K.guests]||0; o.n++; }); return w; }
+  var oldW=old.map(weekly), out='';
+  news.forEach(function(l){ var w=weekly(l), wks=Object.keys(w).sort().filter(function(k){return w[k].n===7;}), rows=[];
+    wks.forEach(function(k,i){ var peers=oldW.map(function(o){return o[k]&&o[k].n===7?o[k].net:null;}), med=medianOf(peers); rows.push({wk:k,i:i+1,net:w[k].net,g:w[k].g,idx:med?w[k].net/med:null}); });
+    if(rows.length<3) return;
+    var id='c_ramp_'+l.id.replace(/[^a-z0-9]/g,'');
+    var first=rows.slice(0,4), last=rows.slice(-4), a0=medianOf(first.map(function(r){return r.idx;})), a1=medianOf(last.map(function(r){return r.idx;}));
+    out+=panel(esc(l.name)+' — ramp since opening','Open since '+fdate(l.first_date)+' · each full week\'s net sales as a share of the median established taproom in that same week, which takes the season out',
+      chartBox(id,true)+notice('A new taproom has no last year, so the only fair yardstick is its siblings in the same week. Opening month ran at about '+fp(a0,0)+' of the median established taproom; the last four weeks at '+fp(a1,0)+'. A falling line after a big opening is normal; the level it settles at is the number that matters.'
+        +(l.seats?' With '+l.seats+' seats that is '+fm(last.reduce(function(p,c){return p+c.net;},0)/last.length/l.seats,0)+' per seat per week.':'')));
+    setTimeout(function(){ if(!$(id)) return; var c=lineCfg(rows.map(function(r){return 'wk '+r.i;}),[{label:'vs median established taproom',data:rows.map(function(r){return r.idx;}),borderColor:css('s2'),fmt:'pct'},{label:'Parity',data:rows.map(function(){return 1;}),borderColor:css('axis'),borderDash:[4,4],borderWidth:1,fmt:'pct'}]);
+      c.options.scales.y.ticks.callback=function(v){return fp(v,0);}; c.options.plugins.legend={display:true,position:'bottom'}; mk(id,c); },0);
+  });
+  return out?'<div class="grid" style="margin-top:14px">'+out+'</div>':'';
+}
+
+/* =========================================================================================
+   WEATHER
+   ========================================================================================= */
+var WXC={0:'clear',1:'mostly clear',2:'partly cloudy',3:'overcast',45:'fog',48:'fog',51:'drizzle',53:'drizzle',55:'drizzle',61:'light rain',63:'rain',65:'heavy rain',66:'freezing rain',67:'freezing rain',71:'light snow',73:'snow',75:'heavy snow',77:'snow',80:'showers',81:'showers',82:'heavy showers',85:'snow showers',86:'snow showers',95:'thunderstorms',96:'thunderstorms',99:'thunderstorms'};
+var _wx={};
+function wxFor(l,d){ var m=_wx[l]; if(!m){ m=_wx[l]={}; (((D.weather||{})[l]||{}).days||[]).forEach(function(r){ m[r[0]]=r; }); } return m[d]; }
+function wxText(r){ return r?(fn(r[1])+'°F · '+(WXC[r[3]]||'')+((r[2]||0)>=0.1?' · '+fn(r[2],2)+'" rain':'')):''; }
+function forecastPanel(){
+  var ids=locIds(), l=ids.length===1?ids[0]:null, fc=l?(((D.weather||{})[l]||{}).forecast||[]):[];
+  var T=D.meta.through, prof={};
+  ids.forEach(function(x){ rowsIn(x,addDays(T,-55),T).forEach(function(r){ var w=dow(r[0]); var o=prof[w]||(prof[w]=[0,{}]); o[0]+=r[K.net]||0; o[1][r[0]]=1; }); });
+  var days=[]; for(var i=1;i<=7;i++) days.push(addDays(T,i));
+  var tot=0, cells=days.map(function(d){ var w=dow(d), p=prof[w], e=p?p[0]/Object.keys(p[1]).length:null; tot+=e||0; var f=fc.filter(function(r){return r[0]===d;})[0];
+    var wet=f&&(f[3]||0)>=0.1;
+    return '<div class="fcd'+(wet?' wet':'')+'"><div class="fd">'+pd(d).toLocaleDateString(undefined,{weekday:'short'})+' <span class="tg">'+fdate(d)+'</span></div><div class="fv">'+fk(e)+'</div>'
+      +(f?'<div class="fw">'+fn(f[1])+'° / '+fn(f[2])+'°<br>'+(WXC[f[4]]||'')+(wet?'<br><b>'+fn(f[3],2)+'" rain</b>':'')+'</div>':'')+'</div>'; }).join('');
+  return panel('The week ahead','Expected net sales from each weekday\'s own average over the last 8 weeks'+(l?', with the forecast beside it':' · pick one taproom to see its weather')+' · '+fk(tot)+' for the 7 days',
+    '<div class="fcw">'+cells+'</div>'+(l&&fc.length?notice('The sales figure does not move with the forecast — it is the ordinary week. The weather is there so the person writing the schedule can adjust it with their own knowledge of the patio. How much rain has actually cost this taproom is on the Sales page.'):''));
+}
+function weatherEffectPanel(){
+  var ids=locIds().filter(function(l){ return (((D.weather||{})[l]||{}).days||[]).length; });
+  if(!ids.length) return '';
+  var a=S.d0,b=S.d1; if((pd(b)-pd(a))/864e5<55){ a=addDays(b,-181); if(a<D.meta.since) a=D.meta.since; }
+  var G={dry:[],wet:[],soak:[]}, TB={'Under 40°':[],'40s–50s':[],'60s–70s':[],'80s':[],'90° and up':[]}, n=0;
+  ids.forEach(function(l){ var rows=rowsIn(l,a,b).filter(function(r){return (r[K.net]||0)>0;}), byD={};
+    rows.forEach(function(r){ var w=dow(r[0]); (byD[w]||(byD[w]=[])).push(r[K.net]); });
+    var avg={}; Object.keys(byD).forEach(function(w){ avg[w]=byD[w].reduce(function(p,c){return p+c;},0)/byD[w].length; });
+    rows.forEach(function(r){ var x=wxFor(l,r[0]); if(!x||!avg[dow(r[0])]) return; var idx=r[K.net]/avg[dow(r[0])]; n++;
+      var p=x[2]||0; (p>=0.5?G.soak:p>=0.1?G.wet:G.dry).push(idx);
+      var t=x[1]; if(t==null) return; (t<40?TB['Under 40°']:t<60?TB['40s–50s']:t<80?TB['60s–70s']:t<90?TB['80s']:TB['90° and up']).push(idx); }); });
+  if(n<30) return '';
+  function av(v){ return v.length?v.reduce(function(p,c){return p+c;},0)/v.length:null; }
+  function row(label,v){ var m=av(v); return '<tr><td class="n">'+label+'</td><td class="r">'+fn(v.length)+'</td><td class="r"'+(m==null||Math.abs(m-1)<0.03?'':(m>1?' style="color:var(--good);font-weight:700"':' style="color:var(--bad);font-weight:700"'))+'>'+(m==null?'—':(m>=1?'+':'')+fp(m-1,0))+'</td></tr>'; }
+  return panel('What the weather has been worth','Each day\'s net sales against the average for that weekday at that taproom, '+fdate(a)+' – '+fdate(b)+' · so a wet Saturday is compared with Saturdays, not with Tuesdays',
+    '<div class="grid cols2"><div><table class="t"><tr><th>Rain</th><th class="r">Days</th><th class="r">vs a normal day</th></tr>'+row('Dry (under 0.1")',G.dry)+row('Wet (0.1" – 0.5")',G.wet)+row('Soaked (over 0.5")',G.soak)+'</table></div>'
+    +'<div><table class="t"><tr><th>High temperature</th><th class="r">Days</th><th class="r">vs a normal day</th></tr>'+Object.keys(TB).map(function(k){return row(k,TB[k]);}).join('')+'</table></div></div>'
+    +notice('An average, not a forecast: it says what rain and heat have tended to cost, and a band with a handful of days in it says very little. Daily totals only — a storm that arrived at 9pm counts the same as one at noon. Weather is from Open-Meteo at city level.'));
+}
+
+/* =========================================================================================
+   ONE-PAGER — a printable week for one taproom
+   ========================================================================================= */
+function pgOnePager(m){
+  var T=D.meta.through, e=pd(T); while(e.getDay()!==0) e.setDate(e.getDate()-1);      // last Sunday on or before `through`
+  var w1=ds(e), w0=addDays(w1,-6), p0=addDays(w0,-7), p1=addDays(w1,-7);
+  var lyD=rangeDates(w0,w1).map(lyDate);
+  var h='<div class="noprint" style="display:flex;gap:10px;align-items:center;margin-bottom:12px"><button class="ackb" id="opPrint" style="padding:7px 12px;font-size:12.5px;color:var(--navy);border-color:var(--navy)">Print / save as PDF</button><span class="tg">Week of '+fdate(w0)+' – '+fdate(w1)+' · one page per taproom · use the location picker to choose</span></div>';
+  locIds().forEach(function(l){
+    function S1(rows){ var s=sumRows(rows); return {net:s.net,guests:s.guests,check:s.checks?s.net/s.checks:null,labor:s.net?s.lc/s.net:null,splh:s.lh?s.net/s.lh:null,disc:s.gross?s.disc/s.gross:null,purch:s.net?s.p/s.net:null,n:rows.length}; }
+    var cur=S1(rowsIn(l,w0,w1)), prv=S1(rowsIn(l,p0,p1)), set={}; lyD.forEach(function(d){set[d]=1;});
+    var ly=S1((D.daily[l]||[]).filter(function(r){return set[r[0]];}));
+    function ch(a,b,inv,pts){ if(a==null||b==null||!b) return '<td class="r tg">—</td>'; var d=pts?(a-b):(a-b)/Math.abs(b), good=inv?d<=0:d>=0; return '<td class="r" style="color:'+(good?'var(--good)':'var(--bad)')+'">'+(d>=0?'+':'−')+(pts?fn(Math.abs(d)*100,1)+' pts':fp(Math.abs(d),0))+'</td>'; }
+    var M=[['Net sales','net',fm,0,0],['Guests','guests',fn,0,0],['Average check','check',function(v){return fm(v,2);},0,0],['Labor %','labor',fp,1,1],['Sales / labor hour','splh',function(v){return fm(v,0);},0,0],['Discounts % of gross','disc',fp,1,1],['Purchases %'+(isProv()?' *':''),'purch',fp,1,1]];
+    var pac=(D.pacing||{})[l]||{}, dig=(D.digest||{})[l]||[], items=((D.top_items||{})[l]||[]).slice(0,8);
+    h+='<div class="onepager"><div class="oph"><div><div class="opt">'+esc(locName(l))+'</div><div class="tg">Week of '+fdate(w0)+' – '+fdate(w1)+', '+w1.slice(0,4)+'</div></div><div class="tg" style="text-align:right">Big Grove Brewery · Store Director Portal<br>data through '+fdate(T)+'</div></div>'
+      +'<table class="t"><tr><th>This week</th><th class="r">Actual</th><th class="r">Prior week</th><th class="r">Change</th><th class="r">Same week last year</th><th class="r">Change</th></tr>'
+      +M.map(function(x){ var f=x[2]; return '<tr><td class="n">'+x[0]+'</td><td class="r"><b>'+f(cur[x[1]])+'</b></td><td class="r">'+f(prv.n?prv[x[1]]:null)+'</td>'+ch(cur[x[1]],prv.n?prv[x[1]]:null,x[3],x[4])+'<td class="r">'+f(ly.n>=5?ly[x[1]]:null)+'</td>'+ch(cur[x[1]],ly.n>=5?ly[x[1]]:null,x[3],x[4])+'</tr>'; }).join('')+'</table>'
+      +'<div class="opc"><div><div class="opl">Day by day</div><table class="t"><tr><th>Day</th><th class="r">Net</th><th class="r">Guests</th><th class="r">Labor %</th><th>Weather</th></tr>'
+      +rowsIn(l,w0,w1).map(function(r){ var x=wxFor(l,r[0]); return '<tr><td class="n">'+pd(r[0]).toLocaleDateString(undefined,{weekday:'short'})+' '+fdate(r[0])+(holidays(+r[0].slice(0,4))[r[0]]?' <span class="tg" style="font-weight:400">'+esc(holidays(+r[0].slice(0,4))[r[0]])+'</span>':'')+'</td><td class="r">'+fm(r[K.net])+'</td><td class="r">'+fn(r[K.guests])+'</td><td class="r">'+fp(r[K.net]?r[K.lc]/r[K.net]:null)+'</td><td class="tg">'+esc(wxText(x))+'</td></tr>'; }).join('')+'</table></div>'
+      +'<div><div class="opl">Month to date'+(pac.month?' — '+esc(pac.month):'')+'</div><table class="t">'
+        +'<tr><td class="n">Net sales</td><td class="r">'+fm((pac.mtd||{}).net)+'</td></tr><tr><td class="n">Pace vs target</td><td class="r">'+(pac.pace_pct?fp(pac.pace_pct,0):'—')+'</td></tr><tr><td class="n">Forecast to month end</td><td class="r">'+fm(pac.forecast)+'</td></tr><tr><td class="n">Target</td><td class="r">'+(pac.target?fm(pac.target):'—')+'</td></tr><tr><td class="n">Labor % MTD</td><td class="r">'+fp((pac.mtd||{}).labor_pct)+'</td></tr></table>'
+        +'<div class="opl" style="margin-top:10px">Top sellers, last 28 days</div><table class="t">'+items.map(function(r){return '<tr><td class="n">'+esc(r[0])+'</td><td class="r">'+fn(r[2])+'</td><td class="r">'+fm(r[3])+'</td></tr>';}).join('')+'</table></div></div>'
+      +'<div class="opl">What needs attention</div>'+(dig.length?'<table class="t">'+dig.slice(0,8).map(function(i){ var a=ACKS&&ACKS[l+'|'+i[4]]; return '<tr><td style="width:80px"><span class="pill">'+esc(i[1])+'</span></td><td class="n" style="white-space:normal">'+esc(i[2])+(i[3]?' <span class="tg" style="font-weight:400">'+esc(i[3])+'</span>':'')+'</td><td class="tg" style="white-space:normal">'+(a&&a.state!=='open'?(a.state==='resolved'?'Resolved':'Acknowledged')+' — '+esc(a.by)+(a.note?': '+esc(a.note):''):'')+'</td></tr>'; }).join('')+'</table>':'<div class="tg" style="padding:6px 0">Nothing crossed a threshold.</div>')
+      +'<div class="opl" style="margin-top:12px">Notes</div><div class="oplines"></div>'
+      +(isProv()?'<div class="tg" style="font-size:10.5px;margin-top:8px">* '+esc(D.meta.provisional.note)+'</div>':'')+'</div>';
+  });
+  m.innerHTML=h;
+  $('opPrint').onclick=function(){ window.print(); };
+}
+
+/* ---------- intended floats (inputs/floats.csv) against the shortage pattern ---------- */
+function floatVerdict(l,k){
+  var f=((D.cash||{})[l]||{}).float_check;
+  if(!f||f.gap==null) return 'Nobody has recorded what these drawers are meant to open with. Add a row for this taproom to <code>inputs/floats.csv</code> — what Toast expects, and what actually goes in — and this line will say whether the two differ by '+fm(k.typical)+'.';
+  if(f.verdict==='explained') return '<b style="color:var(--good)">That is what it is.</b> Toast expects each drawer to open with '+fm(f.toast_expected)+' and they open with '+fm(f.actual_float)+': a difference of '+fm(f.gap)+', against a typical shortage of '+fm(k.typical)+'. Correct the expected starting cash in Toast and the shortages stop. Nobody needs a conversation.';
+  return '<b>The floats do not explain it.</b> Toast expects '+fm(f.toast_expected)+' and the drawers open with '+fm(f.actual_float)+' (a difference of '+fm(f.gap)+'), but the typical shortage is '+fm(k.typical)+'. Something else is taking the same amount each night — a standing payout rung outside Toast, or a tip-out taken from the drawer, is the usual cause.';
+}
+function floatNotes(cons){
+  var has={}; cons.forEach(function(x){has[x[0]]=1;});
+  return locIds().map(function(l){ var f=((D.cash||{})[l]||{}).float_check; if(!f||has[l]||f.verdict!=='mismatch') return '';
+    return '<div class="hint" style="margin-bottom:10px;padding:10px;border-left:3px solid var(--s4)"><b>'+esc(locName(l))+':</b> Toast expects drawers to open with '+fm(f.toast_expected)+' but they open with '+fm(f.actual_float)+'. No shortage pattern has shown up yet, but every counted drawer will read '+fm(Math.abs(f.gap))+(f.gap>0?' short':' over')+' until the setting is corrected.</div>'; }).join('');
+}
+
+/* ---------- page-view totals inside the Usage dialog ---------- */
+function usageViewsHtml(v){
+  if(!v||!(v.pages||[]).length) return '<div class="hint" style="margin-top:14px">Page views</div><div class="empty">No page views logged yet — they start once the updated sign-in backend is deployed.</div>';
+  var names={}; PAGES.forEach(function(p){names[p[0]]=p[1];}); names.onepager='One-pager';
+  var tot=v.pages.reduce(function(p,c){return p+c.views;},0);
+  return '<div class="hint" style="margin-top:14px">Which pages get opened — last 28 days, one count per page per session</div><div class="tw"><table class="t"><tr><th>Page</th><th class="r">Sessions that opened it</th><th class="r">People</th><th class="r">Share</th></tr>'
+    +v.pages.map(function(p){return '<tr><td class="n">'+esc(names[p.page]||p.page)+'</td><td class="r">'+fn(p.views)+'</td><td class="r">'+fn(p.people)+'</td><td class="r">'+fp(p.views/tot,0)+'</td></tr>';}).join('')+'</table></div>';
 }
 
 </script>
