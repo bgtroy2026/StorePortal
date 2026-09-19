@@ -34,6 +34,7 @@
  *   {"a":"ack","s":<sid>,"loc","key","state","note","head"} → acknowledge / resolve / reopen one exception
  *
  *   {"a":"depletions_put","s":<sid>,"rows":[[...]]} → admin uploads the brand x market depletion roll-up
+ *   {"a":"depletions_put","k":<hmac>,"rows":[[...]]} → same, unattended from the Mac (DEPLETIONS_PUT_KEY)
  *   {"a":"depletions","k":<key>}  → the same rows, for the nightly pipeline (HMAC of PORTAL_SECRET, like scorecard)
  *
  * Time-driven (no request): morningTick() runs every 15 minutes once installTriggers() has been run ONCE from
@@ -740,11 +741,22 @@ function previewDigestToMe() {
 var DEP_HEADER = ['location_id', 'brand', 'premise', 'ce_ty', 'ce_ly', 'accounts', 'as_of'];
 
 function doDepletionsPut(sid, req) {
-  var s = readSid(sid);
-  if (!s) return { ok: false, error: 'expired session' };
-  if (!/^admin/i.test(String(s.r || ''))) return { ok: false, error: 'not permitted' };
-  var rows = req.rows;
+  var rows = req.rows, s;
   if (!rows || !rows.length || rows.length > 6000) return { ok: false, error: 'expected 1-6000 rows' };
+  if (req.k) {
+    // Unattended upload from the Mac that builds the roll-up. The key never travels: the caller signs the
+    // as-of date and row count with DEPLETIONS_PUT_KEY. It can write this one tab and nothing else.
+    var pk = prop('DEPLETIONS_PUT_KEY');
+    if (!pk || String(pk).length < 24) return { ok: false, error: 'machine upload is not set up' };
+    var msg = 'depletions_put:' + String((rows[0] || [])[6]) + ':' + rows.length;
+    var want = Utilities.base64Encode(Utilities.computeHmacSha256Signature(msg, pk, Utilities.Charset.UTF_8));
+    if (String(req.k) !== want) return { ok: false, error: 'bad key' };
+    s = { e: 'sales-portal-mac', n: 'Sales Portal refresh', r: 'machine' };
+  } else {
+    s = readSid(sid);
+    if (!s) return { ok: false, error: 'expired session' };
+    if (!/^admin/i.test(String(s.r || ''))) return { ok: false, error: 'not permitted' };
+  }
   var out = [];
   for (var i = 0; i < rows.length; i++) {
     var r = rows[i];

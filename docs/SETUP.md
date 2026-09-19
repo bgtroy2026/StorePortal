@@ -103,8 +103,12 @@ A roster row can opt out of the digest by putting `no` in a fifth column.
 ## Inputs added 2026-09-19
 
 - `inputs/floats.csv` — what each cash drawer should open with: what Toast expects and what actually goes in.
-- `inputs/depletions.csv` — brand × taproom-market case equivalents, built on the Mac:
-  `python3 tools/build_depletions.py "../Big Grove Sales Portal/Yearly Distributor Data" "../Big Grove Sales Portal/_build/geocache.json" inputs/depletions.csv`
+- Depletions — brand × taproom-market case equivalents. **Never committed** (this repo is public). They travel
+  through the roster workbook's "Depletions" tab and the pipeline fetches them with the scorecard.
+  - Automatic: `tools/push_depletions.py` runs at the end of every Sales Portal deploy on the Mac, rebuilds the
+    roll-up, and uploads it if it changed. One-time setup: double-click `tools/Set up depletions upload.command`
+    and paste the clipboard into the Apps Script as script property `DEPLETIONS_PUT_KEY`.
+  - By hand: an admin can upload a CSV from the Activations page.
   Market radius and fallback city lists are in `config/markets.json`.
 - `config/settings.json` gained `pours` (pour-size keywords), `channels.commission` (marketplace rates),
   `inventory.expected_count_days` (count cadence) and `marginedge.provisional` (the provisional badge switch).
