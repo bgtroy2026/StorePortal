@@ -76,3 +76,43 @@ as a Google Sheet and export; commit → picked up next run.
 
 Change `PORTAL_SECRET` in both places (GitHub secret + Apps Script property), delete the `warehouse-state`
 release asset (it was encrypted with the old secret) and run the workflow with *backfill* ticked.
+
+## Morning automation (added 2026-09-19)
+
+The refresh, the digest email and the "nothing landed" alarm all run from the Apps Script project that already
+handles sign-in, on a 15-minute time trigger. Nothing depends on a computer being awake.
+
+One-time setup, in the Apps Script editor for **Store Director Login**:
+
+1. Paste the current `apps-script/code.gs` over the project's code and save.
+2. Project Settings → Script properties, add:
+   - `GH_TOKEN` — a fine-grained GitHub token for `bgtroy2026/StorePortal` with **Actions: Read and write**. This is
+     what starts the 5:15 AM refresh. (Without it the digest and the alarm still work; the refresh falls back to
+     GitHub's own late schedule.)
+   - `GH_TOKEN_EXPIRES` — its expiry date as `YYYY-MM-DD`. A warning is emailed weekly from 14 days out.
+   - `DIGEST_MODE` — leave unset (or `preview`) to begin with: every digest is sent to the first Admin on the
+     roster, with the intended recipient in the subject. Set to `live` when the content has been judged.
+   - `ALERT_TO` — optional; defaults to the first Admin on the roster.
+3. Run `installTriggers` once from the editor and approve the permissions it asks for (send mail, call GitHub).
+4. Deploy → Manage deployments → edit → **New version**, so the web app also serves the new `view`, `acks` and
+   `ack` actions. Until this is done the portal simply hides acknowledgements and page-view counts.
+5. Optional: `previewDigestToMe` sends today's digest to the alert address immediately.
+
+A roster row can opt out of the digest by putting `no` in a fifth column.
+
+## Inputs added 2026-09-19
+
+- `inputs/floats.csv` — what each cash drawer should open with: what Toast expects and what actually goes in.
+- `inputs/depletions.csv` — brand × taproom-market case equivalents, built on the Mac:
+  `python3 tools/build_depletions.py "../Big Grove Sales Portal/Yearly Distributor Data" "../Big Grove Sales Portal/_build/geocache.json" inputs/depletions.csv`
+  Market radius and fallback city lists are in `config/markets.json`.
+- `config/settings.json` gained `pours` (pour-size keywords), `channels.commission` (marketplace rates),
+  `inventory.expected_count_days` (count cadence) and `marginedge.provisional` (the provisional badge switch).
+- `config/locations.json` gained `lat`/`lon` (weather) and optional `seats`.
+
+## Healing history after a schema addition
+
+Toast modifiers (pour sizes), loyalty identification and order source are read from the order JSON, which is not
+kept between runs — so past days gain them only by being pulled again. Run the workflow by hand with
+`source = toast` and `heal = true`, after the morning refresh. It works newest-first inside the normal Toast time
+budget, shares the budget across taprooms, and the check step logs how many location-days remain.

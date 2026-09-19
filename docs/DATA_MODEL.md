@@ -56,3 +56,18 @@ purchases always from MarginEdge invoices. `payload.sources[location]` tells the
 - MarginEdge: list orders for the window; fetch detail only for orders without lines yet or not yet CLOSED. Daily sales report and P&L are re-pulled for the last 7 days and fetched for any older day missing from the warehouse; inventories are re-fetched when their savedDate changes. 1 request/second; long backfills stop at `max_minutes_per_run` and resume next run.
 - Transform is idempotent (replace-by-day for Toast, upsert by id elsewhere), so re-running is always safe.
 - The warehouse is gzip+AES-GCM encrypted and stored as a release asset (`warehouse-state`) between runs.
+
+## Added 2026-09-19
+
+| Table / column | Grain | Notes |
+|---|---|---|
+| `toast_order_items.modifiers`, `size_oz`, `pour` | selection | Modifier text verbatim; ounces per unit and draft/package as read by `sdp/pours.py`. `modifiers IS NULL` means the day predates capture — never "no modifier". Sizes are re-derived from the stored text on every transform, so a config fix reaches history. |
+| `toast_orders.source` | order | Toast order source. |
+| `toast_loyalty` | check | A check on which a loyalty member identified themselves. `member` is a truncated SHA-256; the identifier itself is never stored. |
+| `weather_daily` | location × date | Open-Meteo daily high/low/precipitation/WMO code. `kind` = observed or forecast. |
+| `drawer_floats` | location × drawer | From `inputs/floats.csv`. |
+| `depletions` | location × brand × premise | From `inputs/depletions.csv`. Case equivalents YTD and same span last year. |
+
+Payload sections added: `beer`, `channels`, `loyalty`, `menu`, `beer_mix`, `compliance`, `weather`, `market`; `cash[*].float_check`;
+each digest row gained a fifth element, a stable rule key, which acknowledgements are filed against. The detail bundle gained
+`range` — daily-grain tables behind the date picker. `data/<id>.bin` for label `digest` is the morning email payload.
