@@ -16,7 +16,7 @@ import sqlite3
 from datetime import date, timedelta
 
 from .pours import brand_key, brand_label, keg_ounces
-from .util import settings
+from .util import log, settings
 
 
 def _rows(con, sql, args=()):
@@ -30,12 +30,15 @@ def _r(v, nd=2):
 
 # ------------------------------------------------------------------------------------------ beer volume
 
-def beer_volume(con, lid: str, through: date, max_days: int = 56) -> dict:
+def beer_volume(con, lid: str, through: date, max_days: int = 28, yield_days: int = 84) -> dict:
     """Ounces poured against ounces received — beer variance with no dollar value attached.
 
-    The window is "as far back as pour sizes were captured, up to eight weeks". Sizes live in Toast modifiers,
-    which the warehouse only began keeping on the day this shipped, so for the first weeks the window is short and
-    the view says so. Days before capture are not estimated; they are left out.
+    The window is the last 28 days -- the same as every other fixed panel, so the page agrees with the "Last 28
+    days" button. Any other date range is answered from the daily tables in `range_detail` instead. Days before
+    pour sizes were captured are not estimated; they are left out, and the page says how many days it has.
+
+    The yield between counts looks back further (`yield_days`): it needs two beer counts, and those are weeks
+    apart. It is tied to the count dates, not to the date range on the page.
     """
     since = through - timedelta(days=max_days - 1)
     cap = con.execute("""SELECT MIN(business_date), COUNT(DISTINCT business_date) FROM toast_order_items
@@ -126,6 +129,10 @@ def beer_volume(con, lid: str, through: date, max_days: int = 56) -> dict:
                      "by_brand": match[:30],
                      "unparsed": sorted(([k, _r(v, 1)] for k, v in unparsed.items()), key=lambda x: -x[1])[:15]}
 
+    ycap = con.execute("""SELECT MIN(business_date) FROM toast_order_items WHERE location_id=? AND bucket='Beer'
+                          AND modifiers IS NOT NULL AND business_date>=? AND business_date<=?""",
+                       (lid, (through - timedelta(days=yield_days - 1)).isoformat(), through.isoformat())).fetchone()
+    ystart = (ycap and ycap[0]) or start
     # ---- count-based yield, when two beer counts both fall inside the captured window.
     # Only products that appear on BOTH sheets are used. A partial sheet on the closing date would otherwise read
     # as kegs that vanished — the same trap as the uncounted inventory category, in ounces instead of dollars.
@@ -133,7 +140,7 @@ def beer_volume(con, lid: str, through: date, max_days: int = 56) -> dict:
         SELECT iv.inventory_date d, COALESCE(ii.product_id, ii.product_name) pid, MAX(ii.product_name) nm, MAX(ii.unit) u, SUM(ii.quantity) q
         FROM me_inventory_items ii JOIN me_inventories iv ON iv.inventory_id=ii.inventory_id AND iv.location_id=ii.location_id
         WHERE ii.location_id=? AND ii.bucket='Beer' AND iv.inventory_date>=? AND iv.inventory_date<=? GROUP BY 1,2""",
-        (lid, start, through.isoformat()))
+        (lid, ystart, through.isoformat()))
     by_date: dict[str, dict] = {}
     for c in cnt:
         oz = keg_ounces(c["nm"], c["u"])
@@ -535,8 +542,81 @@ def range_detail(con, lid: str, since: date, through: date, item_days: int = 200
                                 WHERE location_id=? AND business_date>=? AND business_date<=? GROUP BY 1,2,3""", (lid, a, b), ["nm", "v"], ["amt", "n"])
     out["vendors"] = table("""SELECT invoice_date d, COALESCE(vendor_name,'(no vendor)') nm, SUM(order_total) tot, COUNT(*) n FROM me_invoices
                               WHERE location_id=? AND invoice_date>=? AND invoice_date<=? GROUP BY 1,2""", (lid, a, b), ["nm"], ["tot", "n"])
+    # Beer volume at daily grain, so the Beer page follows the date range like everything else. Isolated: the
+    # older tables above must never be lost to a surprise in a keg name.
+    try:
+        out.update(_beer_range(con, lid, a, b, di))
+    except Exception as e:                                   # pragma: no cover - defensive
+        log.error("range_detail: beer tables skipped for %s (%s: %s)", lid, type(e).__name__, e)
     # hour-of-day sales: [day index, hour, net]
     out["hourly"] = [[di[r["d"]], r["h"], _r(float(r["net"] or 0))] for r in _rows(con, """
         SELECT business_date d, hour_local h, SUM(price) net FROM toast_order_items
         WHERE location_id=? AND voided=0 AND hour_local IS NOT NULL AND business_date>=? AND business_date<=? GROUP BY 1,2""", (lid, a, b)) if r["d"] in di]
     return out
+
+
+def _beer_range(con, lid: str, a: str, b: str, di: dict) -> dict:
+    """Daily beer tables for the date picker: [day index, name index, measures...], same layout as the others.
+
+    Names carry the brand KEY as well as the label, because poured and received are matched on the key -- the
+    page has no way to normalise "Easy Eddy 16oz" and "Big Grove Easy Eddy Keg (1/2BBL)" to one beer itself.
+    Only days with modifiers captured are included, exactly as in `beer_volume`.
+    """
+    def pack(acc, n_meas):
+        names, idx, rows = [], {}, []
+        for (d, key), v in sorted(acc.items()):
+            if key not in idx:
+                idx[key] = len(names); names.append(list(key) if isinstance(key, tuple) else key)
+            rows.append([di[d], idx[key]] + [_r(x, 1) for x in v[:n_meas]])
+        return {"names": names, "rows": rows}
+
+    sold: dict[tuple, list] = {}
+    for r in _rows(con, """
+        SELECT business_date d, COALESCE(item_name,'(unnamed)') nm, COALESCE(pour,'draft') pour, SUM(quantity) q,
+               SUM(CASE WHEN size_oz IS NOT NULL THEN quantity ELSE 0 END) sq,
+               SUM(CASE WHEN size_oz IS NOT NULL THEN quantity*size_oz ELSE 0 END) oz, SUM(price) net
+        FROM toast_order_items
+        WHERE location_id=? AND bucket='Beer' AND voided=0 AND modifiers IS NOT NULL AND business_date>=? AND business_date<=?
+        GROUP BY 1,2,3""", (lid, a, b)):
+        if r["d"] not in di:
+            continue
+        label = brand_label(r["nm"]) or "(unnamed)"
+        v = sold.setdefault((r["d"], (label, r["pour"], brand_key(label))), [0.0, 0.0, 0.0, 0.0])
+        v[0] += float(r["q"] or 0); v[1] += float(r["sq"] or 0); v[2] += float(r["oz"] or 0); v[3] += float(r["net"] or 0)
+
+    sizes: dict[tuple, list] = {}
+    for r in _rows(con, """
+        SELECT business_date d, size_oz oz, SUM(quantity) q FROM toast_order_items
+        WHERE location_id=? AND bucket='Beer' AND voided=0 AND COALESCE(pour,'draft')='draft' AND size_oz IS NOT NULL
+          AND modifiers IS NOT NULL AND business_date>=? AND business_date<=? GROUP BY 1,2""", (lid, a, b)):
+        if r["d"] in di:
+            sizes[(r["d"], _r(r["oz"], 1))] = [float(r["q"] or 0)]
+
+    unsized: dict[tuple, list] = {}
+    for r in _rows(con, """
+        SELECT business_date d, TRIM(COALESCE(item_name,'(unnamed)') || CASE WHEN COALESCE(modifiers,'')!='' THEN '  ['||modifiers||']' ELSE '' END) t, SUM(quantity) q
+        FROM toast_order_items
+        WHERE location_id=? AND bucket='Beer' AND voided=0 AND size_oz IS NULL AND COALESCE(pour,'draft')='draft'
+          AND modifiers IS NOT NULL AND business_date>=? AND business_date<=? GROUP BY 1,2""", (lid, a, b)):
+        if r["d"] in di:
+            unsized[(r["d"], r["t"])] = [float(r["q"] or 0)]
+
+    rec: dict[tuple, list] = {}
+    unparsed: dict[tuple, list] = {}
+    for l in _rows(con, """
+        SELECT l.invoice_date d, COALESCE(pr.name, l.vendor_item_name, '(unnamed)') nm, l.vendor_item_name vin, l.packaging_id pkg, SUM(l.quantity) q
+        FROM me_invoice_lines l
+        JOIN me_invoices i ON i.order_id=l.order_id AND i.location_id=l.location_id
+        LEFT JOIN me_products pr ON pr.product_id=l.product_id AND pr.location_id=l.location_id
+        WHERE l.location_id=? AND l.bucket='Beer' AND l.invoice_date>=? AND l.invoice_date<=? AND COALESCE(i.is_credit,0)=0 AND l.quantity>0
+        GROUP BY 1,2,3,4""", (lid, a, b)):
+        if l["d"] not in di:
+            continue
+        oz = keg_ounces(l["nm"], l["vin"], l["pkg"])
+        q = float(l["q"] or 0)
+        if oz:
+            v = rec.setdefault((l["d"], (l["nm"], brand_key(l["nm"]))), [0.0, 0.0]); v[0] += oz * q; v[1] += q
+        else:
+            v = unparsed.setdefault((l["d"], l["nm"]), [0.0]); v[0] += q
+    return {"beer": pack(sold, 4), "beer_sizes": pack(sizes, 1), "beer_unsized": pack(unsized, 1),
+            "beer_rec": pack(rec, 2), "beer_unparsed": pack(unparsed, 1)}
