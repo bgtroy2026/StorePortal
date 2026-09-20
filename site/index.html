@@ -666,6 +666,7 @@ function render(noHash){
   var m=$('main'); m.innerHTML='';
   if(S.page==='scorecard' && !hasScorecard()) S.page='overview';
   ({overview:pgOverview,sales:pgSales,menu:pgMenu,beer:pgBeer,onepager:pgOnePager,labor:pgLabor,cogs:pgCogs,inventory:pgInventory,events:pgEvents,activations:pgActivations,scorecard:pgScorecard,locations:pgLocations})[S.page](m);
+  try{ opsAppend(S.page,m); }catch(e){ try{console.error('ops panels',e);}catch(_){} }
   // Some panels fill their tables asynchronously (drilldowns, lazily fetched detail), so run once now and
   // once after the current task settles rather than assuming everything is in the DOM already.
   syncCsvButtons(); setTimeout(syncCsvButtons,0);
@@ -2289,6 +2290,182 @@ function usageViewsHtml(v){
   var tot=v.pages.reduce(function(p,c){return p+c.views;},0);
   return '<div class="hint" style="margin-top:14px">Which pages get opened — last 28 days, one count per page per session</div><div class="tw"><table class="t"><tr><th>Page</th><th class="r">Sessions that opened it</th><th class="r">People</th><th class="r">Share</th></tr>'
     +v.pages.map(function(p){return '<tr><td class="n">'+esc(names[p.page]||p.page)+'</td><td class="r">'+fn(p.views)+'</td><td class="r">'+fn(p.people)+'</td><td class="r">'+fp(p.views/tot,0)+'</td></tr>';}).join('')+'</table></div>';
+}
+
+
+/* =========================================================================================
+   OPERATIONAL VIEWS (sdp/ops.py) — added 2026-09-20
+   Appended to existing pages after they render, inside a try/catch: a surprise in one of these
+   sections must never blank a page that was working. Every section hides itself when its data
+   is absent, so a taproom without the feed simply does not show the panel.
+   ========================================================================================= */
+function opsOf(l,k){ var o=(D.ops||{})[l], x=o&&o[k]; if(!x) return null; if(!Array.isArray(x)&&typeof x==='object'&&!Object.keys(x).length) return null; return x; }
+function opsIds(k,test){ return locIds().filter(function(l){ var x=opsOf(l,k); return x && (!test||test(x)); }); }
+function opsAppend(page,m){
+  // One try per panel: a surprise in one section must not take its neighbours down with it.
+  var fns={labor:[overtimePanel,compsPanel], sales:[tabsPanel,posChecksPanel], menu:[stockPanel,menuPricePanel],
+           cogs:[priceAlertPanel,purchaseComparePanel,invoiceHealthPanel,vendorSharePanel]}[page]||[];
+  var h=fns.map(function(f){ try{ return f()||''; }catch(e){ try{console.error('ops panel',f.name,e);}catch(_){} return ''; } }).join('');
+  if(h) m.insertAdjacentHTML('beforeend','<div class="grid" style="margin-top:14px">'+h+'</div>');
+}
+function multiLoc(){ return locIds().length>1; }
+function locTh(){ return multiLoc()?'<th>Taproom</th>':''; }
+function locTd(l){ return multiLoc()?'<td>'+esc(locName(l))+'</td>':''; }
+
+/* ---------- overtime this week ---------- */
+function overtimePanel(){
+  var ids=opsIds('overtime',function(x){return x.week;}); if(!ids.length) return '';
+  var O=opsOf(ids[0],'overtime'), rows=[];
+  ids.forEach(function(l){ var o=opsOf(l,'overtime'); (o.people||[]).forEach(function(r){ rows.push([l].concat(r).concat([!!o.has_schedule])); }); });
+  rows.sort(function(a,b){return b[4]-a[4];});
+  var sched=ids.some(function(l){return opsOf(l,'overtime').has_schedule;});
+  var body=rows.length?'<div class="tw"><table class="t"><tr>'+locTh()+'<th>Person</th><th class="r">Worked so far</th><th class="r">Still scheduled</th><th class="r">Week total</th><th class="r">Over '+fn(O.limit)+'h</th></tr>'
+      +rows.slice(0,40).map(function(r){ var over=r[5]>0; return '<tr>'+locTd(r[0])+'<td class="n">'+esc(r[1])+'</td><td class="r">'+fn(r[2],1)+'</td><td class="r">'+(r[6]?fn(r[3],1):'—')+'</td><td class="r"'+(over?' style="color:var(--bad);font-weight:700"':'')+'>'+fn(r[4],1)+'</td><td class="r">'+(over?fn(r[5],1):'')+'</td></tr>'; }).join('')+'</table></div>'
+    :'<div class="empty">Nobody is within four hours of overtime this week.</div>';
+  // what overtime has actually cost, by pay week
+  var wk={}; ids.forEach(function(l){ (opsOf(l,'overtime').history||[]).forEach(function(r){ var o=wk[r[0]]||(wk[r[0]]=[0,0,0]); o[0]+=r[1]||0; o[1]+=r[2]||0; o[2]+=r[3]||0; }); });
+  var wks=Object.keys(wk).sort().slice(-8);
+  var hist=wks.length?'<div class="hint" style="margin-top:12px">Overtime already paid — by pay week</div><div class="tw"><table class="t"><tr><th>Week of</th><th class="r">Overtime hours</th><th class="r">Premium paid</th><th class="r">Share of hours</th></tr>'
+      +wks.map(function(w){ var o=wk[w]; return '<tr><td>'+fdate(w)+'</td><td class="r">'+fn(o[0],1)+'</td><td class="r">'+fm(o[1])+'</td><td class="r">'+fp(o[2]?o[0]/o[2]:null)+'</td></tr>'; }).join('')+'</table></div>':'';
+  return panel('Overtime this week — '+fdate(O.week[0])+' to '+fdate(O.week[1]),'Hours worked through '+fdate(O.through)+' plus what is still on the schedule · anyone within four hours of '+fn(O.limit)+' is listed, while the schedule can still be changed',
+    body+hist+notice((function(){ var no=ids.filter(function(l){return !opsOf(l,'overtime').has_schedule;}); return no.length?'No schedule for the rest of the week reaches the portal for '+no.map(function(l){return esc(locName(l));}).join(', ')+', so only hours already worked are counted there. ':''; })()+'Hours are counted per taproom: someone who also works at another taproom is only seen here for this one. The premium is the extra half-time, not the whole hour. Pay week start and the threshold are <code>labor.week_start</code> and <code>labor.overtime_hours</code> in config/settings.json.'));
+}
+
+/* ---------- comps and voids by person ---------- */
+function compsPanel(){
+  var ids=opsIds('comps',function(x){return (x.people||[]).length;}); if(!ids.length) return '';
+  var rows=[], ap=[], vr={}, cov=[];
+  ids.forEach(function(l){ var c=opsOf(l,'comps');
+    c.people.forEach(function(r){ rows.push([l].concat(r)); });
+    (c.approvers||[]).forEach(function(r){ ap.push([l].concat(r)); });
+    (c.void_reasons||[]).forEach(function(r){ var o=vr[r[0]]||(vr[r[0]]=[0,0]); o[0]+=r[1]||0; o[1]+=r[2]||0; });
+    if(c.approver_coverage!=null) cov.push(c.approver_coverage); });
+  rows.sort(function(a,b){ return (b[10].length-a[10].length)||((b[4]+b[7])-(a[4]+a[7])); });
+  var C0=opsOf(ids[0],'comps');
+  var base=ids.map(function(l){ var b=opsOf(l,'comps').base; return (multiLoc()?esc(locName(l))+': ':'')+'discounts '+fp(b.disc_rate)+' of gross, item voids '+fp(b.void_rate); }).join(' · ');
+  var t='<div class="tw"><table class="t"><tr>'+locTh()+'<th>Person</th><th class="r">Orders</th><th class="r">Gross rung</th><th class="r">Promotions</th><th class="r">Discounts given</th><th class="r">Rate</th><th class="r">Items voided</th><th class="r">Rate</th><th></th></tr>'
+    +rows.slice(0,40).map(function(r){ var f=r[10]||[];
+      return '<tr>'+locTd(r[0])+'<td class="n">'+esc(r[1])+'</td><td class="r">'+fn(r[2])+'</td><td class="r">'+fm(r[3])+'</td><td class="r tg">'+(r[11]?fm(r[11]):'')+'</td><td class="r">'+fm(r[4])+' <span class="tg">'+fn(r[5])+'</span></td><td class="r"'+(f.indexOf('discounts')>=0?' style="color:var(--bad);font-weight:700"':'')+'>'+fp(r[6])+'</td><td class="r">'+fm(r[7])+' <span class="tg">'+fn(r[8])+'</span></td><td class="r"'+(f.indexOf('voids')>=0?' style="color:var(--bad);font-weight:700"':'')+'>'+fp(r[9])+'</td><td>'+(f.length?'<span class="pill" style="background:#fbe9e9;color:var(--bad)">2× taproom rate</span>':'')+'</td></tr>'; }).join('')+'</table></div>';
+  ap.sort(function(a,b){return (b[2]||0)-(a[2]||0);});
+  var apT=ap.length?'<div class="hint" style="margin-top:12px">Who approved the discounts</div><div class="tw"><table class="t"><tr>'+locTh()+'<th>Approved by</th><th class="r">Discounts</th><th class="r">Count</th><th class="r">Share</th></tr>'
+      +ap.slice(0,15).map(function(r){return '<tr>'+locTd(r[0])+'<td class="n">'+esc(r[1])+'</td><td class="r">'+fm(r[2])+'</td><td class="r">'+fn(r[3])+'</td><td class="r">'+fp(r[4])+'</td></tr>';}).join('')+'</table></div>':'';
+  var vk=Object.keys(vr).sort(function(a,b){return vr[b][0]-vr[a][0];});
+  var vrT=vk.length?'<div class="hint" style="margin-top:12px">Why items were voided</div><div class="tw"><table class="t"><tr><th>Reason</th><th class="r">Value</th><th class="r">Items</th></tr>'
+      +vk.slice(0,10).map(function(k){return '<tr><td class="n">'+esc(k)+'</td><td class="r">'+fm(vr[k][0])+'</td><td class="r">'+fn(vr[k][1])+'</td></tr>';}).join('')+'</table></div>':'';
+  var minCov=cov.length?Math.min.apply(null,cov):null;
+  return panel('Comps and voids by person — last 28 days','Loyalty redemptions are left out, and promotions ('+esc((C0.promotions||[]).join(', '))+') are shown but not counted in the rate · '+base,
+    t+apT+vrT+notice('A rate is shown only for people with at least '+C0.min_orders+' orders, and someone is flagged only when their rate is at least double the taproom\'s own <b>and</b> the amount is over $100 — a flag is a reason to look, not a finding. Discounts and voids belong to whoever owned the order, which is not always who keyed them; whole voided orders are on the By server table, not here. Which discounts count as promotions is <code>comps.promotions</code> in config/settings.json.'
+      +(minCov!=null&&minCov<0.98?' Approver and void reason are only on days pulled since 20 Sep 2026 ('+fp(minCov,0)+' of this window\'s discounts so far); the history re-pull fills in the rest, and until then older voids read "day not re-pulled yet".':'')));
+}
+
+/* ---------- tab length and how full the room gets ---------- */
+function tabsPanel(){
+  var ids=opsIds('tabs',function(x){return (x.dayparts||[]).length;}); if(!ids.length) return '';
+  var parts=['Lunch','Afternoon','Dinner','Late'];
+  var t='<div class="tw"><table class="t"><tr><th>Taproom</th><th></th>'+parts.map(function(p){return '<th class="r">'+p+'</th>';}).join('')+'<th class="r">Busiest hour</th><th class="r">Tabs open then</th><th class="r">Seats</th><th class="r">Left open 8h+</th></tr>'
+    +ids.map(function(l){ var T=opsOf(l,'tabs'), by={}; T.dayparts.forEach(function(r){ by[r[0]+'|'+r[1]]=r; });
+      var dn=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'], pk=T.peak;
+      return ['Sun–Thu','Fri–Sat'].map(function(wk,i){
+        return '<tr>'+(i===0?'<td class="n" rowspan="2" style="vertical-align:top">'+esc(locName(l))+'</td>':'')+'<td class="tg">'+wk+'</td>'
+          +parts.map(function(p){ var r=by[p+'|'+wk]; return '<td class="r">'+(r&&r[2]>=20?fn(r[3])+' min <span class="tg">'+fn(r[4])+'</span>':'—')+'</td>'; }).join('')
+          +(i===0?'<td class="r" rowspan="2" style="vertical-align:top">'+(pk?dn[pk[0]]+' '+hr12(pk[1]):'—')+'</td><td class="r" rowspan="2" style="vertical-align:top">'+(pk?fn(pk[2],0):'—')+'</td><td class="r" rowspan="2" style="vertical-align:top">'+(T.seats?fn(T.seats):'<span class="tg">not set</span>')+'</td><td class="r" rowspan="2" style="vertical-align:top">'+fn(T.left_open)+'</td>':'')+'</tr>'; }).join(''); }).join('')+'</table></div>';
+  return panel('How long a tab stays open — last 28 days','Median minutes from opening to closing a tab, with the 75th percentile in grey · parts of the day with fewer than 20 tabs are left blank',
+    t+notice('"Tabs open then" is the average number of tabs open at the half-hour of the busiest hour of the week. Against the seat count it says whether the room or the demand is the limit: tabs open close to seats ÷ typical party size means the room is full. Delivery, takeout and online orders are left out entirely — they never sat in the room. Counter sales under two minutes are left out of the medians; tabs open more than eight hours are counted separately because they were almost certainly forgotten, not enjoyed. Add <code>seats</code> in config/locations.json to fill the seats column.'));
+}
+function hr12(h){ return (h%12||12)+(h<12?' AM':' PM'); }
+
+/* ---------- gift cards, $0 items, guest counts ---------- */
+function posChecksPanel(){
+  var ids=opsIds('checks'); if(!ids.length) return '';
+  var g='<div class="tw"><table class="t"><tr><th>Taproom</th><th class="r">Gift cards sold</th><th class="r">Gift cards redeemed</th><th class="r">Orders with a party size of 2+</th><th>Per-guest figures</th></tr>'
+    +ids.map(function(l){ var c=opsOf(l,'checks'), gc=c.gift||{}, gs=c.guests;
+      return '<tr><td class="n">'+esc(locName(l))+'</td><td class="r">'+(gc.sold?fm(gc.sold)+' <span class="tg">'+fn(gc.sold_n)+'</span>':'<span class="tg">none found</span>')+'</td><td class="r">'+fm(gc.redeemed)+' <span class="tg">'+fn(gc.redeemed_n)+'</span></td><td class="r">'+(gs?fp(gs.two_plus,0):'—')+'</td><td>'+(gs?(gs.usable?'<span class="pill">usable</span>':'<span class="pill" style="background:#fbe9e9;color:var(--bad)">party size mostly not entered</span>'):'')+'</td></tr>'; }).join('')+'</table></div>';
+  var z=[]; ids.forEach(function(l){ (opsOf(l,'checks').zero_rung||[]).forEach(function(r){ z.push([l].concat(r)); }); });
+  z.sort(function(a,b){return b[3]-a[3];});
+  var zt=z.length?'<div class="hint" style="margin-top:12px">Rung at $0 — not voided, not discounted, just no price</div><div class="tw"><table class="t"><tr>'+locTh()+'<th>Item</th><th>Category</th><th class="r">Times rung</th></tr>'
+      +z.slice(0,25).map(function(r){return '<tr>'+locTd(r[0])+'<td class="n">'+esc(r[1])+'</td><td>'+esc(r[2]||'')+'</td><td class="r">'+fn(r[3])+'</td></tr>';}).join('')+'</table></div>':'';
+  return panel('Point-of-sale checks — last 28 days','Three things the register knows that nobody looks at',
+    g+zt+notice('Gift card sales are found by item or category name ("gift card"), so a differently named button will read as none. Toast records a party of 1 when nobody enters one, which is why per-guest figures are only trusted where at least 35% of orders carry a party of two or more. Most $0 items are legitimate (water, a draft button priced by its size); the list is there to spot the ones that are not.'));
+}
+
+/* ---------- out of stock ---------- */
+function stockPanel(){
+  var ids=opsIds('stock',function(x){return x.as_of;}); if(!ids.length) return '';
+  var now=[], often=[];
+  ids.forEach(function(l){ var s=opsOf(l,'stock'); (s.now||[]).forEach(function(r){ now.push([l].concat(r)); }); (s.often||[]).forEach(function(r){ often.push([l,r[0],r[1],s.snapshots]); }); });
+  var S0=opsOf(ids[0],'stock');
+  var t=now.length?'<div class="tw"><table class="t"><tr>'+locTh()+'<th>Item</th><th>Status</th><th class="r">Left</th></tr>'
+      +now.map(function(r){ var out=r[2]==='OUT_OF_STOCK'; return '<tr>'+locTd(r[0])+'<td class="n">'+esc(r[1])+'</td><td>'+(out?'<span class="pill" style="background:#fbe9e9;color:var(--bad)">86\'d</span>':'<span class="pill">counting down</span>')+'</td><td class="r">'+(r[3]==null?'':fn(r[3]))+'</td></tr>'; }).join('')+'</table></div>'
+    :'<div class="empty">Nothing was marked out of stock when the portal last refreshed.</div>';
+  often.sort(function(a,b){return b[2]-a[2];});
+  var ot=often.length?'<div class="hint" style="margin-top:12px">Out more than once in the last 28 days</div><div class="tw"><table class="t"><tr>'+locTh()+'<th>Item</th><th class="r">Mornings out</th><th class="r">Of</th></tr>'
+      +often.slice(0,20).map(function(r){return '<tr>'+locTd(r[0])+'<td class="n">'+esc(r[1])+'</td><td class="r">'+fn(r[2])+'</td><td class="r">'+fn(r[3])+'</td></tr>';}).join('')+'</table></div>':'';
+  return panel('Out of stock — as of '+fdate(S0.as_of),'What Toast had marked 86\'d or counting down when the morning refresh ran',
+    t+ot+notice('This is one look a day, taken at the morning refresh, so it shows what was still out from the night before — not everything that ran out and came back during service.'));
+}
+
+/* ---------- same item, different menu price ---------- */
+function priceMapCols(rows,idx){ var seen={}, out=[]; rows.forEach(function(r){ Object.keys(r[idx]).forEach(function(k){ if(!seen[k]){seen[k]=1;out.push(k);} }); });
+  var order=D.locations.map(function(l){return l.id;}); out.sort(function(a,b){ var x=order.indexOf(a), y=order.indexOf(b); return (x<0?99:x)-(y<0?99:y); }); return out; }
+function menuPricePanel(){
+  var sel={}; locIds().forEach(function(l){sel[l]=1;});
+  var rows=(D.menu_prices||[]).filter(function(r){ return Object.keys(r[2]).some(function(k){return sel[k];}); });
+  if(!rows.length) return '';
+  var cols=priceMapCols(rows,2);
+  return panel('Same item, different price','Menu items whose price differs between taprooms by 50¢ or more · widest gap first',
+    '<div class="tw"><table class="t"><tr><th>Item</th><th>Category</th>'+cols.map(function(c){return '<th class="r">'+esc(locName(c))+'</th>';}).join('')+'<th class="r">Gap</th></tr>'
+    +rows.slice(0,60).map(function(r){ var vals=Object.keys(r[2]).map(function(k){return r[2][k];}), hi=Math.max.apply(null,vals), lo=Math.min.apply(null,vals);
+      return '<tr><td class="n">'+esc(r[0])+'</td><td>'+esc(r[1]||'')+'</td>'+cols.map(function(c){ var v=r[2][c]; return '<td class="r"'+(v===hi?' style="font-weight:700"':v===lo?' style="color:var(--muted)"':'')+'>'+(v==null?'':fm(v,2))+'</td>'; }).join('')+'<td class="r">'+(r[3]<0?'−':'')+fm(Math.abs(r[3]),2)+' <span class="tg">'+fp(Math.abs(r[4]),0)+'</span></td></tr>'; }).join('')+'</table></div>'
+    +notice('Matched on the item\'s name as it appears in Toast, from each taproom\'s current menu. Draft buttons priced by their size modifier have no base price and are not compared. Some gaps are deliberate; this is the list to decide that from.'),'noprov');
+}
+
+/* ---------- MarginEdge: price rises that cost money ---------- */
+function priceAlertPanel(){
+  var rows=[]; opsIds('price_alerts').forEach(function(l){ (opsOf(l,'price_alerts')||[]).forEach(function(r){ rows.push([l].concat(r)); }); });
+  if(!rows.length) return '';
+  rows.sort(function(a,b){return (b[7]||0)-(a[7]||0);});
+  return panel('Purchases — price rises that are costing money','Unit price in the recent 90 days against the 90 before, same product and pack · ranked by what the rise has cost, not by percentage',
+    '<div class="tw"><table class="t"><tr>'+locTh()+'<th>Product</th><th>Vendor</th><th class="r">Was</th><th class="r">Now</th><th class="r">Change</th><th class="r">Cost of the rise</th></tr>'
+    +rows.slice(0,20).map(function(r){return '<tr>'+locTd(r[0])+'<td class="n">'+esc(r[1])+'</td><td>'+esc(r[2])+'</td><td class="r">'+fm(r[4],2)+'</td><td class="r">'+fm(r[5],2)+'</td><td class="r" style="color:var(--bad)">+'+fp(r[6],0)+'</td><td class="r" style="font-weight:700">'+fm(r[7])+'</td></tr>';}).join('')+'</table></div>'
+    +notice('Only rises that have cost $150 or more are listed; the full list, with price history and vendor comparison, is under Unit prices above. The biggest of these also appear in the morning digest.'));
+}
+
+/* ---------- MarginEdge: same vendor item, different price by taproom ---------- */
+function purchaseComparePanel(){
+  var sel={}; locIds().forEach(function(l){sel[l]=1;});
+  var rows=(D.price_compare||[]).filter(function(r){ return Object.keys(r[3]).some(function(k){return sel[k];}); });
+  if(!rows.length) return '';
+  var cols=priceMapCols(rows,3);
+  return panel('Purchases — same vendor item, different price by taproom','Last 90 days · matched on the vendor and the vendor\'s own item code, so the pack is the same · ranked by what paying above the lowest price has cost',
+    '<div class="tw"><table class="t"><tr><th>Item</th><th>Vendor</th>'+cols.map(function(c){return '<th class="r">'+esc(locName(c))+'</th>';}).join('')+'<th class="r">Gap</th><th class="r">Cost of the gap</th></tr>'
+    +rows.slice(0,40).map(function(r){ var vals=Object.keys(r[3]).map(function(k){return r[3][k][0];}), lo=Math.min.apply(null,vals), hi=Math.max.apply(null,vals);
+      return '<tr><td class="n">'+esc(r[0])+'</td><td>'+esc(r[1]||'')+'</td>'+cols.map(function(c){ var v=r[3][c]; return '<td class="r"'+(v&&v[0]===hi?' style="color:var(--bad);font-weight:700"':v&&v[0]===lo?' style="color:var(--good)"':'')+'>'+(v?fm(v[0],2):'')+'</td>'; }).join('')+'<td class="r">'+fp(r[4],0)+'</td><td class="r">'+fm(r[5])+'</td></tr>'; }).join('')+'</table></div>'
+    +notice('Prices are volume-weighted over the window. A gap can be a delivery-size tier or a contract one taproom has and another does not — either way it is a question for the vendor.'));
+}
+
+/* ---------- MarginEdge: invoice entry lag and quiet vendors ---------- */
+function invoiceHealthPanel(){
+  var ids=opsIds('invoice_health',function(x){return x.lag&&x.lag.n;}); if(!ids.length) return '';
+  var t='<div class="tw"><table class="t"><tr><th>Taproom</th><th class="r">Invoices</th><th class="r">Typical days to enter</th><th class="r">Slowest tenth</th><th class="r">Entered over a week late</th></tr>'
+    +ids.map(function(l){ var g=opsOf(l,'invoice_health').lag||{}; return '<tr><td class="n">'+esc(locName(l))+'</td><td class="r">'+fn(g.n)+'</td><td class="r">'+(g.median==null?'—':fn(g.median))+'</td><td class="r">'+(g.p90==null?'—':fn(g.p90)+'+')+'</td><td class="r"'+(g.late_share>0.2?' style="color:var(--bad);font-weight:700"':'')+'>'+fp(g.late_share,0)+'</td></tr>'; }).join('')+'</table></div>';
+  var q=[]; ids.forEach(function(l){ (opsOf(l,'invoice_health').quiet||[]).forEach(function(r){ q.push([l].concat(r)); }); });
+  q.sort(function(a,b){return (b[6]||0)-(a[6]||0);});
+  var qt=q.length?'<div class="hint" style="margin-top:12px">Regular vendors that have gone quiet — a delivery whose invoice may not have reached MarginEdge</div><div class="tw"><table class="t"><tr>'+locTh()+'<th>Vendor</th><th>Last invoice</th><th class="r">Days ago</th><th class="r">Usually every</th><th class="r">Typical invoice</th></tr>'
+      +q.slice(0,15).map(function(r){return '<tr>'+locTd(r[0])+'<td class="n">'+esc(r[1])+'</td><td>'+fdate(r[2])+'</td><td class="r" style="color:var(--bad);font-weight:700">'+fn(r[3])+'</td><td class="r">'+fn(r[4])+' days</td><td class="r">'+fm(r[6])+'</td></tr>';}).join('')+'</table></div>'
+    :'<div class="hint" style="margin-top:12px">No regular vendor has gone quiet.</div>';
+  return panel('Invoice health — last 10 weeks','How long after the invoice date an invoice is entered, and who has stopped invoicing',
+    t+qt+notice('Until a late invoice is entered, that week\'s purchases and cost of goods read low and then jump. A vendor counts as regular with five or more invoice dates in ten weeks and a typical gap of ten days or less; it is quiet when the gap since its last invoice date is more than double that, plus three days, plus this taproom\'s own slowest-tenth entry time — so a vendor is not called quiet just because last week\'s paper has not been keyed yet.'));
+}
+
+/* ---------- MarginEdge: how concentrated the spend is ---------- */
+function vendorSharePanel(){
+  var rows=locIds().map(function(l){ var v=((D.vendors||{})[l]||[]).slice().sort(function(a,b){return b[1]-a[1];}); var tot=v.reduce(function(p,c){return p+(c[1]||0);},0);
+    if(!tot) return null; var top3=v.slice(0,3); return [l,tot,top3,top3.reduce(function(p,c){return p+c[1];},0)/tot]; }).filter(Boolean);
+  if(!rows.length) return '';
+  return panel('Vendor concentration — last 28 days','How much of the spend sits with the three largest vendors',
+    '<div class="tw"><table class="t"><tr><th>Taproom</th><th class="r">Invoiced</th><th class="r">Top three share</th><th>Largest vendors</th></tr>'
+    +rows.map(function(r){return '<tr><td class="n">'+esc(locName(r[0]))+'</td><td class="r">'+fm(r[1])+'</td><td class="r">'+fp(r[3],0)+'</td><td>'+r[2].map(function(v){return esc(v[0])+' <span class="tg">'+fp(v[1]/r[1],0)+'</span>';}).join(' · ')+'</td></tr>';}).join('')+'</table></div>'
+    +notice('Of the 25 largest vendors by invoice total. Credits by vendor are in Invoice hygiene above.'));
 }
 
 </script>

@@ -9,7 +9,7 @@ import re
 import sqlite3
 from datetime import date, datetime, timedelta
 
-from . import insights
+from . import insights, ops
 from .transform import connect
 from .util import locations, log, settings, to_local
 
@@ -46,6 +46,7 @@ def build_payload(con, through: date | None = None) -> dict:
                               "first_date": (con.execute("SELECT MIN(business_date) FROM daily_summary WHERE location_id=? AND net_sales>0", (l["slug"],)).fetchone() or [None])[0]}
                              for l in locs],
                "daily": {}, "hourly": {}, "top_items": {}, "labor_jobs": {}, "vendors": {}, "inventory": {}, "activations": [], "targets": {}, "payments": {}, "dining": {}, "revctr": {}, "labor_hourly": {}, "schedule": {}, "tender": {}, "voids": {}, "invoices": {}, "servers": {}, "cash": {}, "pacing": {}, "digest": {}, "discounts": {}, "pnl": {}, "sources": {}, "events": {}, "leads": {}, "events_monthly": {}, "scorecard": {},
+               "ops": {}, "menu_prices": [], "price_compare": [],
                "beer": {}, "channels": {}, "loyalty": {}, "menu": {}, "beer_mix": {}, "compliance": {}, "weather": {}, "market": {}}
     # MarginEdge onboarding is still settling, so everything sourced from it is badged provisional in the portal.
     # One switch in config turns the badges off when the data is trusted; nothing else has to change.
@@ -196,6 +197,23 @@ def build_payload(con, through: date | None = None) -> dict:
         payload["weather"][lid] = _safe("weather", insights.weather, since, through)
         payload["market"][lid] = _safe("market", insights.market, w28, through)
 
+        # Operational views (sdp/ops.py). Each sub-section fails alone, exactly like the ones above.
+        op = {"comps": _safe("ops.comps", ops.comps, w28, through),
+              "tabs": _safe("ops.tabs", ops.tabs, w28, through, l.get("timezone")),
+              "overtime": _safe("ops.overtime", ops.overtime, through),
+              "checks": _safe("ops.checks", ops.checks, w28, through),
+              "stock": _safe("ops.stock", ops.stock, through),
+              "invoice_health": _safe("ops.invoice_health", ops.invoice_health, through)}
+        # The price movers live in the on-demand detail bundle; the few that cost real money are lifted here so
+        # the digest can mention them without every visitor downloading the detail.
+        try:
+            mv = _price_tracking(con, lid, through).get("price_movers") or []
+            op["price_alerts"] = [m for m in mv if (m[6] or 0) >= DIGEST_RULES["price_creep"]][:5]
+        except Exception as e:
+            log.error("metrics: price alerts failed for %s (%s: %s)", lid, type(e).__name__, e)
+            op["price_alerts"] = None
+        payload["ops"][lid] = op
+
         # The digest reads back sections of the payload rather than re-querying, so it can never disagree with
         # the page a director opens to check it. That means it has to run LAST: it previously sat above, where
         # inventory, invoices, voids and discounts were all still empty for this location, and its rules over
@@ -232,6 +250,13 @@ def build_payload(con, through: date | None = None) -> dict:
             WHERE location_id=? AND event_date>=? GROUP BY 1 ORDER BY n DESC""", (lid, since.isoformat()))]
 
         payload["targets"][lid] = {r["month"]: [r["sales_target"], r["cogs_pct_target"], r["labor_pct_target"], r["guests_target"]] for r in _rows(con, "SELECT * FROM targets WHERE location_id=?", (lid,))}
+
+    for key, fn, args in (("menu_prices", ops.menu_price_consistency, ()), ("price_compare", ops.purchase_price_compare, (through,))):
+        try:
+            payload[key] = fn(con, *args)
+        except Exception as e:
+            log.error("metrics: %s failed (%s: %s) — published without it", key, type(e).__name__, e)
+            payload[key] = []
 
     payload["activations"] = _rows(con, "SELECT activation_id id, location_id loc, start_date s, end_date e, name, type, cost, owner, notes FROM activations ORDER BY start_date")
     payload["meta"]["daily_keys"] = DAILY_KEYS
@@ -338,6 +363,8 @@ DIGEST_RULES = {
     "open_invoices": 10,
     "schedule_gap": 0.05,
     "count_compliance": 0.75,    # share of expected inventory counts actually made
+    "price_creep": 150.0,        # dollars a unit-price rise has cost over the recent half of the price window
+    "quiet_vendor": 250.0,       # average invoice of a regular vendor that has stopped invoicing
 }
 
 
@@ -471,6 +498,26 @@ def _digest(con, lid: str, payload: dict, w28: date, through: date) -> list:
     if fc.get("verdict") == "explained":
         add("info", "Cash", f"Drawer shortages match a float setting: Toast expects {fc['toast_expected']:,.0f}, drawers open with {fc['actual_float']:,.0f}",
             "fix the expected starting cash in Toast, not the people", key="cash_float")
+
+    op = payload.get("ops", {}).get(lid) or {}
+    for m in (op.get("price_alerts") or [])[:2]:
+        add("warn", "Prices", f"{m[0]} up {m[5] * 100:.0f}% from {m[1]}",
+            f"about {m[6]:,.0f} more over the recent period; {m[3]:,.2f} to {m[4]:,.2f} a unit", key=f"price:{m[0]}"[:60])
+    ot = op.get("overtime") or {}
+    over = [x for x in (ot.get("people") or []) if (x[4] or 0) > 0]
+    if over:
+        # A count, never names: the portal sits behind a sign-in and an inbox does not.
+        already = sum(1 for x in over if (x[1] or 0) > (ot.get("limit") or 40))
+        add("warn", "Labor", f"{len(over)} {'person is' if len(over) == 1 else 'people are'} on course to pass {ot['limit']:.0f} hours this week",
+            (f"{already} already over on hours worked; " if already else "") + "see Labor, overtime this week", key="overtime_week")
+    for q in ((op.get("invoice_health") or {}).get("quiet") or [])[:2]:
+        if (q[5] or 0) >= R["quiet_vendor"]:
+            add("info", "Invoices", f"Nothing entered from {q[0]} dated after {q[1]}",
+                f"usually invoices every {q[3]:.0f} days, about {q[5]:,.0f} each; if a delivery came, its invoice has not reached MarginEdge", key=f"quiet:{q[0]}"[:60])
+    flagged = [x for x in ((op.get("comps") or {}).get("people") or []) if x[9]]
+    if flagged:
+        add("info", "Comps", f"{len(flagged)} {'person' if len(flagged) == 1 else 'people'} discounting or voiding at twice the taproom rate",
+            "promotions such as happy hour are not counted; see Labor, comps and voids by person", key="comps_outlier")
 
     # Keg yield is deliberately NOT a digest rule yet: it has not been checked against a real pair of counts, and
     # house beer arrives as a transfer that MarginEdge may not record as an invoice. It stays on the Beer page,
@@ -989,7 +1036,37 @@ def _price_tracking(con, lid: str, through: date, days: int = 180) -> dict:
 def slice_for_location(payload: dict, lid: str) -> dict:
     """A director's bundle: only their location (other locations are not merely hidden — they are absent)."""
     out = {"meta": dict(payload["meta"]), "locations": [l for l in payload["locations"] if l["id"] == lid], "activations": [a for a in payload["activations"] if a["loc"] == lid]}
-    for k in ("beer", "channels", "loyalty", "menu", "beer_mix", "compliance", "weather", "market", "daily", "hourly", "top_items", "labor_jobs", "vendors", "inventory", "targets", "payments", "dining", "revctr", "labor_hourly", "schedule", "tender", "voids", "invoices", "servers", "cash", "pacing", "digest", "discounts", "pnl", "sources", "events", "leads", "events_monthly"):
+    # Company-wide comparisons, cut down to the rows this taproom is in. The other taprooms are not named:
+    # a director sees their own price against the lowest and highest elsewhere, which is all the row is for.
+    def _cut(rows, idx, val=lambda v: v):
+        keep = []
+        for r in rows or []:
+            m = r[idx]
+            if lid not in m:
+                continue
+            others = [val(v) for k, v in m.items() if k != lid]
+            if not others:
+                continue
+            r2 = list(r)
+            own, lo_, hi_ = val(m[lid]), min(others), max(others)
+            r2[idx] = {lid: m[lid], "(lowest elsewhere)": lo_ if idx == 2 else [lo_, None], "(highest elsewhere)": hi_ if idx == 2 else [hi_, None]}
+            # The gap and its cost are restated for THIS taproom. The company-wide figures are mostly other
+            # taprooms' money and would read here as this director's own overspend.
+            if idx == 2:
+                if own == lo_ == hi_:
+                    continue                                # this taproom is not part of the difference
+                ref = lo_ if own > lo_ else hi_             # above the cheapest: by how much; otherwise how far under the dearest
+                r2[3], r2[4] = _r(own - ref), (_r((own - ref) / ref, 4) if ref else None)
+            else:
+                best = min(own, lo_)
+                r2[4] = _r((own - best) / best, 4) if best else None
+                r2[5] = _r(max(0.0, own - best) * float(m[lid][1] or 0))
+            keep.append(r2)
+        keep.sort(key=lambda x: -abs((x[4] if idx == 2 else x[5]) or 0))
+        return keep
+    out["menu_prices"] = _cut(payload.get("menu_prices"), 2)
+    out["price_compare"] = _cut(payload.get("price_compare"), 3, lambda v: v[0])
+    for k in ("ops", "beer", "channels", "loyalty", "menu", "beer_mix", "compliance", "weather", "market", "daily", "hourly", "top_items", "labor_jobs", "vendors", "inventory", "targets", "payments", "dining", "revctr", "labor_hourly", "schedule", "tender", "voids", "invoices", "servers", "cash", "pacing", "digest", "discounts", "pnl", "sources", "events", "leads", "events_monthly"):
         out[k] = {lid: payload[k].get(lid)} if lid in payload[k] else {}
     return out
 

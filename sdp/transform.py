@@ -170,7 +170,10 @@ def _disc_row(d: dict, o: dict, c: dict, slug: str, bd: str, scope: str) -> dict
             "business_date": bd, "name": d.get("name") or (d.get("discount") or {}).get("name"),
             "discount_type": d.get("discountType") or d.get("processingState"), "scope": scope,
             "loyalty_vendor": ld.get("vendor") or ld.get("vendorId"),
-            "amount": round(float(d.get("discountAmount") or 0), 2)}
+            "amount": round(float(d.get("discountAmount") or 0), 2),
+            "approver_guid": (d.get("approver") or {}).get("guid"),
+            "reason": ((d.get("appliedDiscountReason") or {}).get("name") or None),
+            "captured": 1}
 
 
 def load_toast(con, bk: Buckets) -> dict:
@@ -215,6 +218,7 @@ def load_toast(con, bk: Buckets) -> dict:
     dining = lookups.get("diningOptions", {})
     revctr = lookups.get("revenueCenters", {})
     salescat = lookups.get("salesCategories", {})
+    voidreason = lookups.get("voidReasons", {})
 
     emp_rows = []
     for slug, ds, p, j in iter_raw("toast", dataset="employees"):
@@ -291,7 +295,9 @@ def load_toast(con, bk: Buckets) -> dict:
                                   "item_group_guid": (s.get("itemGroup") or {}).get("guid"), "sales_category": sc, "bucket": bucket,
                                   "quantity": float(s.get("quantity") or 0), "pre_discount_price": float(s.get("preDiscountPrice") or 0), "price": float(s.get("price") or 0),
                                   "tax": float(s.get("tax") or 0), "voided": 1 if (s.get("voided") or o.get("voided")) else 0, "hour_local": _hour(s.get("createdDate") or o.get("openedDate"), tzs.get(slug)),
-                                  "modifiers": mods, "size_oz": size_oz, "pour": pour})
+                                  "modifiers": mods, "size_oz": size_oz, "pour": pour,
+                                  "void_reason": (voidreason.get((slug, (s.get("voidReason") or {}).get("guid")))
+                                                  or (s.get("voidReason") or {}).get("name")) if s_void else None})
                 for pm in c.get("payments") or []:
                     rf = (pm.get("refund") or {})
                     ra = float(rf.get("refundAmount") or 0)
@@ -331,11 +337,20 @@ def load_toast(con, bk: Buckets) -> dict:
             closeout[slug] = int(((j.get("general") or {}).get("closeoutHour")) or 4)
         except Exception:
             closeout[slug] = 4
-    sh_rows = []
+    sh_rows, gone, seen, windows = [], [], {}, {}
     for slug, ds, p, j in iter_raw("toast", dataset="shifts"):
         co = closeout.get(slug, 4)
+        w = j.get("window") or []
+        if len(w) == 2:
+            windows[slug] = (min(w[0], windows.get(slug, (w[0], w[1]))[0]), max(w[1], windows.get(slug, (w[0], w[1]))[1]))
         for x in j.get("shifts", []):
+            if x.get("guid"):
+                seen.setdefault(slug, set()).add(x["guid"])
             if x.get("deleted"):
+                # The schedule is now pulled a week ahead, so a shift can be stored and THEN deleted by the
+                # manager. It has to be marked, not skipped, or it would sit in the warehouse as hours forever.
+                if x.get("guid"):
+                    gone.append((x["guid"], slug))
                 continue
             a, b = x.get("inDate"), x.get("outDate")
             if not a:
@@ -353,6 +368,20 @@ def load_toast(con, bk: Buckets) -> dict:
                             "job_name": jobs.get((slug, jg)), "in_at": a, "out_at": b,
                             "hours": round(hrs, 2) if 0 < hrs <= 24 else 0.0, "deleted": 0})
     stats["shifts"] = _upsert(con, "toast_shifts", sh_rows)
+    try:
+        con.executemany("UPDATE toast_shifts SET deleted=1 WHERE shift_guid=? AND location_id=?", gone)
+        # A shift Toast no longer returns at all was removed outright. Only strictly inside the pulled window:
+        # at its edges a shift can belong to a business date the request did not cover.
+        n_gone = 0
+        for slug, (w0, w1) in windows.items():
+            have = [r[0] for r in con.execute("SELECT shift_guid FROM toast_shifts WHERE location_id=? AND deleted=0 AND business_date>? AND business_date<?", (slug, w0, w1))]
+            missing = [(g, slug) for g in have if g not in seen.get(slug, set())]
+            con.executemany("UPDATE toast_shifts SET deleted=1 WHERE shift_guid=? AND location_id=?", missing)
+            n_gone += len(missing)
+        if gone or n_gone:
+            log.info("shifts: %d marked deleted by Toast, %d no longer returned", len(gone), n_gone)
+    except Exception as e:
+        log.error("transform: deleted-shift reconciliation skipped (%s: %s)", type(e).__name__, e)
 
     cash_rows, dep_rows = [], []
     for slug, ds, p, j in iter_raw("toast", dataset="cash"):
@@ -378,6 +407,31 @@ def load_toast(con, bk: Buckets) -> dict:
                              "employee_guid": (e.get("employee") or {}).get("guid"),
                              "undoes": e.get("undoes"), "deposit_at": e.get("date")})
     stats["deposits"] = _upsert(con, "toast_deposits", dep_rows)
+
+    # Out-of-stock snapshot. Isolated: a surprise in this payload is never worth the orders loaded above.
+    try:
+        st_rows, st_days = [], []
+        for slug, ds, p, j in iter_raw("toast", dataset="stock"):
+            snap = str(j.get("snap_date") or "")[:10]
+            if not snap:
+                continue
+            n_out = 0
+            for x in (j.get("items") or []):
+                g = x.get("guid") or x.get("multiLocationId")
+                if not g:
+                    continue
+                meta = item_cat.get((slug, g))
+                status = str(x.get("status") or "")
+                n_out += 1 if status == "OUT_OF_STOCK" else 0
+                q = x.get("quantity")
+                st_rows.append({"location_id": slug, "snap_date": snap, "item_guid": str(g), "name": meta[0] if meta else None,
+                                "status": status, "quantity": float(q) if isinstance(q, (int, float)) else None})
+            st_days.append({"location_id": slug, "snap_date": snap, "n_out": n_out})
+            con.execute("DELETE FROM toast_stock WHERE location_id=? AND snap_date=?", (slug, snap))
+        stats["stock"] = _upsert(con, "toast_stock", st_rows)
+        _upsert(con, "toast_stock_days", st_days)
+    except Exception as e:
+        log.error("transform: stock snapshot skipped (%s: %s)", type(e).__name__, e)
 
     for slug, ds, p, j in iter_raw("toast", dataset="timeEntries"):
         rows = []

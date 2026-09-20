@@ -76,7 +76,8 @@ def gen_toast(loc: dict, loc_idx: int, start: date, end: date, events: dict[str,
     W("toast", slug, "restaurant", "info", info)
     jobs = [{"guid": _g(f"job:{slug}:{t}"), "title": t, "wageFrequency": "HOURLY", "defaultWage": w, "deleted": False} for t, w in JOBS]
     W("toast", slug, "jobs", "all", {"jobs": jobs})
-    items = [{"guid": _g(f"item:{slug}:{n}"), "name": n, "price": p, "menuGroup": g, "salesCategory": {"name": sc}} for n, g, sc, p, b in MENU]
+    # One taproom charges a little more for a few items, so the price-consistency view has something to find.
+    items = [{"guid": _g(f"item:{slug}:{n}"), "name": n, "price": (p + 1.0 if (slug == "omaha" and k % 7 == 0 and p) else p), "menuGroup": g, "salesCategory": {"name": sc}} for k, (n, g, sc, p, b) in enumerate(MENU)]
     menus = {"restaurantGuid": guid, "menus": [{"name": "Main", "menuGroups": [
         {"name": g, "menuItems": [{"guid": it["guid"], "name": it["name"], "price": it["price"], "salesCategory": it["salesCategory"]} for it in items if it["menuGroup"] == g]}
         for g in sorted({m[1] for m in MENU})]}]}
@@ -143,7 +144,7 @@ def gen_toast(loc: dict, loc_idx: int, start: date, end: date, events: dict[str,
                         mods = [{"guid": _g(f"mod:{og}:{j}"), "displayName": mm, "price": 0.0}]
                 sels.append({"guid": _g(f"sel:{og}:{j}"), "entityType": "MenuItemSelection", "modifiers": mods, "item": {"guid": _g(f"item:{slug}:{name}")}, "itemGroup": {"guid": _g(f"grp:{slug}:{grp}")},
                              "salesCategory": {"guid": _g(f"sc:{slug}:{sc}"), "name": sc}, "displayName": name, "quantity": q, "preDiscountPrice": pre, "price": line, "tax": t,
-                             "voided": False, "createdDate": _ts(d, hour + 0.1 * j), "appliedDiscounts": ([{"guid": _g(f"disc:{og}:{j}"), "discountAmount": disc, "name": "Happy Hour", "discountType": "PERCENT"}] if disc else [])})
+                             "voided": False, "createdDate": _ts(d, hour + 0.1 * j), "appliedDiscounts": ([{"guid": _g(f"disc:{og}:{j}"), "discountAmount": disc, "name": "Happy Hour", "discountType": "PERCENT", "approver": ({"guid": servers[0]} if rnd.random() < 0.6 else None)}] if disc else [])})
             # Toast includes service charges INSIDE the check amount, so net sales contains them while the
             # category split cannot. Mock used to add the charge alongside the amount instead of into it,
             # which made the mix add up perfectly here and not in production — exactly the kind of
@@ -154,7 +155,7 @@ def gen_toast(loc: dict, loc_idx: int, start: date, end: date, events: dict[str,
             if rnd.random() < 0.02:
                 sels.append({"guid": _g(f"sel:{og}:void"), "entityType": "MenuItemSelection", "item": {"guid": _g(f"item:{slug}:Voided")},
                              "salesCategory": {"guid": _g(f"sc:{slug}:Food"), "name": "Food"}, "displayName": "Rung then voided",
-                             "quantity": 1, "preDiscountPrice": 12.0, "price": 0.0, "tax": 0.0, "voided": True,
+                             "quantity": 1, "preDiscountPrice": 12.0, "price": 0.0, "tax": 0.0, "voided": True, "voidReason": {"guid": _g(f"vr:{slug}:{rnd.choice(['Server error', 'Guest changed mind'])}")},
                              "createdDate": _ts(d, hour + 0.05), "appliedDiscounts": [{"guid": _g(f"disc:{og}:void"), "discountAmount": 12.0, "name": "Void comp", "discountType": "OPEN"}]})
             amount, tax = round(amount + svc, 2), round(tax, 2)
             total = round(amount + tax, 2)
@@ -244,6 +245,20 @@ def gen_toast(loc: dict, loc_idx: int, start: date, end: date, events: dict[str,
             "undoes": None}] if rnd.random() > 0.15 else []), "businessDate": iso(cd)})
         cd += timedelta(days=1)
     if sched is not None:
+        # The week ahead, so the overtime view has a schedule to project from. Two people carry long weeks.
+        for k in range(1, 8):
+            fd = end + timedelta(days=k)
+            for i, emp in enumerate(servers[:6]):
+                if i >= 2 and rnd.random() < 0.4:
+                    continue
+                h = 10.5 if i < 2 else 7
+                sched.append({"guid": _g(f"sh:{slug}:{iso(fd)}:f{i}"), "employeeReference": {"guid": emp},
+                              "jobReference": {"guid": _g(f"job:{slug}:{JOBS[i % len(JOBS)][0]}")},
+                              "inDate": _ts(fd, 11), "outDate": _ts(fd, 11 + h), "deleted": False})
+    W("toast", slug, "stock", iso(end + timedelta(days=1)), {"snap_date": iso(end + timedelta(days=1)), "items": [
+        {"guid": _g(f"item:{slug}:{MENU[3][0]}"), "status": "OUT_OF_STOCK", "quantity": None},
+        {"guid": _g(f"item:{slug}:{MENU[5][0]}"), "status": "QUANTITY", "quantity": 4.0}]})
+    if sched is not None:
         W("toast", slug, "shifts", f"{iso(start)}_{iso(end)}", {"shifts": sched, "window": [iso(start), iso(end)]})
     return n_orders_total, len(tes), day_sales, day_labor
 
@@ -271,7 +286,7 @@ def gen_marginedge(loc: dict, loc_idx: int, start: date, end: date, day_sales: d
         for n in ns:
             cid = rnd.choice(cat_by_bucket.get(b, cat_by_bucket["Other"]))
             prods.append({"companyConceptProductId": f"p{loc_idx}-{abs(hash(n)) % 10000}", "centralProductId": f"cp-{abs(hash(n)) % 10000}", "productName": n,
-                          "latestPrice": round(rnd.uniform(4, 180), 2), "reportByUnit": rnd.choice(["EACH", "POUND", "CASE", "KEG"]), "taxExempt": False, "itemCount": rnd.randint(1, 3),
+                          "latestPrice": round(4 + (sum(map(ord, n)) * 37 % 1760) / 10, 2), "reportByUnit": rnd.choice(["EACH", "POUND", "CASE", "KEG"]), "taxExempt": False, "itemCount": rnd.randint(1, 3),
                           "categories": [{"categoryId": cid, "percentAllocation": 100}]})
     write_raw("marginedge", slug, "products", "all", {"products": prods})
     prods_by_bucket = {}
@@ -296,14 +311,16 @@ def gen_marginedge(loc: dict, loc_idx: int, start: date, end: date, day_sales: d
             for j in range(rnd.randint(2, 7)):
                 p = rnd.choice(pool)
                 q = rnd.randint(1, 6)
-                up = round(p["latestPrice"] * rnd.uniform(0.9, 1.1), 2)
+                up = round(p["latestPrice"] * rnd.uniform(0.97, 1.03) * (1.08 if slug == "omaha" else 1.0), 2)
                 lp = round(q * up, 2)
                 total += lp
-                lines.append({"vendorItemCode": f"{vid}-{abs(hash(p['productName'])) % 999}", "vendorItemName": p["productName"], "companyConceptProductId": p["companyConceptProductId"],
+                lines.append({"vendorItemCode": f"SKU-{sum(map(ord, p['productName'])) % 9973}", "vendorItemName": p["productName"], "companyConceptProductId": p["companyConceptProductId"],
                               "categoryId": p["categories"][0]["categoryId"], "packagingId": "pk1", "quantity": q, "unitPrice": up, "linePrice": lp})
             scale = target / max(total, 1)
+            # Hit the spend target by buying more, not by paying more: a unit price that swings with the target
+            # makes every price view in the portal meaningless in the preview.
             for l in lines:
-                l["unitPrice"] = round(l["unitPrice"] * scale, 2); l["linePrice"] = round(l["linePrice"] * scale, 2)
+                l["quantity"] = max(1, round(l["quantity"] * scale)); l["linePrice"] = round(l["quantity"] * l["unitPrice"], 2)
             total = round(sum(l["linePrice"] for l in lines), 2)
             is_credit = rnd.random() < 0.03
             if is_credit:

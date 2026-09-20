@@ -64,7 +64,8 @@ CREATE TABLE IF NOT EXISTS toast_order_items (      -- grain: one selection (men
   -- parser in sdp/pours.py can be improved later and re-run over history WITHOUT re-pulling Toast.
   modifiers         TEXT,                          -- modifier display names, ' | ' joined, as rung
   size_oz           REAL,                          -- fluid ounces per unit, NULL when no size could be read
-  pour              TEXT                           -- 'draft' | 'package' | NULL (not beer, or unknowable)
+  pour              TEXT,                          -- 'draft' | 'package' | NULL (not beer, or unknowable)
+  void_reason       TEXT                           -- the restaurant's own void reason name; NULL when none was given or the day predates capture
 );
 CREATE INDEX IF NOT EXISTS ix_toast_items_loc_date ON toast_order_items(location_id, business_date);
 CREATE INDEX IF NOT EXISTS ix_toast_items_item ON toast_order_items(item_guid);
@@ -367,6 +368,9 @@ CREATE TABLE IF NOT EXISTS toast_discounts (
   scope           TEXT,                -- 'check' or 'item'
   loyalty_vendor  TEXT,                -- from loyaltyDetails.vendor, e.g. the loyalty provider
   amount          REAL DEFAULT 0,
+  approver_guid   TEXT,                -- the manager whose approval the discount carried; NULL = none needed, or the day predates capture
+  reason          TEXT,                -- appliedDiscountReason name, where the restaurant uses reasons
+  captured        INTEGER DEFAULT 0,   -- 1 once the day was pulled by a version that reads approver/reason (so NULL can be told from "not looked at")
   PRIMARY KEY (discount_guid, scope)
 );
 CREATE INDEX IF NOT EXISTS ix_toast_disc_day ON toast_discounts (location_id, business_date);
@@ -414,4 +418,18 @@ CREATE TABLE IF NOT EXISTS depletions (
   location_id TEXT NOT NULL, brand TEXT NOT NULL, premise TEXT NOT NULL,
   ce_ty REAL DEFAULT 0, ce_ly REAL DEFAULT 0, accounts INTEGER DEFAULT 0, as_of TEXT,
   PRIMARY KEY (location_id, brand, premise)
+);
+
+-- What the POS had marked out of stock when the nightly pull ran. One snapshot per location per day: it cannot
+-- say how long something was out, only that it was out at that moment -- which for a core beer is the point.
+CREATE TABLE IF NOT EXISTS toast_stock (
+  location_id TEXT NOT NULL, snap_date TEXT NOT NULL, item_guid TEXT NOT NULL,
+  name TEXT, status TEXT, quantity REAL,
+  PRIMARY KEY (location_id, snap_date, item_guid)
+);
+-- A day on which the stock endpoint answered, even with nothing out. Without it "never out" and "never asked"
+-- look the same.
+CREATE TABLE IF NOT EXISTS toast_stock_days (
+  location_id TEXT NOT NULL, snap_date TEXT NOT NULL, n_out INTEGER DEFAULT 0,
+  PRIMARY KEY (location_id, snap_date)
 );

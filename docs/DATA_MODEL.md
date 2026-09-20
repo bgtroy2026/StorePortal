@@ -71,3 +71,21 @@ purchases always from MarginEdge invoices. `payload.sources[location]` tells the
 Payload sections added: `beer`, `channels`, `loyalty`, `menu`, `beer_mix`, `compliance`, `weather`, `market`; `cash[*].float_check`;
 each digest row gained a fifth element, a stable rule key, which acknowledgements are filed against. The detail bundle gained
 `range` — daily-grain tables behind the date picker. `data/<id>.bin` for label `digest` is the morning email payload.
+
+## Operational views — added 2026-09-20 (`sdp/ops.py`)
+
+Payload key `ops[location]`, each sub-section isolated (a failure publishes that one as `null`):
+
+| Section | Built from | Notes |
+|---|---|---|
+| `comps` | `toast_discounts` (+ `approver_guid`, `reason`, `captured`), `toast_order_items.void_reason`, `toast_orders` | Loyalty redemptions excluded. Discounts whose name contains a word in `comps.promotions` are shown but kept out of the rate and the flag. Flag = rate ≥ 2× the taproom's own AND ≥ $100, only for people with ≥ 40 orders. Approver/void reason exist only on days pulled since 2026-09-20; `approver_coverage` says how much of the window that is, and void reasons on other days read "day not re-pulled yet". `pull --heal` re-pulls the last 60 days for these. |
+| `tabs` | `toast_orders.opened_at/closed_at` | On-premise orders only. Median and 75th percentile minutes by part of day; average tabs open at the half-hour of each local hour; tabs open 8h+ counted separately. |
+| `overtime` | `toast_time_entries`, `toast_shifts` (now pulled 8 days ahead) | Pay week from `labor.week_start` (0 = Monday), threshold `labor.overtime_hours`. Per taproom. Deleted or no-longer-returned shifts are marked `deleted=1` at load. |
+| `checks` | items, payments, orders | Gift cards sold (by name) vs redeemed (tender); items rung at $0; share of orders with a party size of 2+ (Toast defaults to 1, so "1" is mostly silence). |
+| `stock` | `toast_stock`, `toast_stock_days` | One snapshot per morning from `/stock/v1/inventory`. Optional scope: without it the panel does not appear. |
+| `invoice_health` | `me_invoices` | Entry lag (created − invoice date) and regular vendors gone quiet; the quiet test allows for the taproom's own slowest-tenth entry lag. |
+| `price_alerts` | `_price_tracking` movers | Rises that have cost ≥ $150; feeds the digest. |
+
+Company-wide: `menu_prices` (same Toast menu item, different price, ≥ 50¢) and `price_compare` (same vendor + vendor item code, volume-weighted unit price by taproom over 90 days; gaps over 60% are dropped as pack mismatches). In a single-taproom bundle both are cut to that taproom's rows, other taprooms are reduced to "lowest/highest elsewhere", and the gap and its cost are restated for that taproom.
+
+New digest rules: `price:<product>`, `overtime_week` (a count, never names), `quiet:<vendor>`, `comps_outlier`.

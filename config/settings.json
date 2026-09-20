@@ -115,5 +115,14 @@
     "items": {
       "_comment": "Exact item name -> ounces, for beers rung with no size anywhere. Examples: \"Half Time Tiger Hawk\": 16   or   \"Mich Ultra\": {\"oz\": 12, \"pour\": \"package\"}. Work down the 'could not be sized' list on the Beer page."
     }
+  },
+  "labor": {
+    "_comment": "Overtime view. week_start: first day of the pay week, 0 = Monday ... 6 = Sunday. overtime_hours: weekly hours after which overtime is paid.",
+    "week_start": 0,
+    "overtime_hours": 40
+  },
+  "comps": {
+    "_comment": "Discount names containing any of these words are automatic promotions: shown on the comps-by-person table but left out of each person's rate and out of the 2x flag.",
+    "promotions": ["happy hour"]
   }
 }

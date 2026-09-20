@@ -54,14 +54,26 @@ def _unhealed_days() -> set[tuple[str, str]]:
         return set()
     con = sqlite3.connect(DB_PATH)
     try:
-        return set(con.execute("""
+        out = set(con.execute("""
             SELECT o.location_id, o.business_date FROM (SELECT DISTINCT location_id, business_date FROM toast_orders) o
             WHERE EXISTS (SELECT 1 FROM toast_order_items i WHERE i.location_id=o.location_id AND i.business_date=o.business_date)
               AND NOT EXISTS (SELECT 1 FROM toast_order_items i WHERE i.location_id=o.location_id AND i.business_date=o.business_date AND i.modifiers IS NOT NULL)""").fetchall())
     except sqlite3.OperationalError:
         return set()
+    try:
+        # Discount approver and void reason (2026-09-20). Only the last 60 days: nothing reads them further back
+        # than the 28-day comps view, and a full second re-pull would be hours of API calls for no reader. In its
+        # own try because `captured` does not exist until the first transform after the upgrade has migrated the
+        # warehouse -- and a missing column here must not switch the whole heal off.
+        out |= set(con.execute("""
+            SELECT location_id, business_date FROM toast_discounts
+            WHERE business_date >= date('now','-60 day')
+            GROUP BY 1,2 HAVING MAX(COALESCE(captured,0))=0""").fetchall())
+    except sqlite3.OperationalError:
+        pass
     finally:
         con.close()
+    return out
 
 
 def _me_have() -> dict:

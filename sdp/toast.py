@@ -154,6 +154,15 @@ class Toast:
                 break
         return out
 
+    def stock(self, guid: str) -> list[dict]:
+        """Menu items whose stock status is not plain IN_STOCK, as of this moment."""
+        out = []
+        for status in ("OUT_OF_STOCK", "QUANTITY"):
+            r = self.http.get("/stock/v1/inventory", params={"status": status}, headers=self._h(guid), retries=2)   # optional: fail fast
+            j = r.json()
+            out.extend(j if isinstance(j, list) else [])
+        return out
+
     def config_list(self, guid: str, resource: str) -> list[dict]:
         """One config/v2 lookup table. Orders and their lines reference these by guid only — the names that
         make a report readable (revenue centre, dining option, void reason) live here and nowhere else."""
@@ -255,8 +264,10 @@ def pull(locations: list[dict], days_back: int, incremental_days: int, warehouse
         # scope should cost us the schedule-vs-actual view, never the labor data everything else depends on.
         n_sh = 0
         try:
-            sh = t.shifts(guid, lab_start, end)
-            write_raw("toast", slug, "shifts", f"{iso(lab_start)}_{iso(end)}", {"shifts": sh, "window": [iso(lab_start), iso(end)]})
+            # A week past `end`: the overtime view needs what is still scheduled this week, not only what was.
+            sh_end = end + timedelta(days=8)
+            sh = t.shifts(guid, lab_start, sh_end)
+            write_raw("toast", slug, "shifts", f"{iso(lab_start)}_{iso(sh_end)}", {"shifts": sh, "window": [iso(lab_start), iso(sh_end)]})
             n_sh = len(sh)
         except Exception as e:
             log.warning("Toast: %s shifts not pulled (%s) — schedule-vs-actual unavailable", slug, e)
@@ -274,6 +285,13 @@ def pull(locations: list[dict], days_back: int, incremental_days: int, warehouse
                 d += timedelta(days=1)
         except Exception as e:
             log.warning("Toast: %s cash management not pulled (%s) — the drawer view will be unavailable", slug, e)
+
+        # What is 86'd right now. Optional like every other lookup: no stock scope costs this one view.
+        try:
+            st = t.stock(guid)
+            write_raw("toast", slug, "stock", iso(today_local()), {"snap_date": iso(today_local()), "items": st})
+        except Exception as e:
+            log.warning("Toast: %s stock not pulled (%s) — the out-of-stock view will be unavailable", slug, e)
 
         summary[slug] = {"days_pulled": len(days), "orders": n_orders, "time_entries": len(te), "shifts": n_sh,
                          "cash_days": n_cash, "window": [iso(start), iso(end)], "stopped_early": stopped}
