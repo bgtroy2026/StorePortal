@@ -63,6 +63,7 @@ import base64
 import hashlib
 import hmac
 import sqlite3
+import time
 from datetime import date, timedelta
 from urllib.parse import urlencode
 
@@ -74,7 +75,7 @@ PAGE_SIZE = 50
 META_KEY = "tripleseat_refresh_token"
 CURSOR_KEY = "tripleseat_webhook_cursor"          # how many rows of the Tripleseat tab the warehouse has absorbed
 DEFAULT_SCOPE = "read"
-HOOK_PAGE = 400                                    # rows per Apps Script call; payloads are a few KB each
+HOOK_PAGE = 300                                    # rows per Apps Script call (its own cap is HOOK_PAGE_MAX = 300); payloads are a few KB each
 
 
 def _meta_get(key: str) -> str | None:
@@ -320,6 +321,26 @@ def pull_catalog(locations_cfg: list[dict]) -> dict:
 
 # ---- route 2: webhook rows collected by the Apps Script -------------------------------------
 
+def _script_json(http: Http, url: str, body: dict, tries: int = 3) -> dict:
+    """POST to the Apps Script and insist on a JSON answer.
+
+    Apps Script answers a POST with a 302 to a one-time googleusercontent URL that serves the output. On the
+    first real run (2026-09-21) that hop came back as HTML instead: the script had run and completed, then a GET
+    reached the script 18 seconds later as doGet (which does not exist) — the echo URL had evidently expired
+    before the runner fetched it and Google sent the client back to the script. The POST is idempotent (it only
+    reads rows), so the honest response is to ask again rather than fail the night's collection."""
+    last = ""
+    for attempt in range(tries):
+        r = http.post(url, body)
+        try:
+            return r.json()
+        except ValueError:
+            last = (r.text or "")[:120].replace("\n", " ")
+            log.warning("Apps Script answered %s (not JSON) on attempt %d: %r — retrying", r.status_code, attempt + 1, last)
+            time.sleep(5 * (attempt + 1))
+    raise RuntimeError(f"Apps Script never answered with JSON: {last!r}")
+
+
 def _cursor() -> int:
     v = _meta_get(CURSOR_KEY)
     try:
@@ -342,7 +363,7 @@ def pull_webhooks() -> dict:
     since = _cursor()
     start, total, page, got = since, None, 0, 0
     while True:
-        j = http.post(url, {"a": "tripleseat", "k": key, "since": since, "limit": HOOK_PAGE}).json()
+        j = _script_json(http, url, {"a": "tripleseat", "k": key, "since": since, "limit": HOOK_PAGE})
         if not j.get("ok"):
             raise RuntimeError(f"tripleseat webhook fetch refused: {str(j.get('error'))[:200]}")
         rows = j.get("rows") or []
@@ -353,7 +374,8 @@ def pull_webhooks() -> dict:
             got += len(rows)
             since += len(rows)
             page += 1
-        if not rows or len(rows) < HOOK_PAGE or (total is not None and since >= int(total)):
+        # Stop on the script's word (total), not on a short page: the script may cap a page below HOOK_PAGE.
+        if not rows or (total is not None and since >= int(total)):
             break
         if page > 200:                          # 80 000 rows in one night is not a webhook feed, it is a bug
             log.warning("Tripleseat webhooks: stopped after 200 pages")
