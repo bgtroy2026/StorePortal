@@ -1,12 +1,36 @@
-"""Tripleseat API pull — private events, bookings and leads.
+"""Tripleseat — private events, bookings and leads, three ways in.
 
-API:  https://api.tripleseat.com/v1/       OAuth 2.0 Bearer
+API:  https://api.tripleseat.com/v1/
 Rate: 10 req/s (429 past that) — far looser than Toast or MarginEdge, so we run at 5 req/s.
 Docs: Settings > Tripleseat API > Documentation in the account; OpenAPI at
       https://api.tripleseat.com/api-docs/v1/openapi.yaml
 
-AUTH — authorization code, not client credentials
--------------------------------------------------
+THREE ROUTES, in the order they became available (2026-09-21)
+-------------------------------------------------------------
+1. PUBLIC KEY  (TRIPLESEAT_PUBLIC_KEY, works today). The key under Settings > Tripleseat API is the one Tripleseat
+   embeds in website lead forms. Probed against every endpoint on 2026-09-21: it READS exactly three things —
+   /locations (with rooms, capacities, addresses), /sites (event types, lead sources, referral sources, billing
+   rules per location, line-item categories) and /lead_forms — and can POST /leads/create. Everything else
+   (/events, /events/search, /leads, /bookings, /rooms, /users, /accounts) answers "You don't have permission".
+   So the key gives the portal the CATALOG: which Tripleseat location and rooms are which taproom, what an
+   event can be called, and what each taproom charges on top of an event. It cannot give it a single event.
+
+2. WEBHOOKS  (Settings > Tripleseat API & Webhooks > Webhooks). Tripleseat POSTs the full event / lead /
+   booking object to a URL whenever one is created, changed or deleted. The portal's Apps Script receives them
+   into a "Tripleseat" tab of the roster workbook and this pipeline collects that tab nightly on proof of
+   PORTAL_SECRET, the same route the scorecard and depletions already travel (sdp/scorecard.py). Only objects
+   touched AFTER the webhook exists arrive this way, so the calendar fills in as the events team works; a
+   historical seed needs route 3 or a report export.
+
+3. OAUTH 2.0  (TRIPLESEAT_CLIENT_ID / _SECRET / _REFRESH_TOKEN). The full read API, pulled as a window every
+   night. Blocked as of 2026-09-21: creating the client application in Tripleseat fails on their side, and the
+   token endpoint offers only authorization_code and oauth1_exchange — no client-credentials grant — so it will
+   always need one browser consent by a Tripleseat administrator once the application exists.
+
+`pull_all()` runs whichever of the three are configured, each isolated from the others.
+
+AUTH FOR ROUTE 3 — authorization code, not client credentials
+--------------------------------------------------------------
 Tripleseat has no machine-to-machine grant: an application always acts on behalf of a Tripleseat *user*, who
 logs in and consents once in a browser. That is a poor fit for a nightly unattended job, so we do the consent
 once by hand and keep the refresh token:
@@ -35,6 +59,9 @@ enough (hundreds, not hundreds of thousands) that a full refresh costs seconds.
 """
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import sqlite3
 from datetime import date, timedelta
 from urllib.parse import urlencode
@@ -45,7 +72,9 @@ AUTH_URL = "https://login.tripleseat.com/oauth2/authorize"
 TOKEN_URL = "https://api.tripleseat.com/oauth2/token"
 PAGE_SIZE = 50
 META_KEY = "tripleseat_refresh_token"
+CURSOR_KEY = "tripleseat_webhook_cursor"          # how many rows of the Tripleseat tab the warehouse has absorbed
 DEFAULT_SCOPE = "read"
+HOOK_PAGE = 400                                    # rows per Apps Script call; payloads are a few KB each
 
 
 def _meta_get(key: str) -> str | None:
@@ -200,3 +229,168 @@ def pull(locations_cfg: list[dict], days_back: int, days_forward: int = 180) -> 
         summary[slug] = {"events": len(ev), "leads": len(ld), "window": [iso(start), iso(end)]}
         log.info("Tripleseat %s: %s", slug, summary[slug])
     return summary
+
+
+# ---- route 1: the public key ---------------------------------------------------------------
+
+class PublicCatalog:
+    """The three read endpoints the lead-form public key opens. Nothing here is paginated or dated: each call
+    returns the whole thing, so the pull is three requests."""
+
+    def __init__(self, key: str | None = None):
+        cfg = settings().get("tripleseat", {})
+        self.key = key or env("TRIPLESEAT_PUBLIC_KEY", required=True)
+        self.http = Http(cfg.get("base_url", "https://api.tripleseat.com/v1"), headers={"Accept": "application/json"},
+                         rps=float(cfg.get("requests_per_second", 5)))
+
+    def _get(self, path: str) -> list | dict:
+        try:
+            r = self.http.get(path, params={"public_key": self.key})
+        except PermissionError:
+            raise PermissionError(f"Tripleseat rejected the public key on {path} (401/403)") from None
+        except Exception as e:
+            # requests quotes the full URL in its errors, and the URL carries the key. The workflow log is public.
+            raise RuntimeError(f"Tripleseat {path}: {type(e).__name__}: {str(e).replace(self.key, '<public_key>')}") from None
+        j = r.json()
+        # The public endpoints wrap each record: [{"location": {...}}, ...]. Unwrap to plain records.
+        if isinstance(j, list):
+            return [next(iter(x.values())) if isinstance(x, dict) and len(x) == 1 else x for x in j]
+        if isinstance(j, dict) and len(j) == 1 and isinstance(next(iter(j.values())), dict):
+            return next(iter(j.values()))
+        return j
+
+    def locations(self) -> list[dict]:
+        return self._get("/locations.json")
+
+    def sites(self) -> list[dict]:
+        return self._get("/sites.json")
+
+    def lead_forms(self) -> list[dict]:
+        return self._get("/lead_forms.json")
+
+
+def match_location(loc: dict, catalog: list[dict]) -> str | None:
+    """The Tripleseat location id for one of ours: configured id first, then an exact or 'ends with' name match
+    ("Big Grove Brewery & Taproom - Omaha" matches tripleseat_name "Omaha")."""
+    tid = str(loc.get("tripleseat_location_id") or "").strip()
+    if tid:
+        return tid
+    want = (loc.get("tripleseat_name") or loc.get("name") or "").strip().lower()
+    if not want:
+        return None
+    for l in catalog:
+        name = str(l.get("name", "")).strip().lower()
+        if name == want or name.endswith("- " + want) or name.endswith("– " + want):
+            return str(l.get("id"))
+    return None
+
+
+def pull_catalog(locations_cfg: list[dict]) -> dict:
+    """Locations + rooms, the site's picklists and billing rules, and the lead forms.
+
+    Written under raw/tripleseat/_all/catalog/ and loaded by transform into ts_rooms / ts_catalog. Also the
+    place the location mapping is checked every night: a taproom whose tripleseat_location_id matches nothing
+    in the account is named in the log rather than silently attributed nowhere."""
+    pc = PublicCatalog()
+    locs = pc.locations()
+    write_raw("tripleseat", "_all", "catalog", "locations", {"locations": locs})
+    sites = pc.sites()
+    write_raw("tripleseat", "_all", "catalog", "sites", {"sites": sites})
+    forms = pc.lead_forms()
+    write_raw("tripleseat", "_all", "catalog", "lead_forms", {"lead_forms": forms})
+
+    by_id = {str(l.get("id")): l for l in locs}
+    mapped, unmapped = {}, []
+    for loc in locations_cfg:
+        tid = match_location(loc, locs)
+        if tid and tid in by_id:
+            mapped[loc["slug"]] = tid
+        else:
+            unmapped.append(loc["slug"])
+    n_rooms = sum(len(l.get("rooms") or []) for l in locs)
+    log.info("Tripleseat catalog: %d locations, %d rooms, %d sites, %d lead forms; mapped %s%s",
+             len(locs), n_rooms, len(sites), len(forms),
+             ", ".join(f"{s}={t}" for s, t in mapped.items()) or "none",
+             f"; UNMAPPED: {', '.join(unmapped)}" if unmapped else "")
+    extra = [f"{l.get('id')}={l.get('name')}" for l in locs if str(l.get("id")) not in mapped.values()]
+    if extra:
+        log.info("Tripleseat catalog: locations in the account that are not a taproom: %s", ", ".join(extra))
+    return {"locations": len(locs), "rooms": n_rooms, "sites": len(sites), "lead_forms": len(forms), "mapped": mapped, "unmapped": unmapped}
+
+
+# ---- route 2: webhook rows collected by the Apps Script -------------------------------------
+
+def _cursor() -> int:
+    v = _meta_get(CURSOR_KEY)
+    try:
+        return int(v or 0)
+    except ValueError:
+        return 0
+
+
+def pull_webhooks() -> dict:
+    """Collect the rows Tripleseat has posted to the Apps Script since the warehouse last absorbed any.
+
+    The tab is append-only and the warehouse persists between runs, so only the tail is fetched: `since` is the
+    number of data rows already loaded (kept in warehouse meta by transform, AFTER a successful load, so a run
+    that dies between pull and transform simply fetches the same rows again next time). The Apps Script pages
+    the answer; each page is written to raw/ and transform reads them in order."""
+    url = env("APPS_SCRIPT_URL", required=True)
+    secret = env("PORTAL_SECRET", required=True)
+    key = base64.b64encode(hmac.new(secret.encode("utf-8"), b"tripleseat", hashlib.sha256).digest()).decode()
+    http = Http(url, headers={"Content-Type": "application/json"}, rps=2)
+    since = _cursor()
+    start, total, page, got = since, None, 0, 0
+    while True:
+        j = http.post(url, {"a": "tripleseat", "k": key, "since": since, "limit": HOOK_PAGE}).json()
+        if not j.get("ok"):
+            raise RuntimeError(f"tripleseat webhook fetch refused: {str(j.get('error'))[:200]}")
+        rows = j.get("rows") or []
+        total = j.get("total")
+        if rows:
+            write_raw("tripleseat", "_all", "webhook", f"{since:08d}", {"since": since, "header": j.get("header"), "rows": rows,
+                                                                        "fetched_at": j.get("fetched_at")})
+            got += len(rows)
+            since += len(rows)
+            page += 1
+        if not rows or len(rows) < HOOK_PAGE or (total is not None and since >= int(total)):
+            break
+        if page > 200:                          # 80 000 rows in one night is not a webhook feed, it is a bug
+            log.warning("Tripleseat webhooks: stopped after 200 pages")
+            break
+    log.info("Tripleseat webhooks: %d new rows (tab holds %s; warehouse had absorbed %d)", got, total, start)
+    return {"rows": got, "total": total, "cursor": start}
+
+
+# ---- all three, each on its own ---------------------------------------------------------------
+
+def pull_all(locations_cfg: list[dict], days_back: int, days_forward: int = 180) -> dict:
+    """Run every configured route. A failure in one is logged and the others still run; the caller decides
+    whether 'nothing configured' is a warning (it is)."""
+    out, ran = {}, []
+    if env("TRIPLESEAT_PUBLIC_KEY"):
+        ran.append("catalog")
+        try:
+            out["catalog"] = pull_catalog(locations_cfg)
+        except Exception as e:
+            log.error("Tripleseat catalog pull failed (%s: %s)", type(e).__name__, e)
+            out["catalog"] = {"error": str(e)}
+    if env("APPS_SCRIPT_URL") and env("PORTAL_SECRET"):
+        ran.append("webhooks")
+        try:
+            out["webhooks"] = pull_webhooks()
+        except Exception as e:
+            log.error("Tripleseat webhook collection failed (%s: %s)", type(e).__name__, e)
+            out["webhooks"] = {"error": str(e)}
+    if env("TRIPLESEAT_CLIENT_ID") and env("TRIPLESEAT_CLIENT_SECRET"):
+        ran.append("api")
+        try:
+            out["api"] = pull(locations_cfg, days_back=days_back, days_forward=days_forward)
+        except Exception as e:
+            log.error("Tripleseat API pull failed (%s: %s)", type(e).__name__, e)
+            out["api"] = {"error": str(e)}
+    if not ran:
+        log.warning("Tripleseat: nothing configured (TRIPLESEAT_PUBLIC_KEY, APPS_SCRIPT_URL+PORTAL_SECRET, or the OAuth trio) — skipped")
+    elif all(isinstance(v, dict) and "error" in v for v in out.values()):
+        raise RuntimeError("every Tripleseat route failed: " + ", ".join(ran))
+    return out

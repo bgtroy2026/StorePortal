@@ -11,6 +11,8 @@
  *   PORTAL_SECRET  — REQUIRED. EXACTLY the same value as the PORTAL_SECRET GitHub Actions secret. Bundle keys are derived
  *                    from it (HMAC-SHA256(secret, label)); nothing else has to be shared between the two systems.
  *   LOG_SECRET     — auto-created on first use (session-token signing key)
+ *   TRIPLESEAT_HOOK_TOKEN — auto-created on first use; the token in the webhook URL. Run showTripleseatWebhookUrl()
+ *                    from the editor to print the URL to paste into Tripleseat (Settings → Tripleseat API & Webhooks).
  *
  * Roster sheet, first tab, headers in row 1:  email | name | role | locations
  *   role:      Admin, Leadership, or Director (case-insensitive)
@@ -36,6 +38,10 @@
  *   {"a":"depletions_put","s":<sid>,"rows":[[...]]} → admin uploads the brand x market depletion roll-up
  *   {"a":"depletions_put","k":<hmac>,"rows":[[...]]} → same, unattended from the Mac (DEPLETIONS_PUT_KEY)
  *   {"a":"depletions","k":<key>}  → the same rows, for the nightly pipeline (HMAC of PORTAL_SECRET, like scorecard)
+ *
+ *   POST <exec URL>?hook=<TRIPLESEAT_HOOK_TOKEN>  (any JSON body) → a Tripleseat webhook delivery, appended to the
+ *                                    "Tripleseat" tab. See the TRIPLESEAT WEBHOOKS section for what it keeps and drops.
+ *   {"a":"tripleseat","k":<key>,"since":N,"limit":M} → rows N.. of that tab, for the nightly pipeline (HMAC like scorecard)
  *
  * Time-driven (no request): morningTick() runs every 15 minutes once installTriggers() has been run ONCE from
  * the editor. It starts the nightly refresh on GitHub, emails the morning digest when the build lands, and
@@ -64,7 +70,11 @@ var SESSION_HOURS = 24;
 
 function doPost(e) {
   var out;
-  try { out = handle(((e && e.postData && e.postData.contents) || '').trim()); }
+  try {
+    // A Tripleseat webhook delivery names itself in the query string; everything else is the portal protocol.
+    if (e && e.parameter && e.parameter.hook) out = doTripleseatHook(e);
+    else out = handle(((e && e.postData && e.postData.contents) || '').trim());
+  }
   catch (err) { out = { ok: false, error: 'server error: ' + err }; }
   return ContentService.createTextOutput(JSON.stringify(out)).setMimeType(ContentService.MimeType.JSON);
 }
@@ -82,6 +92,7 @@ function handle(body) {
   if (req.a === 'ack') return doAck(String(req.s || ''), req);
   if (req.a === 'depletions') return doDepletions(String(req.k || ''));
   if (req.a === 'depletions_put') return doDepletionsPut(String(req.s || ''), req);
+  if (req.a === 'tripleseat') return doTripleseatRows(String(req.k || ''), Number(req.since || 0), Number(req.limit || 0));
   return { ok: false, error: 'unknown action' };
 }
 
@@ -512,6 +523,194 @@ function doAcks(sid) {
   var out = [];
   for (var k in latest) out.push(latest[k]);
   return { ok: true, acks: out, history: history.slice(-60).reverse() };
+}
+
+// =====================================================================================================
+// TRIPLESEAT WEBHOOKS
+// =====================================================================================================
+// Tripleseat POSTs a JSON body to a target URL whenever an event, lead or booking is created, changed or deleted.
+// This web app is that target: <exec URL>?hook=<TRIPLESEAT_HOOK_TOKEN>. Every delivery is appended, as received,
+// to a "Tripleseat" tab of the roster workbook, and the nightly pipeline collects the tail of that tab on proof of
+// PORTAL_SECRET (action "tripleseat") -- the route the scorecard and depletions already travel. The pipeline, not
+// this script, decides what an event means: this end keeps the notification and nothing more.
+//
+// Why here rather than a proper server: the portal has no server, and this script is already its Google-hosted
+// backend. Two things a receiver here cannot do, and what stands in for them:
+//  - Read request headers. Tripleseat signs each delivery (X-Signature: t=..,v1=HMAC of the body) but doPost never
+//    sees headers, so the signature cannot be checked. The URL carries a random token instead: a delivery without
+//    it is dropped unread. The tab is append-only and the pipeline treats it as untrusted input, so the worst a
+//    forged delivery could do is add a wrong event, never remove or alter one.
+//  - Answer 200 directly. Apps Script answers every POST with a 302 to script.googleusercontent.com, after the body
+//    has been recorded. Tripleseat counts deliveries it considers failed and may disable an endpoint after too many,
+//    so whether it treats the 302 as a failure is the first thing to read off the Webhooks tab after the first few
+//    deliveries. (Enabling an endpoint there resets its failure count.)
+//
+// Privacy: leads and contacts carry guests' details. Email addresses, phone numbers and postal addresses are
+// stripped from every object before the row is written, whatever it is; the portal never shows them and the
+// workbook should not hold them either.
+
+var HOOK_HEADER = ['when', 'action', 'kind', 'object_id', 'ts_location_id', 'event_date', 'status', 'json'];
+var HOOK_MAX_JSON = 45000;              // a Sheets cell holds 50,000 characters
+var HOOK_PAGE_MAX = 300;                // rows per pipeline call; payloads run a few KB each
+var HOOK_PII = /email|phone|address|zip_code|ssn|card/i;
+
+function hookToken() {
+  var p = PropertiesService.getScriptProperties();
+  var t = p.getProperty('TRIPLESEAT_HOOK_TOKEN');
+  if (!t) { t = Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().replace(/-/g, ''); p.setProperty('TRIPLESEAT_HOOK_TOKEN', t); }
+  return t;
+}
+
+/** Run from the editor: prints the URL to paste as the Tripleseat webhook target. The token is created the first
+ *  time this runs, so run it once BEFORE adding the webhook, and again only if the token should change. */
+function showTripleseatWebhookUrl() {
+  var base = '';
+  try { base = ScriptApp.getService().getUrl() || ''; } catch (ignored) {}
+  if (!base || /\/dev$/.test(base)) base = '<the deployed /exec URL of this web app>';
+  var url = base + '?hook=' + hookToken();
+  Logger.log('Tripleseat webhook target URL:\n' + url);
+  return url;
+}
+
+/** Remove anything that looks like a guest's contact detail, at any depth. Arrays keep their shape (an array of
+ *  phone numbers becomes an empty array rather than vanishing) so a parser that counts them does not break. */
+function scrubPii(v) {
+  if (Array.isArray(v)) return v.map(scrubPii);
+  if (v && typeof v === 'object') {
+    var out = {};
+    for (var k in v) {
+      if (!Object.prototype.hasOwnProperty.call(v, k)) continue;
+      if (HOOK_PII.test(k)) continue;
+      out[k] = scrubPii(v[k]);
+    }
+    return out;
+  }
+  return v;
+}
+
+/** The object inside a delivery and the words that describe it, for the summary columns. Tripleseat's payload shape
+ *  is not documented beyond "a JSON payload describing the change", so every plausible shape is accepted and the
+ *  raw JSON is kept regardless -- these columns exist so the tab is readable by a person and filterable by the
+ *  pipeline, not because anything depends on them. */
+function hookSummary(obj) {
+  var s = { action: '', kind: '', id: '', loc: '', date: '', status: '' };
+  if (!obj || typeof obj !== 'object') return s;
+  s.action = String(obj.action || obj.trigger || obj.trigger_action || obj.webhook_action || obj.event_type || obj.type || '').slice(0, 60);
+  var kinds = ['event', 'lead', 'booking', 'contact', 'account', 'room', 'document', 'payment', 'guest_room_block'];
+  var inner = null;
+  // A wrapper ({"action":..,"event":{..}}) has no id of its own; a bare object does. An event carries a nested
+  // "contact", so the wrapper keys are only consulted when the top level is not itself a record.
+  var bare = obj.id !== undefined && obj.id !== null;
+  for (var i = 0; !bare && i < kinds.length; i++) {
+    if (obj[kinds[i]] && typeof obj[kinds[i]] === 'object') { s.kind = kinds[i]; inner = obj[kinds[i]]; break; }
+  }
+  if (!inner && !bare && obj.data && typeof obj.data === 'object') {
+    for (var j = 0; j < kinds.length; j++) {
+      if (obj.data[kinds[j]] && typeof obj.data[kinds[j]] === 'object') { s.kind = kinds[j]; inner = obj.data[kinds[j]]; break; }
+    }
+    if (!inner) { inner = obj.data; s.kind = String(obj.object_type || obj.data.type || '').toLowerCase(); }
+  }
+  if (!inner) {
+    inner = obj;
+    s.kind = String(obj.object_type || obj.kind || '').toLowerCase();
+    if (!s.kind) {
+      if (obj.event_date_iso8601 !== undefined || (obj.grand_total !== undefined && obj.event_date !== undefined)) s.kind = 'event';
+      else if (obj.lead_form !== undefined || obj.turned_down_at !== undefined || obj.event_description !== undefined) s.kind = 'lead';
+      else if (obj.start_date !== undefined && obj.end_date !== undefined) s.kind = 'booking';
+    }
+  }
+  s.id = inner.id != null ? String(inner.id) : '';
+  s.loc = inner.location_id != null ? String(inner.location_id) : (inner.location && inner.location.id != null ? String(inner.location.id) : '');
+  s.date = String(inner.event_date_iso8601 || inner.event_date || inner.start_date || '').slice(0, 10);
+  s.status = String(inner.status || '').slice(0, 40);
+  return s;
+}
+
+/** A delivery too big for a cell keeps its scalar fields and loses its largest arrays (line items, payments,
+ *  documents) until it fits. Each dropped key is recorded so the pipeline can tell a small event from a trimmed one. */
+function trimHook(obj) {
+  var text = JSON.stringify(obj);
+  if (text.length <= HOOK_MAX_JSON) return text;
+  // Trim inside the object the delivery is about (the "event" of {"event": {...}}) when that is where the bulk
+  // is; otherwise trim the top level itself.
+  var host = obj, hostSize = 0;
+  for (var k in obj) {
+    if (obj[k] && typeof obj[k] === 'object' && !Array.isArray(obj[k])) {
+      var sz = JSON.stringify(obj[k]).length;
+      if (sz > hostSize && sz > text.length / 2) { host = obj[k]; hostSize = sz; }
+    }
+  }
+  host._trimmed = [];
+  for (var guard = 0; guard < 30 && JSON.stringify(obj).length > HOOK_MAX_JSON; guard++) {
+    var big = null, size = 0;
+    for (var key in host) {
+      if (key === '_trimmed' || host[key] == null || typeof host[key] !== 'object') continue;
+      var len = JSON.stringify(host[key]).length;
+      if (len > size) { size = len; big = key; }
+    }
+    if (!big) break;
+    host._trimmed.push(big + ':' + size);
+    host[big] = Array.isArray(host[big]) ? [] : null;
+  }
+  text = JSON.stringify(obj);
+  return text.length > HOOK_MAX_JSON ? text.slice(0, HOOK_MAX_JSON - 20) + '"...TRUNCATED"}' : text;
+}
+
+function hookSheet(ss) {
+  var sh = ss.getSheetByName('Tripleseat');
+  if (!sh) {
+    sh = ss.insertSheet('Tripleseat');
+    sh.appendRow(HOOK_HEADER); sh.setFrozenRows(1);
+    sh.getRange(1, 1, 1, HOOK_HEADER.length).setFontWeight('bold');
+    sh.getRange('D:G').setNumberFormat('@');                  // ids and dates stay text; Sheets would otherwise turn them into numbers and dates
+  }
+  return sh;
+}
+
+function doTripleseatHook(e) {
+  var want = hookToken();
+  var got = String((e && e.parameter && e.parameter.hook) || '');
+  if (!got || got.length !== want.length || got !== want) return { ok: false, error: 'bad hook' };
+  var body = ((e.postData && e.postData.contents) || '').trim();
+  if (!body) return { ok: false, error: 'empty delivery' };
+  var obj = null;
+  try { obj = JSON.parse(body); } catch (err) { obj = null; }
+  var sum = hookSummary(obj);
+  var json = obj ? trimHook(scrubPii(obj)) : cellSafe(body.slice(0, HOOK_MAX_JSON));
+  var lock = LockService.getScriptLock();
+  try { lock.waitLock(10000); } catch (ignored) { /* write anyway: a lost row is worse than an interleaved append */ }
+  try {
+    hookSheet(SpreadsheetApp.openById(prop('SHEET_ID'))).appendRow([new Date(), cellSafe(sum.action), cellSafe(sum.kind), cellSafe(sum.id),
+                                                                    cellSafe(sum.loc), cellSafe(sum.date), cellSafe(sum.status), json]);
+  } finally {
+    try { lock.releaseLock(); } catch (ignored) {}
+  }
+  return { ok: true };
+}
+
+/** Rows [since, since+limit) of the Tripleseat tab for the pipeline, plus the total so it knows when to stop. The
+ *  tab is append-only: `since` is a row count the pipeline remembers, so a sort or a deleted row in the tab would
+ *  make it skip or repeat notifications. Leave the tab alone. */
+function doTripleseatRows(k, since, limit) {
+  var secret = prop('PORTAL_SECRET');
+  if (!secret) return { ok: false, error: 'PORTAL_SECRET script property is not set' };
+  var want = Utilities.base64Encode(Utilities.computeHmacSha256Signature('tripleseat', secret, Utilities.Charset.UTF_8));
+  if (!k || k !== want) return { ok: false, error: 'bad key' };
+  var sh = SpreadsheetApp.openById(prop('SHEET_ID')).getSheetByName('Tripleseat');
+  var total = sh ? Math.max(0, sh.getLastRow() - 1) : 0;
+  since = Math.max(0, Math.floor(Number(since) || 0));
+  limit = Math.min(HOOK_PAGE_MAX, Math.max(1, Math.floor(Number(limit) || HOOK_PAGE_MAX)));
+  if (!sh || since >= total) return { ok: true, header: HOOK_HEADER, rows: [], total: total, fetched_at: new Date().toISOString() };
+  var n = Math.min(limit, total - since);
+  var vals = sh.getRange(2 + since, 1, n, HOOK_HEADER.length).getValues();
+  var rows = vals.map(function (r) {
+    return r.map(function (v, i) {
+      if (v instanceof Date) return v.toISOString();
+      if (i === 7) return String(v == null ? '' : v);              // JSON: verbatim, however Sheets displays it
+      return String(v == null ? '' : v);
+    });
+  });
+  return { ok: true, header: HOOK_HEADER, rows: rows, total: total, since: since, fetched_at: new Date().toISOString() };
 }
 
 // =====================================================================================================

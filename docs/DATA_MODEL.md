@@ -18,6 +18,8 @@ Warehouse: SQLite (`state/warehouse.sqlite`), schema in `sdp/schema.sql`. Money 
 | MarginEdge `/profitAndLoss/report` (per day) | `me_pnl_daily`, `me_pnl_summary` | location × business date × section/category/item | income, cogs, labor, expenses; labor source when Toast is not connected |
 | MarginEdge `/inventories` + detail + section items | `me_inventories`, `me_inventory_items` | inventory; counted product | product → primary category → bucket |
 | derived (or `inputs/inventory_counts.csv` fallback) | `me_inventory_counts` | location × count date × bucket | `source` = api / csv; API wins |
+| Tripleseat public key `/locations`, `/sites`, `/lead_forms` | `ts_rooms`, `ts_catalog` | room; picklist entry / billing rule | replaced whole each night; `ts_catalog.kind` ∈ location, event_type, lead_source, referral_source, line_item_category, billing (per taproom, `value` = rate), lead_form |
+| Tripleseat webhooks via the Apps Script "Tripleseat" tab (or `/events/search`, `/leads/search` when the OAuth API exists) | `ts_events`, `ts_leads` | event; lead | `source`/`origin` = api or webhook. Webhook rows are applied in arrival order and the last notification per object is its state; a DELETE sets `deleted=1` rather than removing the row so a late re-send cannot resurrect it. `rooms` and `event_type_name` are resolved from the catalog. A taproom that is a *room* of another location (Solon in Iowa City) is matched by `tripleseat_room_ids` before `tripleseat_location_id`. |
 | `inputs/activations.csv` | `activations` | activation | date range, type, cost, owner |
 | `inputs/targets.csv` | `targets` | location × month | sales, COGS %, labor %, guests |
 | derived | `daily_summary` | location × business date | rebuilt every transform |

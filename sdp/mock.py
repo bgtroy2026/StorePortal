@@ -449,6 +449,50 @@ def gen_tripleseat(loc: dict, loc_idx: int, start: date, end: date, forward: dat
     return len(events), len(leads)
 
 
+def gen_tripleseat_catalog(locations: list[dict]) -> None:
+    """The public-key catalog in the exact shape api.tripleseat.com/v1/{locations,sites,lead_forms}.json return
+    it (unwrapped, as sdp.tripleseat.PublicCatalog does). Uses the real Tripleseat ids from config so the
+    room -> taproom mapping is exercised; a taproom without one gets a made-up id."""
+    locs, forms = [], []
+    seen = {}
+    # Taprooms that own a Tripleseat location first; the ones that live as a ROOM of another (Solon) are added
+    # to that location's room list afterwards, whatever order config lists them in.
+    order = sorted(enumerate(locations), key=lambda t: bool(t[1].get("tripleseat_room_ids")))
+    for i, l in order:
+        tid = str(l.get("tripleseat_location_id") or 3000 + i)
+        if tid in seen or l.get("tripleseat_room_ids"):
+            for rid in l.get("tripleseat_room_ids") or []:
+                if tid in seen:
+                    seen[tid]["rooms"].append({"id": int(rid), "name": l["name"], "capacity": None, "description": "", "is_unassigned": False, "descendants": [[]]})
+                    seen[tid]["room_ids"].append(int(rid))
+            continue
+        base = 100000 + i * 100
+        rooms = [{"id": base, "name": "Unassigned", "capacity": None, "description": None, "is_unassigned": True, "descendants": [[]]},
+                 {"id": base + 1, "name": f"{l.get('short') or l['name']} Private Party Room", "capacity": 60, "description": "", "is_unassigned": False,
+                  "descendants": [[{"id": base + 2, "name": f"{l.get('short') or l['name']} Private Catered Party Room", "capacity": 60, "description": "", "is_unassigned": False, "descendants": [[]]}]]},
+                 {"id": base + 2, "name": f"{l.get('short') or l['name']} Private Catered Party Room", "capacity": 60, "description": "", "is_unassigned": False, "descendants": [[]]},
+                 {"id": base + 3, "name": f"{l.get('short') or l['name']} Community Event", "capacity": None, "description": "", "is_unassigned": False, "descendants": [[]]},
+                 {"id": base + 4, "name": f"{l.get('short') or l['name']} Full Buyout", "capacity": 300, "description": "", "is_unassigned": False, "descendants": [[]]}]
+        loc = {"id": int(tid), "name": f"Big Grove Brewery & Taproom - {l['name']}", "customer_id": 1, "site_name": "Big Grove Brewery", "site_id": 6789,
+               "room_ids": [r["id"] for r in rooms], "created_at": "6/17/2020 10:55 AM", "updated_at": "9/11/2026 4:54 PM", "description": None,
+               "currency_code": "USD", "custom_fields": [], "rooms": rooms, "phone_numbers": [], "addresses": [], "photos": []}
+        seen[tid] = loc
+        locs.append(loc)
+        forms.append({"id": 20000 + i, "name": f"Big Grove Brewery & Taproom • {l['name']} Lead Form", "locations": [{"id": int(tid), "name": loc["name"]}]})
+    billings = [{"id": 1, "name": "Gratuity", "internal_name": "Gratuity", "inclusive": False, "billing_locations": [{"location_id": x["id"], "value": "20%"} for x in locs]},
+                {"id": 2, "name": "Sales Tax", "internal_name": "Sales Tax", "inclusive": False, "billing_locations": [{"location_id": x["id"], "value": "7%"} for x in locs]},
+                {"id": 3, "name": "Non-Cash Convenience Fee", "internal_name": "Non-Cash Convenience Fee", "inclusive": False, "billing_locations": [{"location_id": x["id"], "value": "3%"} for x in locs[1:]]}]
+    sites = [{"id": 6789, "customer_id": 1, "name": "Big Grove Brewery", "subdomain": "biggrovebrewery", "timezone": "Central Time (US & Canada)", "currency_code": "USD",
+              "billings": billings,
+              "line_item_categories": [{"id": 1, "name": "Food"}, {"id": 2, "name": "Beverage"}, {"id": 3, "name": "Room Rental"}],
+              "contact_types": [], "event_types": [{"id": i + 1, "name": n} for i, n in enumerate(["Birthday", "Corporate", "Rehearsal Dinner", "Wedding", "Fundraiser", "Holiday Party", "Meeting", "Reunion"])],
+              "lead_sources": [{"id": i + 1, "name": n} for i, n in enumerate(["Lead Form", "Phone", "Walk-in", "Repeat", "Email", "Tripleseat Web Lead"])],
+              "task_types": [], "referral_sources": [], "payment_methods": []}]
+    write_raw("tripleseat", "_all", "catalog", "locations", {"locations": locs})
+    write_raw("tripleseat", "_all", "catalog", "sites", {"sites": sites})
+    write_raw("tripleseat", "_all", "catalog", "lead_forms", {"lead_forms": forms})
+
+
 def generate(locations: list[dict], days: int = 120, toast: bool = True) -> None:
     end = today_local() - timedelta(days=1)
     start = end - timedelta(days=days)
@@ -462,6 +506,7 @@ def generate(locations: list[dict], days: int = 120, toast: bool = True) -> None
             events[f"{a['location_id']}:{iso(dd)}"] = 1.0 + float(a.get("_mock_lift") or 0.25)
     write_raw("tripleseat", "_all", "locations", "all",
               {"locations": [{"id": 3000 + i, "name": l.get("tripleseat_name") or l["name"]} for i, l in enumerate(locations)]})
+    gen_tripleseat_catalog(locations)
     forward = end + timedelta(days=180)
     for i, loc in enumerate(locations):
         wr = random.Random(f"wx:{loc['slug']}")

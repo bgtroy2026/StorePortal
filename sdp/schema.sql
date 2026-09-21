@@ -264,6 +264,12 @@ CREATE TABLE IF NOT EXISTS ts_events (                  -- grain: one Tripleseat
   actual_amount REAL,                                   -- what was actually billed (after the event)
   amount_due REAL, price_per_person REAL,
   created_at TEXT, updated_at TEXT,
+  room_ids TEXT,                                        -- Tripleseat room ids, comma-separated (Solon is a ROOM of the Iowa City location)
+  rooms TEXT,                                           -- their names, resolved from ts_rooms at load
+  event_type_name TEXT,                                 -- resolved from the site's event_types picklist
+  source TEXT,                                          -- 'api' (nightly window) or 'webhook' (arrived as it changed)
+  deleted INTEGER DEFAULT 0,                            -- a webhook said DELETE, or deleted_at is set; kept so a stale re-send cannot resurrect it
+  seen_at TEXT,                                         -- when the row that produced this state was received
   PRIMARY KEY (event_id, location_id)
 );
 CREATE INDEX IF NOT EXISTS ix_ts_events_loc_date ON ts_events(location_id, event_date);
@@ -272,9 +278,26 @@ CREATE TABLE IF NOT EXISTS ts_leads (                   -- grain: one inbound le
   lead_id TEXT NOT NULL, location_id TEXT NOT NULL,
   ts_location_id TEXT, company TEXT, contact_name TEXT, status TEXT, source TEXT,
   event_date TEXT, guest_count INTEGER, description TEXT, created_at TEXT, updated_at TEXT,
+  lead_form TEXT,                                       -- which lead form it came through (webhook route)
+  converted_at TEXT, turned_down_at TEXT,
+  origin TEXT,                                          -- 'api' or 'webhook'
+  seen_at TEXT,
   PRIMARY KEY (lead_id, location_id)
 );
 CREATE INDEX IF NOT EXISTS ix_ts_leads_loc_date ON ts_leads(location_id, event_date);
+
+-- The catalog the public key can read (sdp/tripleseat.py, route 1). Replaced whole on every load.
+CREATE TABLE IF NOT EXISTS ts_rooms (                   -- grain: one bookable room / area in Tripleseat
+  room_id TEXT PRIMARY KEY,
+  ts_location_id TEXT, location_id TEXT,                -- location_id is OUR slug, via config/locations.json
+  name TEXT, capacity INTEGER, parent_room_id TEXT, is_unassigned INTEGER DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS ts_catalog (                 -- grain: one picklist entry or billing rule
+  kind TEXT NOT NULL,                                   -- event_type | lead_source | referral_source | billing | line_item_category | lead_form | location
+  id TEXT NOT NULL,
+  name TEXT, location_id TEXT, value TEXT,              -- billing: value is the rate ("20%"), location_id the taproom it applies to
+  PRIMARY KEY (kind, id, location_id)
+);
 
 -- ---------- Manual inputs (inputs/*.csv) ----------
 

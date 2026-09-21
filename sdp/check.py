@@ -290,6 +290,21 @@ def run(db=None) -> int:
     bad = [w for w in wx if not w["last"] or (through and w["last"] < through and (date.fromisoformat(through) - date.fromisoformat(w["last"])).days > 3)]
     _report(r, "every taproom has recent observed weather", bad, lambda b: f"{b['location_id']} last {b['last'] or 'never'}", severity="warn")
 
+    # 15. Tripleseat, as labels: which route is feeding it and whether every taproom is mapped. An event filed
+    #     under no taproom is one the pipeline dropped (see load_tripleseat_webhooks), so the count is the tell.
+    try:
+        meta = {k: v for k, v in con.execute("SELECT key, value FROM meta WHERE key LIKE 'tripleseat_%'")}
+        ts_ev = _rows(con, "SELECT COALESCE(source,'api') s, COUNT(*) n FROM ts_events WHERE COALESCE(deleted,0)=0 GROUP BY 1")
+        ts_rooms = con.execute("SELECT COUNT(*) FROM ts_rooms WHERE is_unassigned=0").fetchone()[0]
+        no_room = _rows(con, "SELECT l.location_id FROM locations l WHERE NOT EXISTS (SELECT 1 FROM ts_rooms r WHERE r.location_id=l.location_id)")
+        log.info("tripleseat: events %s; catalog %s (%d rooms, refreshed %s); webhook rows absorbed %s (last %s)%s",
+                 ", ".join(f"{x['n']} via {x['s']}" for x in ts_ev) or "none",
+                 "loaded" if ts_rooms else "not loaded", ts_rooms, meta.get("tripleseat_catalog_at", "never"),
+                 meta.get("tripleseat_webhook_cursor", "0"), meta.get("tripleseat_webhook_at", "never"),
+                 ("; taprooms with no Tripleseat room: " + ", ".join(x["location_id"] for x in no_room)) if ts_rooms and no_room else "")
+    except sqlite3.OperationalError:
+        pass
+
     n_days = con.execute("SELECT COUNT(*) FROM daily_summary").fetchone()[0]
     locs = con.execute("SELECT COUNT(DISTINCT location_id) FROM daily_summary").fetchone()[0]
     log.info("checks complete over %d location-days across %d locations: %d failed, %d warned",

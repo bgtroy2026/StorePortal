@@ -237,14 +237,17 @@ def build_payload(con, through: date | None = None) -> dict:
                 pnl[r["m"]]["cats"].setdefault(r["section"], []).append([r["category_name"], r["bucket"], _r(r["t"])])
         payload["pnl"][lid] = pnl
 
-        # Tripleseat: events in the bundle window plus everything still ahead of us (the booked calendar)
+        # Tripleseat: events in the bundle window plus everything still ahead of us (the booked calendar).
+        # Deleted events stay in the warehouse (so a late re-send cannot resurrect them) but never reach a page.
         payload["events"][lid] = [[r["event_id"], r["name"], r["event_date"], r["status"], r["guest_count"],
-                                   _r(r["grand_total"]), _r(r["actual_amount"]), _r(r["fb_minimum"]), _r(r["deposit"]), r["event_style"]]
-                                  for r in _rows(con, """SELECT event_id, name, event_date, status, guest_count, grand_total, actual_amount, fb_minimum, deposit, event_style
-                                                         FROM ts_events WHERE location_id=? AND event_date>=? ORDER BY event_date""", (lid, since.isoformat()))]
+                                   _r(r["grand_total"]), _r(r["actual_amount"]), _r(r["fb_minimum"]), _r(r["deposit"]), r["event_style"],
+                                   r["rooms"], r["event_type_name"], r["source"]]
+                                  for r in _rows(con, """SELECT event_id, name, event_date, status, guest_count, grand_total, actual_amount, fb_minimum, deposit, event_style,
+                                                                rooms, event_type_name, source
+                                                         FROM ts_events WHERE location_id=? AND event_date>=? AND COALESCE(deleted,0)=0 ORDER BY event_date""", (lid, since.isoformat()))]
         payload["events_monthly"][lid] = {r["m"]: [r["n"], _r(r["booked"]), _r(r["actual"]), r["guests"]] for r in _rows(con, """
             SELECT substr(event_date,1,7) m, COUNT(*) n, SUM(COALESCE(grand_total,0)) booked, SUM(COALESCE(actual_amount,0)) actual, SUM(COALESCE(guest_count,0)) guests
-            FROM ts_events WHERE location_id=? AND event_date>=? GROUP BY 1 ORDER BY 1""", (lid, since.isoformat()))}
+            FROM ts_events WHERE location_id=? AND event_date>=? AND COALESCE(deleted,0)=0 GROUP BY 1 ORDER BY 1""", (lid, since.isoformat()))}
         payload["leads"][lid] = [[r["status"] or "?", r["n"], r["guests"]] for r in _rows(con, """
             SELECT COALESCE(status,'?') status, COUNT(*) n, SUM(COALESCE(guest_count,0)) guests FROM ts_leads
             WHERE location_id=? AND event_date>=? GROUP BY 1 ORDER BY n DESC""", (lid, since.isoformat()))]
@@ -260,6 +263,13 @@ def build_payload(con, through: date | None = None) -> dict:
 
     payload["activations"] = _rows(con, "SELECT activation_id id, location_id loc, start_date s, end_date e, name, type, cost, owner, notes FROM activations ORDER BY start_date")
     payload["meta"]["daily_keys"] = DAILY_KEYS
+
+    # ---- Tripleseat: what is connected, and the catalog the public key reads -------------------------------
+    try:
+        payload["tripleseat"] = tripleseat_section(con, [l["slug"] for l in locs])
+    except Exception as e:
+        log.error("metrics: tripleseat section failed (%s: %s) — published without it", type(e).__name__, e)
+        payload["tripleseat"] = None
 
     # ---- Leadership Scorecard -------------------------------------------------------------------------
     # Company-wide, not per-location, so it rides in the payload once rather than under each location. Weeks
@@ -1033,9 +1043,52 @@ def _price_tracking(con, lid: str, through: date, days: int = 180) -> dict:
             "price_window": [since, through.isoformat(), mid]}
 
 
+def tripleseat_section(con, slugs: list[str]) -> dict:
+    """Connection status plus the catalog, so the Events page can say what it has before a single event exists.
+
+    status: 'events' once webhook or API rows have produced events, 'catalog' when only the public key has
+    spoken, 'none' otherwise. rooms/fees are per taproom (sliced into a director's bundle); event types and lead
+    sources are company-wide picklists."""
+    meta = {r[0]: r[1] for r in con.execute("SELECT key, value FROM meta WHERE key LIKE 'tripleseat_%'")}
+    n_ev = con.execute("SELECT COUNT(*) FROM ts_events WHERE COALESCE(deleted,0)=0").fetchone()[0]
+    n_hook = con.execute("SELECT COUNT(*) FROM ts_events WHERE source='webhook' AND COALESCE(deleted,0)=0").fetchone()[0]
+    n_api = con.execute("SELECT COUNT(*) FROM ts_events WHERE COALESCE(source,'api')='api' AND COALESCE(deleted,0)=0").fetchone()[0]
+    n_ld = con.execute("SELECT COUNT(*) FROM ts_leads").fetchone()[0]
+    first_hook = meta.get("tripleseat_webhook_first") or con.execute("SELECT MIN(seen_at) FROM ts_events WHERE source='webhook'").fetchone()[0]
+    cat = {"rooms": {}, "fees": {}, "event_types": [], "lead_sources": [], "lead_forms": {}, "ts_locations": {}}
+    names = {r["room_id"]: r["name"] for r in _rows(con, "SELECT room_id, name FROM ts_rooms")}
+    for r in _rows(con, "SELECT room_id, location_id, name, capacity, parent_room_id FROM ts_rooms WHERE is_unassigned=0 AND location_id IS NOT NULL ORDER BY location_id, name"):
+        if r["location_id"] in slugs:
+            cat["rooms"].setdefault(r["location_id"], []).append([r["room_id"], r["name"], r["capacity"], names.get(r["parent_room_id"])])
+    for r in _rows(con, "SELECT location_id, name, value FROM ts_catalog WHERE kind='billing' ORDER BY location_id, name"):
+        if r["location_id"] in slugs:
+            cat["fees"].setdefault(r["location_id"], []).append([r["name"], r["value"]])
+    cat["event_types"] = [r["name"] for r in _rows(con, "SELECT name FROM ts_catalog WHERE kind='event_type' ORDER BY name")]
+    cat["lead_sources"] = [r["name"] for r in _rows(con, "SELECT name FROM ts_catalog WHERE kind='lead_source' ORDER BY name")]
+    for r in _rows(con, "SELECT location_id, name FROM ts_catalog WHERE kind='lead_form' ORDER BY name"):
+        if r["location_id"] in slugs:
+            cat["lead_forms"].setdefault(r["location_id"], []).append(r["name"])
+    for r in _rows(con, "SELECT id, name, location_id FROM ts_catalog WHERE kind='location'"):
+        if r["location_id"] in slugs:
+            cat["ts_locations"][r["location_id"]] = [r["id"], r["name"]]
+    has_catalog = bool(cat["rooms"] or cat["event_types"])
+    status = "events" if n_ev else ("catalog" if has_catalog else "none")
+    return {"status": status, "catalog_at": meta.get("tripleseat_catalog_at"), "webhook_at": meta.get("tripleseat_webhook_at"),
+            "webhook_rows": int(meta.get("tripleseat_webhook_cursor") or 0), "webhook_events": n_hook, "api_events": n_api, "webhook_since": first_hook,
+            "events": n_ev, "leads": n_ld, "tenant": (settings().get("tripleseat") or {}).get("tenant"), **cat}
+
+
 def slice_for_location(payload: dict, lid: str) -> dict:
     """A director's bundle: only their location (other locations are not merely hidden — they are absent)."""
     out = {"meta": dict(payload["meta"]), "locations": [l for l in payload["locations"] if l["id"] == lid], "activations": [a for a in payload["activations"] if a["loc"] == lid]}
+    ts = payload.get("tripleseat")
+    if ts:
+        out["tripleseat"] = dict(ts, rooms={lid: ts["rooms"].get(lid)} if lid in ts["rooms"] else {},
+                                 fees={lid: ts["fees"].get(lid)} if lid in ts["fees"] else {},
+                                 lead_forms={lid: ts["lead_forms"].get(lid)} if lid in ts["lead_forms"] else {},
+                                 ts_locations={lid: ts["ts_locations"].get(lid)} if lid in ts["ts_locations"] else {})
+    else:
+        out["tripleseat"] = ts
     # Company-wide comparisons, cut down to the rows this taproom is in. The other taprooms are not named:
     # a director sees their own price against the lowest and highest elsewhere, which is all the row is for.
     def _cut(rows, idx, val=lambda v: v):

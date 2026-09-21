@@ -598,10 +598,178 @@ def _num(v):
         return None
 
 
-def load_tripleseat(con) -> dict:
-    """Private events and the lead pipeline behind them. Events are replaced per location on every run —
-    Tripleseat rows are edited long after the event date (final billing, guest counts), so a full refresh of
-    the window is both cheaper and more correct than trying to detect changes."""
+def _ts_mapping() -> tuple[dict, dict]:
+    """Two maps from config/locations.json: Tripleseat location id -> our slug, and Tripleseat ROOM id -> our
+    slug for taprooms that live as a room of another location (Solon is room 232405 of Iowa City). A room
+    override wins over the location, so an Iowa City event in the Solon room is Solon's."""
+    by_loc, by_room = {}, {}
+    # A taproom that lives as a room claims the ROOM; the location itself belongs to the taproom that has no
+    # room override (Iowa City), whatever order config lists them in. It falls back to the location only if
+    # nobody else claims it.
+    ours = sorted(locations(), key=lambda l: bool(l.get("tripleseat_room_ids")))
+    for l in ours:
+        tid = str(l.get("tripleseat_location_id") or "").strip()
+        rooms = [str(r) for r in (l.get("tripleseat_room_ids") or [])]
+        for rid in rooms:
+            by_room[rid] = l["slug"]
+        if tid and (not rooms or tid not in by_loc):
+            by_loc.setdefault(tid, l["slug"])
+    return by_loc, by_room
+
+
+def _ts_slug(ts_location_id, room_ids, by_loc: dict, by_room: dict) -> str | None:
+    for rid in room_ids or []:
+        if str(rid) in by_room:
+            return by_room[str(rid)]
+    return by_loc.get(str(ts_location_id or ""))
+
+
+def _ts_ids(v) -> list[str]:
+    if v is None or v == "":
+        return []
+    if isinstance(v, (list, tuple)):
+        return [str(x.get("id") if isinstance(x, dict) else x) for x in v if x not in (None, "")]
+    return [x.strip() for x in str(v).split(",") if x.strip()]
+
+
+def _ts_event_row(e: dict, slug: str, by_room_name: dict, type_names: dict, origin: str, seen_at: str | None) -> dict:
+    """One Tripleseat Event object (API shape; the webhook carries the same object) -> a ts_events row."""
+    rids = _ts_ids(e.get("room_ids") if e.get("room_ids") is not None else e.get("rooms"))
+    et = e.get("event_type_id")
+    if et in (None, "") and isinstance(e.get("event_type"), dict):
+        et = e["event_type"].get("id")
+    et = str(et or "")
+    return {"event_id": str(e.get("id")), "location_id": slug, "ts_location_id": str(_ts_loc_id(e) or ""),
+            "booking_id": str(e.get("booking_id") or ""), "name": e.get("name"), "status": e.get("status"),
+            "event_type": et, "event_style": e.get("event_style"),
+            "event_date": (e.get("event_date_iso8601") or _ts_date(e.get("event_date")) or "")[:10],
+            "start_at": e.get("event_start_iso8601") or e.get("event_start"),
+            "end_at": e.get("event_end_iso8601") or e.get("event_end"),
+            "guest_count": int(e.get("guest_count") or 0), "guaranteed_guest_count": int(e.get("guaranteed_guest_count") or 0),
+            "fb_minimum": _num(e.get("food_and_beverage_min")), "rental_fee": _num(e.get("rental_fee")),
+            "deposit": _num(e.get("deposit_amount")), "grand_total": _num(e.get("grand_total")),
+            "actual_amount": _num(e.get("actual_amount")), "amount_due": _num(e.get("amount_due")),
+            "price_per_person": _num(e.get("price_per_person")),
+            "created_at": e.get("created_at"), "updated_at": e.get("updated_at"),
+            "room_ids": ",".join(rids), "rooms": ", ".join(by_room_name[r] for r in rids if r in by_room_name),
+            "event_type_name": type_names.get(et), "source": origin,
+            "deleted": 1 if e.get("deleted_at") else 0, "seen_at": seen_at}
+
+
+def _ts_loc_id(o: dict):
+    """location_id as the API sends it, or the id of a nested {"location": {...}} as some objects carry it."""
+    v = o.get("location_id")
+    if v in (None, "") and isinstance(o.get("location"), dict):
+        v = o["location"].get("id")
+    return v
+
+
+def _ts_date(v) -> str | None:
+    """Tripleseat's non-ISO dates are m/d/yyyy ("9/11/2026 4:54 PM"); ISO strings pass through."""
+    if not v:
+        return None
+    s = str(v).strip()
+    if re.match(r"^\d{4}-\d{2}-\d{2}", s):
+        return s[:10]
+    m = re.match(r"^(\d{1,2})/(\d{1,2})/(\d{4})", s)
+    if m:
+        return f"{m.group(3)}-{int(m.group(1)):02d}-{int(m.group(2)):02d}"
+    return None
+
+
+def _ts_lead_row(l: dict, slug: str, origin: str, seen_at: str | None) -> dict:
+    nm = " ".join(x for x in [l.get("first_name"), l.get("last_name")] if x).strip()
+    src = l.get("lead_source")
+    if not src and isinstance(l.get("selected_lead_sources"), list) and l["selected_lead_sources"]:
+        s0 = l["selected_lead_sources"][0]
+        src = s0.get("name") if isinstance(s0, dict) else s0
+    loc = l.get("location")
+    tid = str(l.get("location_id") or (loc.get("id") if isinstance(loc, dict) else "") or "")
+    status = l.get("status") or l.get("state")
+    if not status:                                      # the webhook object carries the lifecycle as timestamps
+        status = "Converted" if l.get("converted_at") else "Turned down" if l.get("turned_down_at") else "Open"
+    form = l.get("lead_form")
+    return {"lead_id": str(l.get("id")), "location_id": slug, "ts_location_id": tid,
+            "company": l.get("company"), "contact_name": nm, "status": status,
+            "source": (src.get("name") if isinstance(src, dict) else src),
+            "event_date": (_ts_date(l.get("event_date")) or ""), "guest_count": int(l.get("guest_count") or 0),
+            "description": (l.get("event_description") or "")[:500],
+            "created_at": l.get("created_at"), "updated_at": l.get("updated_at"),
+            "lead_form": (form.get("name") if isinstance(form, dict) else form),
+            "converted_at": l.get("converted_at"), "turned_down_at": l.get("turned_down_at"),
+            "origin": origin, "seen_at": seen_at}
+
+
+def load_tripleseat_catalog(con) -> dict:
+    """Route 1: what the public key can read. Replaced whole; it is small and has no history."""
+    by_loc, by_room = _ts_mapping()
+    # A taproom that lives as a room of another location (Solon in Iowa City) shares that location's billing
+    # rules and lead forms, so those catalog rows are filed under both.
+    sharers = {}
+    for l in locations():
+        if l.get("tripleseat_room_ids") and l.get("tripleseat_location_id"):
+            sharers.setdefault(str(l["tripleseat_location_id"]), []).append(l["slug"])
+    rooms, cat = [], []
+    for slug, ds, p, j in iter_raw("tripleseat", location_id="_all", dataset="catalog"):
+        for l in j.get("locations") or []:
+            tid = str(l.get("id"))
+            cat.append({"kind": "location", "id": tid, "name": l.get("name"), "location_id": by_loc.get(tid, ""), "value": (l.get("site_name") or "")})
+            for r in l.get("rooms") or []:
+                rid = str(r.get("id"))
+                kids = [str(k.get("id")) for grp in (r.get("descendants") or []) for k in (grp or []) if isinstance(k, dict)]
+                rooms.append({"room_id": rid, "ts_location_id": tid, "location_id": by_room.get(rid) or by_loc.get(tid),
+                              "name": (r.get("name") or "").strip(), "capacity": r.get("capacity"),
+                              "parent_room_id": None, "is_unassigned": 1 if r.get("is_unassigned") else 0, "_kids": kids})
+        for s in j.get("sites") or []:
+            for kind, key in (("event_type", "event_types"), ("lead_source", "lead_sources"), ("referral_source", "referral_sources"),
+                              ("line_item_category", "line_item_categories")):
+                for x in s.get(key) or []:
+                    cat.append({"kind": kind, "id": str(x.get("id")), "name": (x.get("name") or "").strip(), "location_id": "", "value": ""})
+            for b in s.get("billings") or []:
+                for bl in b.get("billing_locations") or []:
+                    tid = str(bl.get("location_id"))
+                    for slug in _ts_slugs_of(tid, by_loc, sharers):
+                        cat.append({"kind": "billing", "id": str(b.get("id")), "name": (b.get("name") or "").strip(), "location_id": slug,
+                                    "value": str(bl.get("value") or "")})
+        for f in j.get("lead_forms") or []:
+            for fl in f.get("locations") or [{}]:
+                tid = str(fl.get("id") or "")
+                for slug in _ts_slugs_of(tid, by_loc, sharers):
+                    cat.append({"kind": "lead_form", "id": str(f.get("id")), "name": (f.get("name") or "").strip(), "location_id": slug, "value": ""})
+    # Parents: a room lists its descendants, so invert that to give each child its parent.
+    parent = {}
+    for r in rooms:
+        for k in r.pop("_kids"):
+            parent.setdefault(k, r["room_id"])
+    for r in rooms:
+        r["parent_room_id"] = parent.get(r["room_id"])
+    if rooms or cat:
+        con.execute("DELETE FROM ts_rooms"); con.execute("DELETE FROM ts_catalog")
+        _upsert(con, "ts_rooms", rooms); _upsert(con, "ts_catalog", cat)
+        con.execute("INSERT OR REPLACE INTO meta VALUES ('tripleseat_catalog_at', ?)", (datetime.utcnow().isoformat(timespec="seconds") + "Z",))
+    return {"rooms": len(rooms), "catalog": len(cat)}
+
+
+def _ts_slugs_of(tid: str, by_loc: dict, sharers: dict) -> list[str]:
+    """Our slugs a Tripleseat location's per-location settings apply to: its owner plus any taproom sharing it.
+    An id that is no taproom of ours keeps the raw id, so the catalog still shows it (BlackStone)."""
+    out = [by_loc[tid]] if tid in by_loc else [tid]
+    return out + [s for s in sharers.get(tid, []) if s not in out]
+
+
+def _ts_lookups(con) -> tuple[dict, dict]:
+    room_names = {r[0]: r[1] for r in con.execute("SELECT room_id, name FROM ts_rooms WHERE is_unassigned=0")}
+    type_names = {r[0]: r[1] for r in con.execute("SELECT id, name FROM ts_catalog WHERE kind='event_type'")}
+    return room_names, type_names
+
+
+def load_tripleseat_api(con) -> dict:
+    """Route 3: events and leads pulled as a window. Replaced per location on every run — Tripleseat rows are
+    edited long after the event date (final billing, guest counts), so a full refresh of the window is both
+    cheaper and more correct than trying to detect changes. Webhook-sourced rows for the same location are
+    left alone: they may be newer than the window."""
+    by_loc, by_room = _ts_mapping()
+    room_names, type_names = _ts_lookups(con)
     n_ev = n_ld = 0
     for slug, ds, p, j in iter_raw("tripleseat", dataset="events"):
         tid = str(j.get("location_id") or "")
@@ -609,34 +777,129 @@ def load_tripleseat(con) -> dict:
         for e in j.get("events") or []:
             if e.get("deleted_at"):
                 continue
-            rows.append({"event_id": str(e.get("id")), "location_id": slug, "ts_location_id": str(e.get("location_id") or tid),
-                         "booking_id": str(e.get("booking_id") or ""), "name": e.get("name"), "status": e.get("status"),
-                         "event_type": str(e.get("event_type_id") or ""), "event_style": e.get("event_style"),
-                         "event_date": (e.get("event_date_iso8601") or e.get("event_date") or "")[:10],
-                         "start_at": e.get("event_start_iso8601") or e.get("event_start"),
-                         "end_at": e.get("event_end_iso8601") or e.get("event_end"),
-                         "guest_count": int(e.get("guest_count") or 0), "guaranteed_guest_count": int(e.get("guaranteed_guest_count") or 0),
-                         "fb_minimum": _num(e.get("food_and_beverage_min")), "rental_fee": _num(e.get("rental_fee")),
-                         "deposit": _num(e.get("deposit_amount")), "grand_total": _num(e.get("grand_total")),
-                         "actual_amount": _num(e.get("actual_amount")), "amount_due": _num(e.get("amount_due")),
-                         "price_per_person": _num(e.get("price_per_person")),
-                         "created_at": e.get("created_at"), "updated_at": e.get("updated_at")})
-        con.execute("DELETE FROM ts_events WHERE location_id=?", (slug,))
+            e = dict(e); e.setdefault("location_id", tid)
+            rows.append(_ts_event_row(e, slug, room_names, type_names, "api", None))
+        con.execute("DELETE FROM ts_events WHERE location_id=? AND COALESCE(source,'api')='api'", (slug,))
         n_ev += _upsert(con, "ts_events", rows)
     for slug, ds, p, j in iter_raw("tripleseat", dataset="leads"):
         tid = str(j.get("location_id") or "")
         rows = []
         for l in j.get("leads") or []:
-            nm = " ".join(x for x in [l.get("first_name"), l.get("last_name")] if x).strip()
-            rows.append({"lead_id": str(l.get("id")), "location_id": slug, "ts_location_id": str(l.get("location_id") or tid),
-                         "company": l.get("company"), "contact_name": nm, "status": l.get("status") or l.get("state"),
-                         "source": (l.get("lead_source") or {}).get("name") if isinstance(l.get("lead_source"), dict) else l.get("lead_source"),
-                         "event_date": (l.get("event_date") or "")[:10], "guest_count": int(l.get("guest_count") or 0),
-                         "description": (l.get("event_description") or "")[:500],
-                         "created_at": l.get("created_at"), "updated_at": l.get("updated_at")})
-        con.execute("DELETE FROM ts_leads WHERE location_id=?", (slug,))
+            l = dict(l); l.setdefault("location_id", tid)
+            rows.append(_ts_lead_row(l, slug, "api", None))
+        con.execute("DELETE FROM ts_leads WHERE location_id=? AND COALESCE(origin,'api')='api'", (slug,))
         n_ld += _upsert(con, "ts_leads", rows)
     return {"events": n_ev, "leads": n_ld}
+
+
+# What a webhook row looks like once the Apps Script has filed it: see apps-script/code.gs doTripleseatHook.
+HOOK_HEADER = ["when", "action", "kind", "object_id", "ts_location_id", "event_date", "status", "json"]
+
+
+def _unwrap_hook(payload: dict) -> tuple[str, dict]:
+    """Tripleseat's webhook body is not documented beyond 'a JSON payload describing the change'. Accept the
+    shapes it could reasonably take: {"event": {...}}, {"lead": {...}}, {"booking": {...}}, {"data": {...}},
+    or the bare object. Returns (kind, object)."""
+    if not isinstance(payload, dict):
+        return "", {}
+    bare = payload.get("id") is not None              # a wrapper has no id of its own; an event carries a nested "contact"
+    for k in ("event", "lead", "booking", "contact", "account"):
+        if not bare and isinstance(payload.get(k), dict):
+            return k, payload[k]
+    inner = None if bare else payload.get("data") if isinstance(payload.get("data"), dict) else payload.get("object") if isinstance(payload.get("object"), dict) else None
+    if inner:
+        for k in ("event", "lead", "booking"):
+            if isinstance(inner.get(k), dict):
+                return k, inner[k]
+        return str(payload.get("object_type") or payload.get("type") or inner.get("type") or "").lower(), inner
+    kind = str(payload.get("object_type") or payload.get("type") or payload.get("kind") or "").lower()
+    if not kind:
+        # Guess from the fields the object carries.
+        if "event_date_iso8601" in payload or ("grand_total" in payload and "event_date" in payload):
+            kind = "event"
+        elif "lead_form" in payload or "turned_down_at" in payload or "event_description" in payload:
+            kind = "lead"
+        elif "start_date" in payload and "end_date" in payload:
+            kind = "booking"
+    return kind, payload
+
+
+def load_tripleseat_webhooks(con) -> dict:
+    """Route 2: rows the Apps Script collected. Each row is one notification; the LAST notification per object
+    is its current state, and the warehouse keeps that state between runs. Nothing is deleted from the
+    warehouse here: a DELETE notification (or deleted_at) marks the row deleted, so a late re-send of an
+    older UPDATE cannot bring it back — rows are applied in the order received."""
+    by_loc, by_room = _ts_mapping()
+    room_names, type_names = _ts_lookups(con)
+    files = sorted(iter_raw("tripleseat", location_id="_all", dataset="webhook"), key=lambda t: t[2].name)
+    if not files:
+        return {"rows": 0}
+    n_rows = n_ev = n_ld = n_bk = n_unmapped = 0
+    cursor, first_seen = None, None
+    for slug_, ds, p, j in files:
+        hdr = j.get("header") or HOOK_HEADER
+        idx = {h: i for i, h in enumerate(hdr)}
+        for r in j.get("rows") or []:
+            n_rows += 1
+            if first_seen is None and "when" in idx and r[idx["when"]]:
+                first_seen = r[idx["when"]]
+            try:
+                raw = r[idx["json"]] if "json" in idx else r[-1]
+                obj = json.loads(raw) if isinstance(raw, str) and raw.strip() else {}
+            except (ValueError, IndexError):
+                obj = {}
+            action = str(r[idx["action"]] if "action" in idx else "").upper()
+            kind, o = _unwrap_hook(obj)
+            kind = (str(r[idx["kind"]]).lower() if "kind" in idx and r[idx["kind"]] else kind) or kind
+            seen = str(r[idx["when"]]) if "when" in idx else None
+            deleted = "DELETE" in action or bool(o.get("deleted_at"))
+            if kind == "event" and o.get("id") is not None:
+                slug = _ts_slug(_ts_loc_id(o) or (r[idx["ts_location_id"]] if "ts_location_id" in idx else None),
+                                _ts_ids(o.get("room_ids") if o.get("room_ids") is not None else o.get("rooms")), by_loc, by_room)
+                if not slug:
+                    n_unmapped += 1; continue
+                row = _ts_event_row(o, slug, room_names, type_names, "webhook", seen)
+                row["deleted"] = 1 if deleted else 0
+                con.execute("DELETE FROM ts_events WHERE event_id=? AND location_id<>?", (row["event_id"], slug))   # moved between taprooms
+                _upsert(con, "ts_events", [row]); n_ev += 1
+            elif kind == "lead" and o.get("id") is not None:
+                tid = _ts_loc_id(o) or (r[idx["ts_location_id"]] if "ts_location_id" in idx else None)
+                slug = _ts_slug(tid, [], by_loc, by_room)
+                if not slug:
+                    n_unmapped += 1; continue
+                row = _ts_lead_row(o, slug, "webhook", seen)
+                if "CONVERT" in action:
+                    row["status"] = "Converted"
+                elif "TURNED_DOWN" in action or "TURN_DOWN" in action:
+                    row["status"] = "Turned down"
+                con.execute("DELETE FROM ts_leads WHERE lead_id=? AND location_id<>?", (row["lead_id"], slug))
+                _upsert(con, "ts_leads", [row]); n_ld += 1
+            elif kind == "booking":
+                # A booking is the folder the events sit in; the events themselves arrive as events. Nothing to
+                # store yet — counted so the log shows the feed is alive.
+                n_bk += 1
+        cursor = int(j.get("since") or 0) + len(j.get("rows") or [])
+    if cursor is not None:
+        con.execute("INSERT OR REPLACE INTO meta VALUES ('tripleseat_webhook_cursor', ?)", (str(cursor),))
+        con.execute("INSERT OR REPLACE INTO meta VALUES ('tripleseat_webhook_at', ?)", (datetime.utcnow().isoformat(timespec="seconds") + "Z",))
+        if first_seen and not con.execute("SELECT 1 FROM meta WHERE key='tripleseat_webhook_first'").fetchone():
+            con.execute("INSERT INTO meta VALUES ('tripleseat_webhook_first', ?)", (str(first_seen),))
+    if n_unmapped:
+        log.warning("Tripleseat webhooks: %d notifications for a location that is no taproom of ours (BlackStone?) — ignored", n_unmapped)
+    return {"rows": n_rows, "events": n_ev, "leads": n_ld, "bookings": n_bk, "cursor": cursor}
+
+
+def load_tripleseat(con) -> dict:
+    """All three routes (sdp/tripleseat.py). The catalog goes first because the other two resolve room and
+    event-type names through it."""
+    out = {}
+    for name, fn in (("catalog", load_tripleseat_catalog), ("api", load_tripleseat_api), ("webhooks", load_tripleseat_webhooks)):
+        try:
+            out[name] = fn(con)
+        except Exception as e:
+            log.error("transform: tripleseat %s failed (%s: %s) — continuing", name, type(e).__name__, e)
+            out[name] = {"error": str(e)}
+    return out
 
 
 # ---------------------------------------------------------------- manual inputs

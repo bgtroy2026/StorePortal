@@ -81,10 +81,13 @@
     "history_days_in_bundle": 400
   },
   "tripleseat": {
+    "_comment": "Three routes in (sdp/tripleseat.py): the public key reads the catalog (locations, rooms, picklists, billing rules); webhooks deliver events/leads through the Apps Script; the OAuth API needs an application Tripleseat has not yet let us create. site_id is the account's one site (Big Grove Brewery). tenant is only used to build links back into Tripleseat.",
     "base_url": "https://api.tripleseat.com/v1",
     "requests_per_second": 5,
     "days_forward": 180,
-    "scope": "read"
+    "scope": "read",
+    "site_id": "6789",
+    "tenant": "biggrovebrewery"
   },
   "inventory": {
     "_comment": "How often each category is EXPECTED to be counted, in days. Drives the count-compliance score; it does not change any dollar figure.",

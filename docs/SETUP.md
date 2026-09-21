@@ -7,8 +7,9 @@
 | `MARGINEDGE_API_KEY` | MarginEdge → your name (top right) → **Settings → Security → Create new API key** (you are a MarginEdge Admin). Shown once; read-only; sent as `x-api-key`. Keys made on/after 2026-08-04 include bulk-export access. |
 | `TOAST_CLIENT_ID` / `TOAST_CLIENT_SECRET` | Toast API credentials for the restaurant group (Toast support / Partner Connect / "Toast API access" request). Access is scoped per restaurant GUID. |
 | `PORTAL_SECRET` | Any long random string you generate: `python -c "import secrets;print(secrets.token_urlsafe(48))"`. Used for every bundle key and the warehouse state. Must match the Apps Script property of the same name. |
+| `TRIPLESEAT_PUBLIC_KEY` | Tripleseat → Settings → **Tripleseat API / Webhooks** → API tab → "Tripleseat Public API key". It is the key Tripleseat embeds in website lead forms, so it is not a secret in the usual sense — but the repository is public, so it lives in a secret all the same. See "Tripleseat" below for what it can and cannot do. |
 
-Add the four as **GitHub → Settings → Secrets and variables → Actions → New repository secret**.
+Add them as **GitHub → Settings → Secrets and variables → Actions → New repository secret**.
 Optional repository *variable* `TOAST_HOST` (defaults to `https://ws-api.toasttab.com`; sandbox is
 `https://ws-sandbox-api.eng.toasttab.com`).
 
@@ -32,6 +33,45 @@ python -m sdp toast-restaurants   # Toast restaurant GUID + name (partner scope)
 If `marginedge_unit_id` is left blank the pull matches units by `me_name` (the exact name in MarginEdge),
 which is pre-filled for all six taprooms. Toast GUIDs are visible in Toast Web → Restaurant admin → Restaurant
 info once your Toast user has that access.
+
+## 2a. Tripleseat (private events) — three routes, added 2026-09-21
+
+Tripleseat is the events team's booking system (`biggrovebrewery.tripleseat.com`). The portal reaches it three ways,
+each in `sdp/tripleseat.py`, and the nightly pull runs whichever are configured:
+
+| Route | What it gives | Needs | State |
+|---|---|---|---|
+| **Public key** | The catalog: every location and its rooms (with capacities), the site's event types, lead sources, referral sources, billing rules per location (gratuity, taxes, fees) and lead forms. Feeds the "Rooms and capacities" and "Event charges" panels and resolves room and event-type names on events. | `TRIPLESEAT_PUBLIC_KEY` | **Working.** Probed on 2026-09-21: reads `/locations`, `/sites`, `/lead_forms` only. `/events`, `/leads`, `/bookings`, `/rooms`, `/users`, `/accounts` all answer "You don't have permission". |
+| **Webhooks** | Events, leads and bookings as they are created, edited or deleted. Tripleseat POSTs the object to the Apps Script, which files it on a "Tripleseat" tab of the roster workbook; the pipeline collects the tail nightly (`{"a":"tripleseat"}`, HMAC of `PORTAL_SECRET`, like the scorecard). | The webhook added in Tripleseat (below) and a redeployed Apps Script | Built; switched on by the steps below. Only objects touched after the webhook exists arrive — history fills in as the team works. |
+| **OAuth API** | The full read API as a nightly window (`/events/search`, `/leads/search`). | `TRIPLESEAT_CLIENT_ID` / `_SECRET` / `_REFRESH_TOKEN`, `TRIPLESEAT_REDIRECT_URI` | **Blocked.** Creating the client application under Settings → Tripleseat API & Webhooks fails on Tripleseat's side; needs their support. Note the token endpoint offers only `authorization_code` (one browser consent by a Tripleseat admin) and `oauth1_exchange` — no machine-to-machine grant. |
+
+**Location mapping** is in `config/locations.json` (`tripleseat_location_id`). Print the account's locations and rooms
+with `TRIPLESEAT_PUBLIC_KEY=… python -m sdp ts-locations`. Five taprooms are Tripleseat locations of their own;
+**Solon is not** — its events are booked under the Iowa City location in a room named "Solon", so Solon carries Iowa
+City's location id plus `tripleseat_room_ids: ["232405"]`, and a room match wins over the location. "BlackStone"
+(location 11731) is in the account but is not a taproom; its notifications are ignored and counted in the log.
+
+**Switching the webhook on** (one time, in this order):
+
+1. Redeploy the Apps Script (Deploy → Manage deployments → ✏️ → New version) so it carries `doTripleseatHook`.
+2. In the Apps Script editor run `showTripleseatWebhookUrl()` once. It creates the `TRIPLESEAT_HOOK_TOKEN` script
+   property and logs the target URL: the web app's `/exec` URL followed by `?hook=<token>`.
+3. In Tripleseat: Settings → Tripleseat API / Webhooks → Webhooks tab → **Add Webhook**. Tick the Event actions
+   (Create, Update, Delete Event), the Lead actions (Create Lead, Create Internal Lead, Convert Lead, Lead Turned
+   Down) and the Booking actions (Create, Update, Delete, Status Change, Change Booking Dates, Convert Lead To
+   Booking). Leave Contact and Account actions unticked — they carry guests' details the portal never shows. Leave
+   "Include Event Payment and Line Item Information" unticked to start (it can make a delivery too large for a
+   cell; the receiver trims, but nothing reads line items yet). Paste the URL as the Target URL.
+4. Edit any event in Tripleseat, then check two places: the "Tripleseat" tab of the roster workbook has a new row,
+   and the Webhooks tab in Tripleseat does not count the delivery as failed. Apps Script answers every POST with
+   a **302 redirect** (after recording the body); Tripleseat may count that as a failure and disable the endpoint
+   after too many, and enabling it again resets the count. If it does, the receiver has to move to something that
+   answers 200 directly (a Cloudflare Worker relaying to the same script is the smallest such thing).
+
+The receiver cannot verify Tripleseat's `X-Signature` header — Apps Script never sees request headers — so the
+random token in the URL is what stands between the tab and the internet. The tab is append-only, the pipeline
+treats it as untrusted input, and email addresses, phone numbers and postal addresses are stripped from every
+delivery before it is written.
 
 ## 3. GitHub Pages + Actions
 

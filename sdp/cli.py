@@ -12,12 +12,13 @@
   python -m sdp me-diag                             MarginEdge connectivity diagnostic (never prints the key)
   python -m sdp toast-diag                          Toast connectivity diagnostic + restaurant GUIDs
   python -m sdp sc-test                             fetch the Leadership Scorecard once and print its shape
-  python -m sdp ts-locations                        list Tripleseat locations (ids for config/locations.json)
-  python -m sdp ts-auth-url                         print the one-time Tripleseat consent URL
+  python -m sdp ts-locations                        list Tripleseat locations + rooms (public key) — ids for config/locations.json
+  python -m sdp ts-auth-url                         print the one-time Tripleseat consent URL (OAuth route)
   python -m sdp ts-exchange --code CODE             trade the consent code for a refresh token (run locally)
   python -m sdp toast-restaurants                   list Toast restaurants visible to the client
 
-Env: MARGINEDGE_API_KEY, TOAST_CLIENT_ID, TOAST_CLIENT_SECRET, PORTAL_SECRET,
+Env: MARGINEDGE_API_KEY, TOAST_CLIENT_ID, TOAST_CLIENT_SECRET, PORTAL_SECRET, APPS_SCRIPT_URL,
+     TRIPLESEAT_PUBLIC_KEY (catalog), and for the OAuth route
      TRIPLESEAT_CLIENT_ID, TRIPLESEAT_CLIENT_SECRET, TRIPLESEAT_REDIRECT_URI, TRIPLESEAT_REFRESH_TOKEN
      (see docs/SETUP.md)
 """
@@ -160,18 +161,19 @@ def cmd_pull(a):
             except Exception as e:
                 log.warning("depletions not pulled (%s: %s) — the taproom-vs-market view keeps its last load", type(e).__name__, e)
     if a.source in ("all", "tripleseat"):
-        # The refresh token is the piece that makes this unattended; without it the consent step has not been
-        # done yet and there is nothing to run. It may live in the warehouse (after a rotation) or the secret.
-        if env("TRIPLESEAT_CLIENT_ID") and env("TRIPLESEAT_CLIENT_SECRET"):
+        # Three routes in (see sdp/tripleseat.py): the public key for the catalog, the Apps Script for webhook
+        # rows, and the OAuth API when it finally exists. pull_all runs whichever are configured, each isolated;
+        # it raises only when every configured route failed, and warns when none is configured.
+        if env("TRIPLESEAT_PUBLIC_KEY") or (env("APPS_SCRIPT_URL") and env("PORTAL_SECRET")) or (env("TRIPLESEAT_CLIENT_ID") and env("TRIPLESEAT_CLIENT_SECRET")):
             attempted.append("tripleseat")
             try:
                 from . import tripleseat
                 ts_cfg = cfg.get("tripleseat", {})
-                tripleseat.pull(locs, days_back=cfg["backfill_days"], days_forward=int(ts_cfg.get("days_forward", 180)))
+                tripleseat.pull_all(locs, days_back=cfg["backfill_days"], days_forward=int(ts_cfg.get("days_forward", 180)))
             except Exception as e:
                 failed.append("tripleseat"); log.error("Tripleseat pull failed (%s: %s) — continuing with other sources", type(e).__name__, e)
         else:
-            log.warning("TRIPLESEAT_CLIENT_ID / TRIPLESEAT_CLIENT_SECRET not set — skipping Tripleseat")
+            log.warning("no Tripleseat route configured (TRIPLESEAT_PUBLIC_KEY / APPS_SCRIPT_URL / OAuth) — skipping Tripleseat")
     if a.source in ("all", "weather"):
         # Keyless and optional: weather is context, never a reason to fail a run. It does not count towards
         # `attempted`, so a weather outage on its own can never trip the "every source failed" exit below.
@@ -258,8 +260,18 @@ def cmd_ts_exchange(a):
 
 
 def cmd_ts_locations(a):
-    from .tripleseat import Tripleseat
-    for l in Tripleseat().locations():
+    """Tripleseat locations and rooms, with the public key when there is one (no OAuth needed), else the API."""
+    from . import tripleseat
+    if env("TRIPLESEAT_PUBLIC_KEY"):
+        locs = tripleseat.PublicCatalog().locations()
+        ours = {tripleseat.match_location(l, locs): l["slug"] for l in locations()}
+        for l in locs:
+            print(f"{l.get('id')}\t{l.get('name')}\t-> {ours.get(str(l.get('id')), '(not a taproom)')}")
+            for r in l.get("rooms") or []:
+                if not r.get("is_unassigned"):
+                    print(f"\t  room {r.get('id')}\t{r.get('name')}{('  (' + str(r.get('capacity')) + ' seats)') if r.get('capacity') else ''}")
+        return
+    for l in tripleseat.Tripleseat().locations():
         print(f"{l.get('id')}\t{l.get('name')}")
 
 

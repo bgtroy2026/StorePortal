@@ -1737,12 +1737,56 @@ function spark(vals){
 
 /* ---------- Tripleseat events ---------- */
 function hasEvents(){ return locIds().some(function(l){return ((D.events||{})[l]||[]).length;}); }
-function evRows(){ var out=[]; locIds().forEach(function(l){((D.events||{})[l]||[]).forEach(function(r){ out.push({loc:l,id:r[0],name:r[1],d:r[2],status:r[3],guests:r[4],booked:r[5],actual:r[6],fb:r[7],dep:r[8],style:r[9]}); });}); return out.sort(function(a,b){return a.d<b.d?-1:1;}); }
+function evRows(){ var out=[]; locIds().forEach(function(l){((D.events||{})[l]||[]).forEach(function(r){ out.push({loc:l,id:r[0],name:r[1],d:r[2],status:r[3],guests:r[4],booked:r[5],actual:r[6],fb:r[7],dep:r[8],style:r[9],rooms:r[10]||'',type:r[11]||'',src:r[12]||''}); });}); return out.sort(function(a,b){return a.d<b.d?-1:1;}); }
 function evIsDef(st){ return /^(definite|confirmed)/i.test(st||''); }
 function evValue(e){ return (e.actual!=null&&e.actual>0)?e.actual:(e.booked||0); }
+function tsInfo(){ return (D&&D.tripleseat)||null; }
+function tsHasCatalog(){ var t=tsInfo(); return !!(t&&((t.event_types||[]).length||locIds().some(function(l){return ((t.rooms||{})[l]||[]).length;}))); }
+function fdt(s){ if(!s) return '—'; var d=new Date(s); return isNaN(d)?esc(s):d.toLocaleDateString(undefined,{month:'short',day:'numeric'})+' '+d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'}); }
+
+/* What is connected, in words a director can act on. The three routes are described in sdp/tripleseat.py:
+   the public key (catalog only), webhooks (events as they change), the OAuth API (not yet available). */
+function tsStatusPanel(){
+  var t=tsInfo(); if(!t) return '';
+  var link=t.tenant?' <a href="https://'+esc(t.tenant)+'.tripleseat.com/events" target="_blank" rel="noopener">Open Tripleseat ↗</a>':'';
+  var line;
+  if(t.status==='events'){
+    line='<b>Tripleseat is connected.</b> '+fn(t.events)+' events'+(t.webhook_events?', '+fn(t.webhook_events)+' of them arriving live as they are created or edited (since '+fdt(t.webhook_since)+')':'')
+        +(t.catalog_at?'; rooms and fees refreshed '+fdt(t.catalog_at):'')+'.'
+        +(t.webhook_events&&!t.api_events?' Events only reach the portal once someone touches them in Tripleseat, so older bookings that have not been edited since the connection are not here yet.':'');
+  } else if(t.status==='catalog'){
+    line='<b>Tripleseat is partly connected.</b> The portal can read the account’s rooms, event types, lead sources and fee rules (refreshed '+fdt(t.catalog_at)+'), but no events have arrived yet. '
+        +(t.webhook_rows?'The webhook is delivering ('+fn(t.webhook_rows)+' notifications so far) — events appear after the next refresh.':'Events start flowing once the Tripleseat webhook is switched on (Settings → Tripleseat API &amp; Webhooks).');
+  } else {
+    line='<b>Tripleseat is not connected yet.</b> Once it is, booked private events, the lead pipeline and each taproom’s rooms and fees appear here.';
+  }
+  return '<div class="panel noprov" style="margin-bottom:14px"><div class="hint" style="margin:0">'+line+link+'</div></div>';
+}
+
+function tsCatalogPanels(){
+  var t=tsInfo(); if(!t||!tsHasCatalog()) return '';
+  var multi=locIds().length>1, locName=function(l){var L=D.locations.filter(function(z){return z.id===l;})[0];return L?L.name:l;};
+  var rooms=[]; locIds().forEach(function(l){((t.rooms||{})[l]||[]).forEach(function(r){rooms.push({loc:l,id:r[0],name:r[1],cap:r[2],parent:r[3]});});});
+  var fees=[]; locIds().forEach(function(l){((t.fees||{})[l]||[]).forEach(function(f){fees.push({loc:l,name:f[0],rate:f[1]});});});
+  var roomT=rooms.length?('<div style="overflow-x:auto"><table class="t"><tr>'+(multi?'<th>Taproom</th>':'')+'<th>Room / area</th><th class="r">Capacity</th><th>Part of</th></tr>'
+      +rooms.map(function(r){return '<tr>'+(multi?'<td>'+esc(locName(r.loc))+'</td>':'')+'<td class="n">'+esc(r.name)+'</td><td class="r">'+(r.cap!=null?fn(r.cap):'<span class="tg">not set</span>')+'</td><td>'+esc(r.parent||'')+'</td></tr>';}).join('')
+      +'</table></div>'):'<div class="empty">No rooms for this taproom in Tripleseat.</div>';
+  var feeT=fees.length?('<div style="overflow-x:auto"><table class="t"><tr>'+(multi?'<th>Taproom</th>':'')+'<th>Charge</th><th class="r">Rate</th></tr>'
+      +fees.map(function(f){return '<tr>'+(multi?'<td>'+esc(locName(f.loc))+'</td>':'')+'<td class="n">'+esc(f.name)+'</td><td class="r">'+esc(f.rate)+'</td></tr>';}).join('')
+      +'</table></div>'):'<div class="empty">No fee rules for this taproom in Tripleseat.</div>';
+  var picks=(t.event_types||[]).length?'<div class="hint" style="margin-top:8px"><b>Event types in use:</b> '+t.event_types.map(esc).join(', ')+'.</div>':'';
+  return '<div class="grid cols2" style="margin-top:14px">'
+    +panel('Rooms and capacities','Every bookable room or area per taproom, as set up in Tripleseat. A capacity that is not set there cannot be checked here.',roomT)
+    +panel('Event charges by taproom','Gratuity, taxes and fees Tripleseat adds to an event at each taproom. Differences between taprooms are worth a look — a fee one taproom charges and another does not is usually a setup choice, not a policy.',feeT+picks)
+    +'</div>';
+}
 
 function pgEvents(m){
-  if(!hasEvents()){ m.innerHTML='<div class="panel"><h3>Events</h3><div class="empty">No Tripleseat data yet. Once the Tripleseat credentials are set, booked private events and the lead pipeline appear here.</div></div>'; return; }
+  if(!hasEvents()){
+    m.innerHTML=(tsStatusPanel()||'<div class="panel"><h3>Events</h3><div class="empty">No Tripleseat data yet. Once Tripleseat is connected, booked private events and the lead pipeline appear here.</div></div>')
+      +tsCatalogPanels();
+    return;
+  }
   var a=S.d0,b=S.d1,T=D.meta.through;
   var all=evRows(), inRange=all.filter(function(e){return e.d>=a&&e.d<=b;}), future=all.filter(function(e){return e.d>T;});
   var defIn=inRange.filter(function(e){return evIsDef(e.status);});
@@ -1750,7 +1794,8 @@ function pgEvents(m){
   var futDef=future.filter(function(e){return evIsDef(e.status);});
   var futRev=futDef.reduce(function(p,c){return p+(c.booked||0);},0);
   var k=kpis(a,b);
-  m.innerHTML='<div class="grid tiles">'
+  m.innerHTML=tsStatusPanel()
+    +'<div class="grid tiles">'
     +tile('Events in range',fn(defIn.length),'<span class="tg">'+fn(inRange.length-defIn.length)+' tentative/other</span>')
     +tile('Event revenue',fk(rev),'',k.net?'<span class="tg">'+fp(rev/k.net)+' of net sales</span>':'')
     +tile('Event guests',fn(gu),'<span class="tg">'+fm(gu?rev/gu:null,2)+' per guest</span>')
@@ -1764,19 +1809,22 @@ function pgEvents(m){
     +'<div class="grid" style="margin-top:14px;grid-template-columns:repeat(auto-fit,minmax(min(560px,100%),1fr))">'
     +panel('Upcoming events','Confirmed and tentative bookings after '+fdate(T),'<div id="evUp"></div>')
     +panel('Events in the selected range','Definite events counted in the revenue tile above','<div id="evIn"></div>')
-    +'</div>';
+    +'</div>'
+    +tsCatalogPanels();
   var mm={}; locIds().forEach(function(l){var e=(D.events_monthly||{})[l]||{};Object.keys(e).forEach(function(mo){var o=mm[mo]||(mm[mo]={n:0,booked:0,actual:0,guests:0});o.n+=e[mo][0];o.booked+=e[mo][1];o.actual+=e[mo][2];o.guests+=e[mo][3];});});
   var ms=Object.keys(mm).sort().slice(-14);
   mk('c_evm',{type:'bar',data:{labels:ms.map(fmon),datasets:[
       {label:'Booked',data:ms.map(function(x){return mm[x].booked;}),backgroundColor:css('s1'),borderRadius:4,maxBarThickness:34},
       {label:'Actual billed',data:ms.map(function(x){return mm[x].actual;}),backgroundColor:css('s3'),borderRadius:4,maxBarThickness:34}]},
     options:baseOpts({plugins:{legend:{display:true,position:'bottom'},tooltip:{callbacks:{label:function(c){return ' '+c.dataset.label+': '+fk(c.parsed.y)+'  ('+fn(mm[ms[c.dataIndex]].n)+' events)';}}}}})});
+  var anyRoom=all.some(function(e){return e.rooms;}), anyType=all.some(function(e){return e.type;});
   function evTable(list,showStatus){
     if(!list.length) return '<div class="empty">None in this window.</div>';
     var multi=locIds().length>1;
-    return '<div style="overflow-x:auto"><table class="t"><tr><th>Date</th>'+(multi?'<th>Location</th>':'')+'<th>Event</th>'+(showStatus?'<th>Status</th>':'')+'<th class="r">Guests</th><th class="r">Booked</th><th class="r">Actual</th></tr>'
+    return '<div style="overflow-x:auto"><table class="t"><tr><th>Date</th>'+(multi?'<th>Location</th>':'')+'<th>Event</th>'+(anyRoom?'<th>Room</th>':'')+(anyType?'<th>Type</th>':'')+(showStatus?'<th>Status</th>':'')+'<th class="r">Guests</th><th class="r">Booked</th><th class="r">Actual</th></tr>'
       +list.slice(0,40).map(function(e){var L=D.locations.filter(function(z){return z.id===e.loc;})[0];
         return '<tr><td>'+fdate(e.d)+'</td>'+(multi?'<td>'+esc(L?L.name:e.loc)+'</td>':'')+'<td class="n">'+esc(e.name)+'</td>'
+        +(anyRoom?'<td>'+esc(e.rooms)+'</td>':'')+(anyType?'<td>'+esc(e.type)+'</td>':'')
         +(showStatus?'<td><span class="pill"'+(evIsDef(e.status)?' style="background:#e6f4ea;color:var(--good)"':'')+'>'+esc(e.status||'')+'</span></td>':'')
         +'<td class="r">'+fn(e.guests)+'</td><td class="r">'+fm(e.booked)+'</td><td class="r">'+(e.actual!=null&&e.actual>0?fm(e.actual):'—')+'</td></tr>';}).join('')
       +'</table>'+(list.length>40?'<div class="hint" style="margin-top:6px">Showing 40 of '+fn(list.length)+'</div>':'')+'</div>';
