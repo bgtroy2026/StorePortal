@@ -125,8 +125,8 @@ body.sheetmode #main{background:#f2f1ec}
 .panel .hint{font-size:11.5px;color:var(--muted);margin-bottom:10px}
 .panel .cw{position:relative;height:260px}
 .panel .cw.tall{height:340px}
-.cols2{grid-template-columns:repeat(auto-fit,minmax(420px,1fr))}
-.cols3{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+.cols2{grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr))}
+.cols3{grid-template-columns:repeat(auto-fit,minmax(min(320px,100%),1fr))}
 table.t{width:100%;border-collapse:collapse;font-size:12.5px}
 table.t th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);padding:6px 8px;border-bottom:2px solid var(--grid);white-space:nowrap}
 table.t td{padding:6px 8px;border-bottom:1px solid #eef0f6;white-space:nowrap}
@@ -157,10 +157,7 @@ table.t td.n{font-weight:700;color:var(--navy);white-space:normal;min-width:120p
   header .signout{margin-left:auto}
   header .brand{font-size:13px;width:100%}
 
-  #nav{display:flex;flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;
-       scrollbar-width:none;width:100%;gap:2px;
-       -webkit-mask-image:linear-gradient(to right,#000 88%,transparent);
-               mask-image:linear-gradient(to right,#000 88%,transparent)}
+  #nav{display:flex;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;width:100%;gap:2px}
   #nav::-webkit-scrollbar{display:none}
   #nav button{flex:0 0 auto;white-space:nowrap}
 
@@ -283,6 +280,14 @@ header .signout{border-radius:6px;text-transform:uppercase;letter-spacing:.1em;f
 .navbar nav button.on{color:#fff;background:var(--navy)}
 .navbar nav button.on::after{content:"";position:absolute;left:10px;right:10px;bottom:0;height:3px;background:var(--green);border-radius:3px 3px 0 0}
 .navbar nav button:focus-visible{outline:2px solid var(--green);outline-offset:-3px}
+.navbar nav{overscroll-behavior-x:contain;touch-action:pan-x}
+.navbar::before,.navbar::after{content:"";position:absolute;top:0;bottom:0;width:30px;pointer-events:none;opacity:0;transition:opacity .15s ease;z-index:1}
+.navbar::after{right:0;background:linear-gradient(to right,rgba(49,55,87,0),var(--navy2) 85%)}
+.navbar::before{left:0;background:linear-gradient(to left,rgba(49,55,87,0),var(--navy2) 85%)}
+.navbar.more::after,.navbar.less::before{opacity:1}
+button,select,input,a{-webkit-tap-highlight-color:transparent}
+button{touch-action:manipulation}
+#fltToggle{display:none}
 
 /* ---- page band: navy hopleaf, the page named in bold caps, the controls on it ---- */
 #pagehead{background:var(--navy) url('images/hopleaf-navy.webp') center 38%/cover no-repeat;color:#fff}
@@ -324,6 +329,16 @@ table.t td.n{font-weight:600}
 .pill{background:#e8eaf2;letter-spacing:.02em}
 .seg{border-radius:8px}
 .seg button{font-size:12.5px;color:var(--ink2)}
+main button.signout{border:1px solid var(--navy);background:#fff;color:var(--navy);border-radius:7px;padding:8px 14px;font:inherit;font-size:12.5px;font-weight:600;
+  letter-spacing:.02em;cursor:pointer;margin:0}
+main button.signout:hover{background:var(--navy);color:#fff}
+main button.signout:disabled{opacity:.55;cursor:default}
+/* A table wider than its frame shows a soft shadow on the side that has more to scroll to. */
+.tw{background:
+  linear-gradient(to right,var(--surface) 40%,rgba(255,255,255,0)) left center/36px 100% no-repeat local,
+  linear-gradient(to left,var(--surface) 40%,rgba(255,255,255,0)) right center/36px 100% no-repeat local,
+  radial-gradient(farthest-side at 0 50%,rgba(27,36,73,.20),rgba(27,36,73,0)) left center/12px 100% no-repeat scroll,
+  radial-gradient(farthest-side at 100% 50%,rgba(27,36,73,.20),rgba(27,36,73,0)) right center/12px 100% no-repeat scroll}
 .ackb,.csv{border-radius:6px}
 .ackb:hover{background:var(--navy);color:#fff;border-color:var(--navy)}
 .find:focus{border-color:var(--navy)}
@@ -341,23 +356,99 @@ footer.site img{width:150px;height:150px;display:inline-block}
 footer.site div{margin-top:12px;font-size:10.5px;font-weight:700;letter-spacing:.24em;text-transform:uppercase}
 
 @media (max-width:720px){
-  header{height:auto;padding:10px 12px;flex-wrap:nowrap}
+  header{height:auto;padding:9px 12px;flex-wrap:nowrap;gap:8px}
   header .brand{width:auto;flex:1;min-width:0}
+  header .brand img{height:15px;max-width:100%}
   header .brand span{display:none}
-  .navbar{padding:0 4px}
-  .navbar nav button{padding:0 10px;height:38px;font-size:10.5px}
-  #nav{-webkit-mask-image:linear-gradient(to right,#000 90%,transparent);mask-image:linear-gradient(to right,#000 90%,transparent)}
-  #pagehead .phin{padding:12px 12px 12px;align-items:flex-start}
+  header .signout{min-height:36px;padding:0 11px;margin-left:0}
+  .navbar{padding:0;-webkit-transform:translateZ(0);transform:translateZ(0)}
+  .navbar nav{padding:0 4px}
+  .navbar nav button{padding:0 12px;height:44px;font-size:11px}
+
+  /* The band names the page; the controls fold away behind one button so the numbers own the first screen. */
+  #pagehead .phin{padding:13px 12px 12px;align-items:stretch;flex-direction:column;gap:10px}
   #ptitle{font-size:21px}
-  #pagehead .phr{align-items:flex-start;flex-basis:100%}
-  #pagehead .filters{justify-content:flex-start;gap:6px 8px}
+  #ptitle::after{margin-top:7px;height:3px}
+  #psub{margin-top:7px}
+  #fltToggle{display:inline-block;margin-top:11px;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.06);color:#fff;border-radius:8px;
+    padding:0 14px;min-height:40px;font:inherit;font-size:13px;font-weight:600;cursor:pointer}
+  body.sheetmode #fltToggle{display:none}
+  #pagehead .phr{align-items:stretch;flex:0 0 auto;width:100%;min-width:0;gap:8px}
+  #pagehead .filters{display:none;width:100%;min-width:0;justify-content:flex-start;gap:8px}
+  #pagehead.open .filters{display:flex}
   #pagehead .filters label{display:none}
+  /* 16px on anything typed into: below that iOS Safari zooms the whole page on focus and leaves it zoomed */
+  #pagehead .filters select{flex:1 1 100%;font-size:16px;min-height:44px}
+  #pagehead .filters input[type=date]{flex:1 1 40%;min-width:0;font-size:16px;min-height:44px}
+  #pagehead .seg{flex:1 1 100%;max-width:100%;overflow-x:auto;scrollbar-width:none}
+  #pagehead .seg::-webkit-scrollbar{display:none}
+  #pagehead .seg button{flex:1 0 auto;min-height:42px;padding:0 12px;font-size:13px}
+  #pagehead .ackb{flex:1 1 100%;min-height:42px;font-size:13px}
+  #pagehead .fresh{text-align:left;font-size:11px}
+
+  main{padding:12px 10px 30px}
   .tiles{grid-template-columns:repeat(auto-fit,minmax(132px,1fr))}
   .grid{gap:10px}
-  #pagehead .fresh{text-align:left}
-  main{padding:12px 10px 30px}
   .tile .v{font-size:22px}
+  .panel{padding:13px 12px}
+  .panel h3{font-size:14.5px}
+  .ph{flex-wrap:wrap;gap:6px 10px}
+  .find{font-size:16px;width:112px;min-height:34px;padding:2px 8px}
+  .find:focus{width:150px}
+  .csv{min-height:34px;padding:0 11px}
+  .ackb{min-height:34px;padding:0 10px}
+  .acknote{font-size:16px;min-width:0;width:100%}
+  .panel .cw{height:230px}
+  .panel .cw.tall{height:300px}
+
+  /* Wide tables scroll sideways inside their own frame, with the row's name pinned so the figures keep their label. */
+  .tw,.panel{-webkit-overflow-scrolling:auto;overscroll-behavior-x:contain}
+  table.t .stick{position:sticky;left:0;z-index:1;background:var(--surface);box-shadow:1px 0 0 var(--grid)}
+  table.t tr:hover .stick{background:#f6f7fb}
+  table.t td.n{min-width:104px;max-width:46vw}
+
+  /* A heat cell's label cannot hang off the cell on a phone — it runs off the screen. Show it as a caption bar instead. */
+  .heat{gap:1px;font-size:9.5px}
+  .heat .c{height:24px;border-radius:3px}
+  .heat .c:hover::after{position:fixed;left:10px;right:10px;bottom:12px;top:auto;transform:none;white-space:normal;text-align:center;
+    padding:10px 12px;font-size:13px;border-radius:9px;box-shadow:0 6px 24px rgba(0,0,0,.35);z-index:60}
+
+  .onepager{padding:14px 12px;overflow-x:auto}
+  .onepager .oph{flex-wrap:wrap;gap:8px}
+  .onepager table.t{font-size:12px}
+  .onepager table.t th,.onepager table.t td{white-space:normal;padding:4px 4px}
+  .onepager table.t td.n{min-width:84px}
+  main button.signout{min-height:42px;width:100%}
+  .fcw{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .card{padding:28px 22px 24px}
+  .card h1{font-size:17px;letter-spacing:.08em}
+  #usageWrap{padding:12px 8px}
+  #usageBox{padding:14px 12px}
+  footer.site{padding:28px 14px 24px}
   footer.site img{width:144px;height:144px}
+}
+/* A phone on its side is wide but only ~390px tall: the same folding, and a band one line high. */
+@media (max-height:520px) and (min-width:721px){
+  header{height:44px}
+  #pagehead .phin{padding:9px 18px;align-items:center}
+  #pagehead .ptw{display:flex;align-items:center;gap:6px 16px;flex-wrap:wrap}
+  #ptitle{font-size:19px}
+  #ptitle::after{display:none}
+  #psub{margin-top:0}
+  #fltToggle{display:inline-block;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.06);color:#fff;border-radius:8px;
+    padding:0 12px;min-height:36px;font:inherit;font-size:12.5px;font-weight:600;cursor:pointer}
+  body.sheetmode #fltToggle{display:none}
+  #pagehead .phr{flex:1 1 100%;align-items:flex-end}
+  #pagehead .filters{display:none}
+  #pagehead.open .filters{display:flex}
+  #pagehead .fresh{display:none}
+  #pagehead.open .fresh{display:block}
+}
+/* Any touch screen, whatever its width: nothing typed into is under 16px (iOS zooms the page otherwise), and
+   the quiet hover-only controls are simply on. */
+@media (pointer:coarse){
+  #pagehead .filters select,#pagehead .filters input[type=date],.find,.acknote{font-size:16px}
+  .csv,.find{opacity:1}
 }
 @media print{
   header,.navbar,#pagehead,footer.site{display:none !important}
@@ -394,7 +485,8 @@ footer.site div{margin-top:12px;font-size:10.5px;font-weight:700;letter-spacing:
  </header>
  <div class="navbar"><nav id="nav"></nav></div>
  <div id="pagehead"><div class="phin">
-  <div class="ptw"><h1 id="ptitle"></h1><div id="psub"></div></div>
+  <div class="ptw"><h1 id="ptitle"></h1><div id="psub"></div>
+   <button id="fltToggle" type="button" aria-expanded="false" aria-controls="filters">Change taproom or dates</button></div>
   <div class="phr">
  <div class="filters" id="filters">
   <label>Location</label><select id="locSel"></select>
@@ -491,7 +583,16 @@ async function loadDetail(loc){
 }
 
 /* auth = {ok, profile:{email,name,role,locations}, bundles:[{label,id,key}], detail:{loc:{id,key}}, sid} */
+/* boot() must only ever run once per page. With a saved session the portal starts loading by itself while the
+   Google button is still on screen; on a phone that load takes a few seconds, the button gets tapped, and a second
+   boot() used to build the navigation and the range buttons a second time — every menu item appeared twice. */
+var _booting=false;
 async function boot(auth){
+  if(_booting||D) return;
+  _booting=true;
+  try{ await boot1(auth); } finally{ _booting=false; }
+}
+async function boot1(auth){
   DETAIL_KEYS = auth.detail || {};
   try{ if(auth.sid) navigator.sendBeacon(CFG.API_URL, JSON.stringify({a:'ping',s:auth.sid})); }catch(e){}
   $('bar').style.display='block'; setStatus('Loading portal data…');
@@ -565,6 +666,7 @@ async function scriptPost(body, onRetry){
 }
 async function onCred(resp){
   var j;
+  if(_booting||D) return;                     // already signing in, or already in
   try{
     setStatus('Checking access…'); $('err').textContent='';
     var r=await scriptPost(JSON.stringify({a:'signin',t:resp.credential}), function(n){
@@ -590,7 +692,10 @@ window.addEventListener('load',function(){
     fetch('data/dev.json',{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){ DETAIL=d.detail||{}; DETAIL_KEYS={}; Object.keys(DETAIL).forEach(function(k){DETAIL_KEYS[k]={id:'dev',key:'dev'};}); startApp(d,{name:'Dev preview',role:'Admin',email:''}); }).catch(function(e){ setErr('dev.json not found — run: python -m sdp build --no-encrypt'); });
     return;
   }
-  try{ var s=sessionStorage.getItem('sdp_auth'); if(s){ boot(JSON.parse(s)).catch(function(e){ try{sessionStorage.removeItem('sdp_auth');}catch(_){} setErr('Session reload failed — sign in again. '+e.message); }); return; } }catch(e){}
+  try{ var s=sessionStorage.getItem('sdp_auth'); if(s){
+      // A saved session is loading: take the sign-in button away until that either works or fails.
+      $('gbtn').style.visibility='hidden';
+      boot(JSON.parse(s)).catch(function(e){ try{sessionStorage.removeItem('sdp_auth');}catch(_){} $('gbtn').style.visibility=''; setErr('Session reload failed — sign in again. '+e.message); }); return; } }catch(e){}
   setTimeout(gsiFail,6000);
 });
 </script>
@@ -648,12 +753,13 @@ function startApp(data,profile){
   D.locations.forEach(function(l){ls.appendChild(new Option(l.name,l.id));});
   S.loc=D.locations.length>1?'all':D.locations[0].id; ls.value=S.loc;
   ls.onchange=function(){S.loc=ls.value;render();};
-  var seg=$('rangeSeg'); [['l7','Last 7'],['l28','Last 28'],['mtd','MTD'],['lm','Last month'],['qtd','QTD'],['ytd','YTD'],['l91','Last 91']].forEach(function(p){
+  var seg=$('rangeSeg'); seg.innerHTML=''; [['l7','Last 7'],['l28','Last 28'],['mtd','MTD'],['lm','Last month'],['qtd','QTD'],['ytd','YTD'],['l91','Last 91']].forEach(function(p){
     var b=document.createElement('button');b.textContent=p[1];b.dataset.p=p[0];b.onclick=function(){S.preset=p[0];applyPreset();render();};seg.appendChild(b);});
   $('d0').onchange=$('d1').onchange=function(){S.preset='custom';S.d0=$('d0').value;S.d1=$('d1').value;render();};
   $('cmpSeg').querySelectorAll('button').forEach(function(b){b.onclick=function(){S.cmp=b.dataset.c;render();};});
-  var nav=$('nav'); PAGES.filter(function(p){ return p[0]!=='scorecard' || hasScorecard(); }).forEach(function(p){var b=document.createElement('button');b.textContent=p[1];b.dataset.p=p[0];b.onclick=function(){S.page=p[0];render();};nav.appendChild(b);});
+  var nav=$('nav'); nav.innerHTML=''; PAGES.filter(function(p){ return p[0]!=='scorecard' || hasScorecard(); }).forEach(function(p){var b=document.createElement('button');b.textContent=p[1];b.dataset.p=p[0];b.onclick=function(){S.page=p[0];render();};nav.appendChild(b);});
   $('opBtn').onclick=function(){ S.page='onepager'; render(); };
+  var ft=$('fltToggle'); if(ft) ft.onclick=function(){ var open=$('pagehead').classList.toggle('open'); ft.setAttribute('aria-expanded',open?'true':'false'); ft.textContent=open?'Done':'Change taproom or dates'; };
   applyPreset();
   if(readHash()){ ls.value=S.loc; $('d0').value=S.d0; $('d1').value=S.d1; }
   loadAcks();
@@ -828,16 +934,44 @@ function render(noHash){
   document.querySelectorAll('#nav button').forEach(function(b){b.classList.toggle('on',b.dataset.p===S.page);});
   var m=$('main'); m.innerHTML='';
   if(S.page==='scorecard' && !hasScorecard()) S.page='overview';
-  pageHead();
+  pageHead(); navSync();
   ({overview:pgOverview,sales:pgSales,menu:pgMenu,beer:pgBeer,onepager:pgOnePager,labor:pgLabor,cogs:pgCogs,inventory:pgInventory,events:pgEvents,activations:pgActivations,scorecard:pgScorecard,locations:pgLocations})[S.page](m);
   try{ opsAppend(S.page,m); }catch(e){ try{console.error('ops panels',e);}catch(_){} }
   // Some panels fill their tables asynchronously (drilldowns, lazily fetched detail), so run once now and
   // once after the current task settles rather than assuming everything is in the DOM already.
   syncCsvButtons(); setTimeout(syncCsvButtons,0);
+  wrapTables(); setTimeout(wrapTables,0);
+}
+/* Every table gets its own sideways-scrolling frame. Without one, a wide table makes the whole PANEL scroll, and
+   on a phone the panel's title and its filter box slide off with it. */
+function wrapTables(){
+  try{ document.querySelectorAll('#main table.t').forEach(function(t){
+    if(t.closest('.wb') || t.closest('.onepager')) return;
+    var p=t.parentNode;
+    if(p && !(p.classList&&p.classList.contains('tw'))){ var w=document.createElement('div'); w.className='tw'; p.insertBefore(w,t); w.appendChild(t); }
+    // Which column names the row? Usually the first; in an all-taprooms table the taproom comes first and the name
+    // second. That column is marked so a phone can pin it while the figures scroll underneath. Tables with merged
+    // cells are left alone: a column index means nothing once cells span rows or columns.
+    if(t._stuck || t.querySelector('[rowspan],[colspan]')) return;
+    t._stuck=1;
+    var first=t.querySelector('tr td.n'), idx=first?[].indexOf.call(first.parentNode.children,first):0;
+    if(idx>1) idx=0;
+    [].forEach.call(t.rows,function(r){ var c=r.children[idx]; if(c) c.classList.add('stick'); });
+  }); }catch(e){}
 }
 
 /* The navy band under the navigation: which page, which taproom, which dates. It is the one place the page
    says what it is showing in words, so a screenshot or a projector still reads correctly out of context. */
+function navEdge(){ var n=$('nav'), bar=n&&n.parentNode; if(!bar) return;
+  bar.classList.toggle('more', n.scrollWidth-n.clientWidth-n.scrollLeft>6); bar.classList.toggle('less', n.scrollLeft>6); }
+function navSync(){
+  var n=$('nav'); if(!n) return;
+  if(!n._wired){ n._wired=1; n.addEventListener('scroll',navEdge,{passive:true}); window.addEventListener('resize',navEdge); }
+  var b=n.querySelector('button.on');
+  // Centre the current page in the strip by hand: scrollIntoView() would also move the PAGE when the bar is stuck.
+  if(b && n.scrollWidth>n.clientWidth){ var want=b.offsetLeft-(n.clientWidth-b.offsetWidth)/2; n.scrollLeft=Math.max(0,want); }
+  navEdge();
+}
 var PAGE_TITLES={overview:'Overview',sales:'Sales',menu:'Menu & Guests',beer:'Beer',labor:'Labor',cogs:'Cost of Goods',inventory:'Inventory',
   events:'Private Events',activations:'Market Activations',scorecard:'Leadership Scorecard',locations:'Locations',onepager:'Weekly One-Pager'};
 function pageHead(){
@@ -1115,7 +1249,7 @@ function pnlSectionTable(sec){ var m=pnlMonths(), ms=Object.keys(m).sort().slice
 
 function pgInventory(m){
   var cpn=compliancePanel();
-  var h=(cpn?'<div class="grid" style="margin-bottom:14px">'+cpn+'</div>':'')+'<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(640px,1fr))">';
+  var h=(cpn?'<div class="grid" style="margin-bottom:14px">'+cpn+'</div>':'')+'<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(min(640px,100%),1fr))">';
   locIds().forEach(function(l){
     var loc=D.locations.filter(function(x){return x.id===l;})[0], inv=D.inventory[l]||[];
     if(!inv.length){h+=panel(loc.name,'No inventory counts yet','<div class="empty">Add counts to inputs/inventory_counts.csv or enable the MarginEdge inventory endpoint.</div>');return;}
@@ -1627,7 +1761,7 @@ function pgEvents(m){
     +panel('Event revenue by month','Booked (contracted) vs actual billed, from Tripleseat',chartBox('c_evm',true))
     +panel('Lead pipeline','Inbound enquiries by status','<div id="evLead"></div>')
     +'</div>'
-    +'<div class="grid" style="margin-top:14px;grid-template-columns:repeat(auto-fit,minmax(560px,1fr))">'
+    +'<div class="grid" style="margin-top:14px;grid-template-columns:repeat(auto-fit,minmax(min(560px,100%),1fr))">'
     +panel('Upcoming events','Confirmed and tentative bookings after '+fdate(T),'<div id="evUp"></div>')
     +panel('Events in the selected range','Definite events counted in the revenue tile above','<div id="evIn"></div>')
     +'</div>';
