@@ -4,18 +4,19 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Big Grove Brewery — Store Director Portal</title>
+<meta name="theme-color" content="#1b2449">
 <style>
 :root{
-  --navy:#1b2449;--green:#94bb36;--ink:#0b0b0b;--ink2:#52514e;--muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;
+  --navy:#1b2449;--navy2:#313757;--green:#94bb36;--ink:#0b0b0b;--ink2:#52514e;--muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;
   --surface:#ffffff;--plane:#f4f5f8;--border:rgba(11,11,11,.10);--good:#006300;--bad:#d03b3b;
-  --s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--s4:#eda100;--s5:#e87ba4;--s6:#008300;--s7:#4a3aa7;--s8:#e34948;--sx:#9a9a94;
+  --s1:#1b2449;--s2:#eb6834;--s3:#1baf7a;--s4:#eda100;--s5:#e87ba4;--s6:#008300;--s7:#4a3aa7;--s8:#e34948;--sx:#9a9a94;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
 body{font-family:'Brandon Grotesque','Josefin Sans','Avenir Next',Avenir,'Segoe UI',system-ui,sans-serif;background:var(--plane);color:var(--ink);font-size:14px}
 button{font-family:inherit}
 /* ---------- login shell ---------- */
-#login{position:fixed;inset:0;background:var(--navy);display:flex;align-items:center;justify-content:center;z-index:50;overflow:hidden}
+#login{position:fixed;inset:0;background:var(--navy);display:flex;flex-direction:column;gap:22px;align-items:center;justify-content:center;z-index:50;overflow:hidden}
 /* Watermark, bottom-right. A watermark should sit in the room rather than in the way, so it is small, tucked
    into a corner, and faint enough to read as a mark on the surface instead of a picture on the page.
    `screen` blending drops the artwork's dark background out against the navy; the artwork's ground is a very
@@ -30,6 +31,10 @@ button{font-family:inherit}
   -webkit-mask-image:radial-gradient(circle at center, #000 30%, rgba(0,0,0,.45) 50%, transparent 68%);
           mask-image:radial-gradient(circle at center, #000 30%, rgba(0,0,0,.45) 50%, transparent 68%)}
 @media (prefers-reduced-motion:no-preference){#login::before{transition:opacity .6s ease}}
+/* Brand standards (BGB Identity 2024): the Primary Rooted Medallion, full colour with white type, on BGB Navy;
+   never recoloured, stretched or rotated, and never shown under 1.5 inches across — which is why it is here and
+   on print, and NOT squeezed into the 54px header. */
+.medallion{position:relative;z-index:1;width:clamp(144px,24vmin,200px);height:auto;display:block}
 .card{position:relative;z-index:1;background:#fff;border-radius:14px;padding:38px 42px;width:min(400px,calc(100vw - 40px));box-shadow:0 20px 60px rgba(0,0,0,.4);text-align:center}
 .card h1{font-size:19px;color:var(--navy);margin-bottom:4px}
 .card .sub{font-size:12.5px;color:#6b7288;margin-bottom:24px}
@@ -42,12 +47,12 @@ button{font-family:inherit}
 .bar i{display:block;height:100%;width:0%;background:var(--green);transition:width .2s}
 /* ---------- app ---------- */
 #app{display:none;min-height:100%}
-header{background:var(--navy);color:#fff;padding:0 18px;display:flex;align-items:center;gap:14px;height:54px;position:sticky;top:0;z-index:10}
+header{background:var(--navy);color:#fff;padding:0 18px;display:flex;align-items:center;gap:14px;height:54px;position:sticky;top:0;z-index:10;border-bottom:3px solid var(--green)}
 header .brand{font-weight:700;letter-spacing:.02em;font-size:15px}
 header .brand span{color:var(--green)}
 header nav{display:flex;gap:2px;margin-left:10px;overflow-x:auto}
 header nav button{background:transparent;border:0;color:#c9cfe3;padding:8px 12px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap}
-header nav button.on{background:rgba(255,255,255,.12);color:#fff}
+header nav button.on{background:var(--navy2);color:#fff}
 header .who{margin-left:auto;font-size:12px;color:#c9cfe3;white-space:nowrap}
 header .signout{background:transparent;border:1px solid rgba(255,255,255,.25);color:#c9cfe3;border-radius:7px;
   padding:5px 10px;margin-left:10px;font-size:11.5px;font-weight:600;cursor:pointer;white-space:nowrap}
@@ -217,6 +222,11 @@ tr.resolved td.n{text-decoration:line-through;text-decoration-color:var(--muted)
   body{background:#fff;font-size:11.5px} main{padding:0;max-width:none}
   .onepager{border:0;border-radius:0;padding:0;margin:0;max-width:none;page-break-after:always}
   .onepager:last-child{page-break-after:auto}
+  /* The medallion may not print under 1.5in, which costs the header about an inch; the page earns it back here. */
+  .onepager table.t td,.onepager table.t th{padding:2.5px 6px}
+  .onepager .opl{margin:8px 0 3px}
+  .onepager .oplines{height:48px}
+  .onepager .oph{padding-bottom:4px;margin-bottom:6px}
   .panel{break-inside:avoid;border-color:#ccc}
 }
 </style>
@@ -224,9 +234,10 @@ tr.resolved td.n{text-decoration:line-through;text-decoration-color:var(--muted)
 <body>
 
 <div id="login">
+ <img class="medallion" src="images/bgb-medallion-white.png" alt="Big Grove Brewery — Rooted in Our Craft" width="200" height="200">
  <div class="card">
-  <h1>Big Grove Brewery</h1>
-  <div class="sub">Store Director Portal — sign in with your company Google account</div>
+  <h1>Store Director Portal</h1>
+  <div class="sub">Sign in with your company Google account</div>
   <div id="gbtn"></div>
   <div class="bar" id="bar"><i id="barfill"></i></div>
   <div id="status"></div>
@@ -2287,7 +2298,7 @@ function pgOnePager(m){
     function ch(a,b,inv,pts){ if(a==null||b==null||!b) return '<td class="r tg">—</td>'; var d=pts?(a-b):(a-b)/Math.abs(b), good=inv?d<=0:d>=0; return '<td class="r" style="color:'+(good?'var(--good)':'var(--bad)')+'">'+(d>=0?'+':'−')+(pts?fn(Math.abs(d)*100,1)+' pts':fp(Math.abs(d),0))+'</td>'; }
     var M=[['Net sales','net',fm,0,0],['Guests','guests',fn,0,0],['Average check','check',function(v){return fm(v,2);},0,0],['Labor %','labor',fp,1,1],['Sales / labor hour','splh',function(v){return fm(v,0);},0,0],['Discounts % of gross','disc',fp,1,1],['Purchases %'+(isProv()?' *':''),'purch',fp,1,1]];
     var pac=(D.pacing||{})[l]||{}, dig=(D.digest||{})[l]||[], items=((D.top_items||{})[l]||[]).slice(0,8);
-    h+='<div class="onepager"><div class="oph"><div><div class="opt">'+esc(locName(l))+'</div><div class="tg">Week of '+fdate(w0)+' – '+fdate(w1)+', '+w1.slice(0,4)+'</div></div><div class="tg" style="text-align:right">Big Grove Brewery · Store Director Portal<br>data through '+fdate(T)+'</div></div>'
+    h+='<div class="onepager"><div class="oph"><div><div class="opt">'+esc(locName(l))+'</div><div class="tg">Week of '+fdate(w0)+' – '+fdate(w1)+', '+w1.slice(0,4)+'</div></div><div style="display:flex;align-items:flex-end;gap:12px"><div class="tg" style="text-align:right">Store Director Portal<br>data through '+fdate(T)+'</div><img src="images/bgb-medallion-black.png" alt="Big Grove Brewery" style="width:1.5in;height:1.5in;display:block"></div></div>'
       +'<table class="t"><tr><th>This week</th><th class="r">Actual</th><th class="r">Prior week</th><th class="r">Change</th><th class="r">Same week last year</th><th class="r">Change</th></tr>'
       +M.map(function(x){ var f=x[2]; return '<tr><td class="n">'+x[0]+'</td><td class="r"><b>'+f(cur[x[1]])+'</b></td><td class="r">'+f(prv.n?prv[x[1]]:null)+'</td>'+ch(cur[x[1]],prv.n?prv[x[1]]:null,x[3],x[4])+'<td class="r">'+f(ly.n>=5?ly[x[1]]:null)+'</td>'+ch(cur[x[1]],ly.n>=5?ly[x[1]]:null,x[3],x[4])+'</tr>'; }).join('')+'</table>'
       +'<div class="opc"><div><div class="opl">Day by day</div><table class="t"><tr><th>Day</th><th class="r">Net</th><th class="r">Guests</th><th class="r">Labor %</th><th>Weather</th></tr>'

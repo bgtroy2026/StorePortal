@@ -29,3 +29,6 @@ _deploy/*.log
 
 # working files that are not part of the portal (VIP exports and the like) — never publish
 potential/
+
+# brand source files (guide PDF, .ai) stay local; only the web-sized PNGs in site/images are published
+/images/

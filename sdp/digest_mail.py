@@ -24,7 +24,7 @@ import struct
 from datetime import date, timedelta
 
 SITE = "https://bgtroy2026.github.io/StorePortal/"
-INK, MUTED, BAD, GOOD, RULE = "#1b2340", "#6b7280", "#b4413c", "#2e7d5b", "#e5e7eb"
+INK, MUTED, BAD, GOOD, RULE = "#1b2449", "#6b7280", "#b4413c", "#2e7d5b", "#e5e7eb"
 
 
 def _keystream(key: bytes, nonce: bytes, n: int) -> bytes:
@@ -183,7 +183,10 @@ def build(payload: dict) -> dict:
     if (payload["meta"].get("provisional") or {}).get("marginedge"):
         note = "Inventory, purchases and P&L come from MarginEdge, which is still being set up — treat those lines as provisional. Sales, labor and cash come from Toast and tie to it to the cent."
     return {"built": payload["meta"]["built_at"], "through": payload["meta"]["through"], "through_label": f'{T.strftime("%a %b")} {T.day}',
-            "head": '<div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:620px;margin:0 auto;padding:8px 4px">',
+            # Brand standards: the medallion in full colour with white type, on BGB Navy, never under 1.5in (144px).
+            "head": '<div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:620px;margin:0 auto;padding:8px 4px">'
+                    f'<div style="background:{INK};border-radius:10px;text-align:center;padding:16px 0 14px;margin-bottom:16px;border-bottom:3px solid #94bb36">'
+                    f'<img src="{SITE}images/bgb-medallion-white.png" width="144" height="144" alt="Big Grove Brewery" style="display:inline-block;border:0"></div>',
             "foot": f'<div style="margin-top:22px;padding-top:10px;border-top:1px solid {RULE};font-size:11px;color:{MUTED}">{note} '
                     f'Built {payload["meta"]["built_at"]}. You get this because you are on the Store Director Portal roster.</div></div>',
             "locations": secs, "all": rollup(payload, secs)}
