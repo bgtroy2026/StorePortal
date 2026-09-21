@@ -5,11 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Big Grove Brewery — Store Director Portal</title>
 <meta name="theme-color" content="#1b2449">
+<link rel="preload" href="fonts/jost-latin.woff2" as="font" type="font/woff2" crossorigin>
 <style>
 :root{
-  --navy:#1b2449;--navy2:#313757;--green:#94bb36;--ink:#0b0b0b;--ink2:#52514e;--muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;
-  --surface:#ffffff;--plane:#f4f5f8;--border:rgba(11,11,11,.10);--good:#006300;--bad:#d03b3b;
-  --s1:#1b2449;--s2:#eb6834;--s3:#1baf7a;--s4:#eda100;--s5:#e87ba4;--s6:#008300;--s7:#4a3aa7;--s8:#e34948;--sx:#9a9a94;
+  --navy:#1b2449;--navy2:#313757;--green:#94bb36;--ink:#1b2449;--ink2:#474e69;--muted:#6e7590;--grid:#e4e6ef;--axis:#c3c7d6;
+  --surface:#ffffff;--plane:#f2f3f7;--border:rgba(27,36,73,.13);--good:#2f6b12;--bad:#c8372f;
+  /* Chart series. Anchored on the brand (navy, the acorn cap, the hop) and run through the palette validator:
+     every adjacent pair clears the colour-blind and normal-vision floors. BGB Navy itself is too dark and too
+     grey to work as one line among several, so slot 1 is the same hue lifted into the usable band. */
+  --s1:#3d4e9a;--s2:#cc8544;--s3:#557523;--s4:#894d97;--s5:#eda100;--s6:#5baee1;--s7:#e87ba4;--s8:#a8613b;--sx:#9a9eb0;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
@@ -229,6 +233,140 @@ tr.resolved td.n{text-decoration:line-through;text-decoration-color:var(--muted)
   .onepager .oph{padding-bottom:4px;margin-bottom:6px}
   .panel{break-inside:avoid;border-color:#ccc}
 }
+
+/* =========================================================================================
+   BIG GROVE IDENTITY — per "Brand Identity Standards" (Jan 2024)
+   - BGB Navy is the prevalent colour; Light Navy only ever alongside it; Bright Green is an accent, never a field.
+   - Hopleaf background: tone-on-tone navy only, and only behind the PRIMARY marks (login, footer) or plain type
+     (the page band). Never behind a small mark: the header, where the one-line wordmark sits, is solid navy.
+   - Primary Rooted Medallion never under 1.5in; the header uses the One Line Wordmark, which exists for exactly
+     the case where the primary marks cannot fit legibly.
+   - Body type is Brandon Grotesque. It is a licensed face and is NOT shipped here: machines that have it use it,
+     everything else gets Jost (SIL OFL, self-hosted), the closest open geometric sans. Swap in the licensed web
+     font by adding its @font-face above and nothing else.
+   ========================================================================================= */
+@font-face{font-family:'Jost';font-style:normal;font-weight:100 900;font-display:swap;src:url('fonts/jost-latin-ext.woff2') format('woff2');
+  unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF}
+@font-face{font-family:'Jost';font-style:normal;font-weight:100 900;font-display:swap;src:url('fonts/jost-latin.woff2') format('woff2');
+  unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+
+/* Jost's built-in line spacing is ~1.45, a quarter looser than the system faces this layout was tuned on; pin it. */
+body{font-family:'Brandon Grotesque','Jost','Avenir Next',Avenir,'Segoe UI',system-ui,sans-serif;font-size:14.5px;line-height:1.28;-webkit-font-smoothing:antialiased}
+select,input,textarea{font-family:inherit;color:var(--ink)}
+a{color:var(--navy)}
+
+/* ---- sign-in: the medallion on navy hopleaf, which is the standards' own preferred treatment ---- */
+/* A soft vignette back to solid navy: it settles the eye on the medallion and gives the corner mark a clean ground. */
+#login{background:radial-gradient(ellipse farthest-corner at 50% 45%,rgba(27,36,73,0) 38%,rgba(27,36,73,.93) 100%),var(--navy) url('images/hopleaf-navy.webp') center/cover no-repeat}
+.card{border-radius:12px;border-top:4px solid var(--green);padding:34px 40px 30px}
+.card h1{font-size:20px;letter-spacing:.09em;text-transform:uppercase;font-weight:700}
+.card .sub{font-size:13.5px;color:var(--ink2)}
+.foot{letter-spacing:.16em;color:#8d94ad}
+.stamp{color:#5d7a1c}
+
+/* ---- top bar: solid navy, one-line wordmark ---- */
+header{height:52px;padding:0 22px;gap:14px;position:static;border-bottom:0}
+header .brand{display:flex;align-items:center;gap:13px;text-decoration:none;font-size:0}
+header .brand img{height:16px;width:auto;display:block}
+header .brand span{color:var(--green);font-size:10.5px;font-weight:700;letter-spacing:.2em;text-transform:uppercase;white-space:nowrap;
+  border-left:1px solid rgba(255,255,255,.22);padding-left:13px;line-height:16px}
+header .who{font-size:12.5px;color:#c5cbe0}
+header .signout{border-radius:6px;text-transform:uppercase;letter-spacing:.1em;font-size:10.5px;padding:6px 10px;color:#dfe3f0}
+
+/* ---- navigation: its own slim bar, and the only part that sticks ---- */
+.navbar{background:var(--navy2);position:sticky;top:0;z-index:10;border-bottom:3px solid var(--green);padding:0 14px}
+.navbar nav{display:flex;gap:2px;overflow-x:auto;scrollbar-width:none;max-width:1500px;margin:0 auto}
+.navbar nav::-webkit-scrollbar{display:none}
+.navbar nav button{background:transparent;border:0;color:#c5cbe0;padding:0 13px;height:42px;font-size:11.5px;font-weight:600;letter-spacing:.11em;
+  text-transform:uppercase;cursor:pointer;white-space:nowrap;border-radius:0;position:relative}
+.navbar nav button:hover{color:#fff;background:rgba(255,255,255,.06)}
+.navbar nav button.on{color:#fff;background:var(--navy)}
+.navbar nav button.on::after{content:"";position:absolute;left:10px;right:10px;bottom:0;height:3px;background:var(--green);border-radius:3px 3px 0 0}
+.navbar nav button:focus-visible{outline:2px solid var(--green);outline-offset:-3px}
+
+/* ---- page band: navy hopleaf, the page named in bold caps, the controls on it ---- */
+#pagehead{background:var(--navy) url('images/hopleaf-navy.webp') center 38%/cover no-repeat;color:#fff}
+#pagehead .phin{max-width:1500px;margin:0 auto;padding:16px 22px 15px;display:flex;align-items:flex-end;justify-content:space-between;gap:14px 28px;flex-wrap:wrap}
+#ptitle{font-size:27px;line-height:1.05;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#fff}
+#ptitle::after{content:"";display:block;width:42px;height:4px;border-radius:2px;background:var(--green);margin-top:9px}
+#psub{margin-top:8px;font-size:13px;color:#c5cbe0;letter-spacing:.02em}
+#pagehead .phr{display:flex;flex-direction:column;align-items:flex-end;gap:7px;min-width:0;flex:1 1 560px}
+#pagehead .filters{background:transparent;border:0;padding:0;justify-content:flex-end;gap:8px 10px}
+#pagehead .filters label{color:#aab2cf;margin-right:0}
+#pagehead .filters select,#pagehead .filters input[type=date]{border:0;border-radius:7px;padding:7px 9px;font-size:12.5px;color:var(--navy);background:#fff}
+#pagehead .filters span{color:#aab2cf !important}
+#pagehead .seg{border:0;border-radius:7px}
+#pagehead .seg button{color:var(--navy);padding:7px 10px}
+#pagehead .seg button.on{background:var(--green);color:var(--navy)}
+#pagehead .ackb{border:1px solid rgba(255,255,255,.35);background:transparent;color:#fff;border-radius:7px;font-size:11.5px}
+#pagehead .ackb:hover{background:#fff;color:var(--navy);border-color:#fff}
+#pagehead .fresh{font-size:11.5px;color:#aab2cf;text-align:right}
+#pagehead .fresh a{color:#ffc2b8 !important}
+body.sheetmode #pagehead .phr{flex:0 1 auto}
+
+/* ---- content ---- */
+main{padding:18px 22px 44px}
+.grid{gap:12px}
+.tiles{grid-template-columns:repeat(auto-fit,minmax(136px,1fr))}
+.tile{border-radius:10px;border:1px solid var(--border);border-top:3px solid var(--navy);padding:12px 14px 13px;box-shadow:0 1px 2px rgba(27,36,73,.04)}
+.tile .l{letter-spacing:.11em;color:var(--muted);font-size:10.5px}
+.tile .v{font-size:28px;letter-spacing:-.01em;font-weight:600}
+.tile .d{font-size:12.5px}
+.panel{border-radius:10px;border:1px solid var(--border);box-shadow:0 1px 2px rgba(27,36,73,.04);padding:15px 17px}
+.panel h3{font-size:15px;font-weight:700;letter-spacing:.01em;margin-bottom:3px}
+.panel h3::before{content:"";display:inline-block;width:4px;height:13px;border-radius:2px;background:var(--green);margin-right:8px;vertical-align:-1px}
+.panel .hint{font-size:12.5px;color:var(--muted);line-height:1.4}
+table.t{font-size:13px}
+table.t th{color:var(--muted);letter-spacing:.1em;font-size:10.5px;border-bottom:2px solid var(--navy)}
+table.t td{border-bottom:1px solid #e9ebf2;font-variant-numeric:tabular-nums}
+table.t tr:hover td{background:#f6f7fb}
+table.t td.n{font-weight:600}
+.pill{background:#e8eaf2;letter-spacing:.02em}
+.seg{border-radius:8px}
+.seg button{font-size:12.5px;color:var(--ink2)}
+.ackb,.csv{border-radius:6px}
+.ackb:hover{background:var(--navy);color:#fff;border-color:var(--navy)}
+.find:focus{border-color:var(--navy)}
+.src{font-size:12px}
+.empty{font-size:13.5px}
+.legend{font-size:12.5px}
+.onepager .oph{border-bottom:3px solid var(--navy)}
+.onepager .opt{letter-spacing:.06em;text-transform:uppercase}
+.wb .doc h2{letter-spacing:.04em}
+#usageBox h3{letter-spacing:.06em;text-transform:uppercase;font-size:14px}
+
+/* ---- footer: the primary medallion at full size on hopleaf ---- */
+footer.site{background:var(--navy) url('images/hopleaf-navy.webp') center/cover no-repeat;border-top:3px solid var(--green);text-align:center;padding:36px 18px 30px;color:#aab2cf}
+footer.site img{width:150px;height:150px;display:inline-block}
+footer.site div{margin-top:12px;font-size:10.5px;font-weight:700;letter-spacing:.24em;text-transform:uppercase}
+
+@media (max-width:720px){
+  header{height:auto;padding:10px 12px;flex-wrap:nowrap}
+  header .brand{width:auto;flex:1;min-width:0}
+  header .brand span{display:none}
+  .navbar{padding:0 4px}
+  .navbar nav button{padding:0 10px;height:38px;font-size:10.5px}
+  #nav{-webkit-mask-image:linear-gradient(to right,#000 90%,transparent);mask-image:linear-gradient(to right,#000 90%,transparent)}
+  #pagehead .phin{padding:12px 12px 12px;align-items:flex-start}
+  #ptitle{font-size:21px}
+  #pagehead .phr{align-items:flex-start;flex-basis:100%}
+  #pagehead .filters{justify-content:flex-start;gap:6px 8px}
+  #pagehead .filters label{display:none}
+  .tiles{grid-template-columns:repeat(auto-fit,minmax(132px,1fr))}
+  .grid{gap:10px}
+  #pagehead .fresh{text-align:left}
+  main{padding:12px 10px 30px}
+  .tile .v{font-size:22px}
+  footer.site img{width:144px;height:144px}
+}
+@media print{
+  header,.navbar,#pagehead,footer.site{display:none !important}
+  /* the screen sizes above come later in the sheet than the original print rules, so print has to restate its own */
+  body{font-size:11.5px}
+  main{padding:0;max-width:none}
+  table.t{font-size:12px}
+  .panel,.tile{box-shadow:none}
+}
 </style>
 </head>
 <body>
@@ -249,12 +387,15 @@ tr.resolved td.n{text-decoration:line-through;text-decoration-color:var(--muted)
 
 <div id="app">
  <header>
-  <div class="brand">BIG GROVE <span>STORE DIRECTOR PORTAL</span></div>
-  <nav id="nav"></nav>
+  <a class="brand" href="#page=overview" title="Big Grove Brewery — Store Director Portal"><img src="images/bgb-wordmark-white.svg" alt="Big Grove Brewery" width="208" height="18"><span>Store Director Portal</span></a>
   <div class="who" id="who"></div>
   <button id="usage" class="signout" title="Portal usage" hidden>Usage</button>
   <button id="signout" class="signout" title="Sign out">Sign out</button>
  </header>
+ <div class="navbar"><nav id="nav"></nav></div>
+ <div id="pagehead"><div class="phin">
+  <div class="ptw"><h1 id="ptitle"></h1><div id="psub"></div></div>
+  <div class="phr">
  <div class="filters" id="filters">
   <label>Location</label><select id="locSel"></select>
   <label>Range</label>
@@ -263,9 +404,15 @@ tr.resolved td.n{text-decoration:line-through;text-decoration-color:var(--muted)
   <label>Compare</label>
   <div class="seg" id="cmpSeg"><button data-c="prior" class="on">Prior period</button><button data-c="ly" title="Same weekdays a year ago (364 days back), with holidays matched to the same holiday">Last year</button></div>
   <button id="opBtn" class="ackb" title="A printable one-page week for the selected taproom" style="padding:6px 10px">Weekly one-pager</button>
-  <div class="fresh" id="fresh"></div>
  </div>
+   <div class="fresh" id="fresh"></div>
+  </div>
+ </div></div>
  <main id="main"></main>
+ <footer class="site">
+  <img src="images/bgb-medallion-white.png" alt="Big Grove Brewery — Rooted in Our Craft" width="150" height="150" loading="lazy">
+  <div>Store Director Portal</div>
+ </footer>
 </div>
 
 <script src="vendor/chart.umd.min.js"></script>
@@ -511,6 +658,11 @@ function startApp(data,profile){
   if(readHash()){ ls.value=S.loc; $('d0').value=S.d0; $('d1').value=S.d1; }
   loadAcks();
   render();
+  var br=document.querySelector('header .brand');
+  if(br) br.onclick=function(e){ e.preventDefault(); S.page='overview'; render(); window.scrollTo(0,0); };
+  // Charts draw their labels on a canvas, which does not re-flow when a web font arrives late. If the brand face
+  // was not ready for the first paint, paint once more when it is.
+  try{ if(document.fonts && !document.fonts.check("600 12px Jost")) document.fonts.ready.then(function(){ try{ render(true); }catch(e){} }); }catch(e){}
 }
 function applyPreset(){
   var T=D.meta.through, t=pd(T);
@@ -676,11 +828,25 @@ function render(noHash){
   document.querySelectorAll('#nav button').forEach(function(b){b.classList.toggle('on',b.dataset.p===S.page);});
   var m=$('main'); m.innerHTML='';
   if(S.page==='scorecard' && !hasScorecard()) S.page='overview';
+  pageHead();
   ({overview:pgOverview,sales:pgSales,menu:pgMenu,beer:pgBeer,onepager:pgOnePager,labor:pgLabor,cogs:pgCogs,inventory:pgInventory,events:pgEvents,activations:pgActivations,scorecard:pgScorecard,locations:pgLocations})[S.page](m);
   try{ opsAppend(S.page,m); }catch(e){ try{console.error('ops panels',e);}catch(_){} }
   // Some panels fill their tables asynchronously (drilldowns, lazily fetched detail), so run once now and
   // once after the current task settles rather than assuming everything is in the DOM already.
   syncCsvButtons(); setTimeout(syncCsvButtons,0);
+}
+
+/* The navy band under the navigation: which page, which taproom, which dates. It is the one place the page
+   says what it is showing in words, so a screenshot or a projector still reads correctly out of context. */
+var PAGE_TITLES={overview:'Overview',sales:'Sales',menu:'Menu & Guests',beer:'Beer',labor:'Labor',cogs:'Cost of Goods',inventory:'Inventory',
+  events:'Private Events',activations:'Market Activations',scorecard:'Leadership Scorecard',locations:'Locations',onepager:'Weekly One-Pager'};
+function pageHead(){
+  var t=$('ptitle'), sub=$('psub'); if(!t||!sub) return;
+  t.textContent=PAGE_TITLES[S.page]||'';
+  var where=(S.loc==='all'||!S.loc)?(D.locations.length>1?'All taprooms':locName(D.locations[0].id)):locName(S.loc);
+  if(S.page==='scorecard') sub.textContent='From the leadership scorecard workbook';
+  else if(S.page==='onepager') sub.textContent=where+' · last full week';
+  else sub.textContent=where+' · '+fdate(S.d0)+' – '+fdate(S.d1)+', '+String(S.d1).slice(0,4);
 }
 
 /* ---------- exception digest ----------
@@ -829,7 +995,7 @@ function pgSales(m){
   var grid={}, max=0; locIds().forEach(function(l){X('hourly',l).forEach(function(r){var key=r[0]+':'+r[1];grid[key]=(grid[key]||0)+r[2];});});
   Object.keys(grid).forEach(function(k2){if(grid[k2]>max)max=grid[k2];});
   var dn=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'], hh='<div class="heat"><div></div>'+hrs.map(function(x){return '<div class="h">'+(x>12?x-12+'p':x===12?'12p':x+'a')+'</div>';}).join('');
-  [1,2,3,4,5,6,0].forEach(function(d){ hh+='<div class="h" style="text-align:left;line-height:26px">'+dn[d]+'</div>'+hrs.map(function(x){var v=grid[d+':'+x]||0;var t=max?v/max:0;return '<div class="c" data-t="'+dn[d]+' '+x+':00 — '+fm(v)+'" style="background:rgba(42,120,214,'+(0.08+0.92*t).toFixed(2)+')"></div>';}).join(''); });
+  [1,2,3,4,5,6,0].forEach(function(d){ hh+='<div class="h" style="text-align:left;line-height:26px">'+dn[d]+'</div>'+hrs.map(function(x){var v=grid[d+':'+x]||0;var t=max?v/max:0;return '<div class="c" data-t="'+dn[d]+' '+x+':00 — '+fm(v)+'" style="background:rgba(27,36,73,'+(0.06+0.94*t).toFixed(2)+')"></div>';}).join(''); });
   $('heat').innerHTML=hh+'</div>';
   // Discounts by reason. Toast attributes loyalty redemptions to a provider in the discount record, so the
   // loyalty share is readable here without integrating the loyalty platform separately.
@@ -1183,14 +1349,15 @@ function hourlyLaborViews(){
   if($('heatLab')){
     if(!have){ $('heatLab').innerHTML='<div class="empty">No clock-in/clock-out data in this window.</div>'; return; }
     var dn=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'], CAP=0.6;
-    var hh='<div class="heat"><div></div>'+hrs.map(function(x){return '<div class="h">'+hLabel(x)+'</div>';}).join('');
+    // 18 hours here (6a-11p), not the sales heatmap's 14: the column count has to travel with the grid or the rows wrap.
+    var hh='<div class="heat" style="grid-template-columns:44px repeat('+hrs.length+',1fr)"><div></div>'+hrs.map(function(x){return '<div class="h">'+hLabel(x)+'</div>';}).join('');
     [1,2,3,4,5,6,0].forEach(function(d){
       hh+='<div class="h" style="text-align:left;line-height:26px">'+dn[d]+'</div>'+hrs.map(function(x){
         var k=d+':'+x, n=sales[k]||0, c=lab[k]||0;
         if(!c && !n) return '<div class="c" data-t="'+dn[d]+' '+hLabel(x)+' — closed" style="background:rgba(0,0,0,.04)"></div>';
         var pct=n?c/n:null, t=pct==null?1:Math.min(pct/CAP,1);
         var tip=dn[d]+' '+hLabel(x)+' — '+(pct==null?'labor with no sales':fp(pct)+' labor · '+fm(n)+' sales · '+fn(Math.round((labH[k]||0)*10)/10)+' h');
-        return '<div class="c" data-t="'+esc(tip)+'" style="background:rgba(214,84,42,'+(0.08+0.92*t).toFixed(2)+')"></div>';
+        return '<div class="c" data-t="'+esc(tip)+'" style="background:rgba(181,96,42,'+(0.08+0.92*t).toFixed(2)+')"></div>';
       }).join('');
     });
     $('heatLab').innerHTML=hh+'</div>';
@@ -2076,7 +2243,7 @@ function beerMixPanel(){
   return '<div class="grid" style="margin-top:14px">'+panel('Brand mix by taproom — last 28 days','Each beer\'s share of that taproom\'s beer units. Shaded against the row: darker means it over-indexes there.',
     '<div class="tw"><table class="t"><tr><th>Beer</th>'+locs.map(function(l){return '<th class="r">'+esc(l.short||l.name)+'</th>';}).join('')+'<th class="r">All units</th></tr>'
     +top.map(function(b){ var sh=locs.map(function(l){ var r=D.beer_mix[l.id].filter(function(x){return x[0]===b;})[0]; return r?r[2]:null; }); var mx=Math.max.apply(null,sh.map(function(x){return x||0;}));
-      return '<tr><td class="n">'+esc(b)+'</td>'+sh.map(function(v){ return '<td class="r" style="background:rgba(42,120,214,'+(v&&mx?(0.04+0.34*(v/mx)).toFixed(2):0)+')">'+(v==null?'—':fp(v,1))+'</td>'; }).join('')+'<td class="r">'+fn(tot[b])+'</td></tr>'; }).join('')
+      return '<tr><td class="n">'+esc(b)+'</td>'+sh.map(function(v){ return '<td class="r" style="background:rgba(27,36,73,'+(v&&mx?(0.04+0.34*(v/mx)).toFixed(2):0)+')">'+(v==null?'—':fp(v,1))+'</td>'; }).join('')+'<td class="r">'+fn(tot[b])+'</td></tr>'; }).join('')
     +'</table></div>')+'</div>';
 }
 /* Admin-only: hand the depletion roll-up to the sign-in backend, which keeps it in the roster workbook for the
@@ -2194,7 +2361,7 @@ function staffingPanel(){
   [1,2,3,4,5,6,0].forEach(function(d){ hh+='<div class="h" style="text-align:left;line-height:26px">'+dn[d]+'</div>'+hrsList.map(function(x){ var c=cells[d+':'+x];
     if(!c) return '<div class="c" style="background:transparent"></div>';
     if(!c.s) return '<div class="c" data-t="'+dn[d]+' '+hLabel(x)+' — '+fn(c.a,1)+' h on the clock, no sales (open, close or prep)" style="background:repeating-linear-gradient(45deg,#eceae4,#eceae4 3px,transparent 3px,transparent 6px)"></div>';
-    var t=max?Math.min(1,Math.abs(c.gap)/max):0, col=c.gap>0?'208,59,59':'42,120,214';
+    var t=max?Math.min(1,Math.abs(c.gap)/max):0, col=c.gap>0?'200,55,47':'61,78,154';
     return '<div class="c" data-t="'+dn[d]+' '+hLabel(x)+' — '+fm(c.s)+' sales · '+fn(c.a,1)+' h worked · '+fn(c.rec,1)+' h asked for · '+(c.gap>0?'+':'')+fn(c.gap,1)+'" style="background:rgba('+col+','+(0.06+0.85*t).toFixed(2)+')"></div>'; }).join(''); });
   hh+='</div>';
   rows.sort(function(a,b){return b.gap-a.gap;});
