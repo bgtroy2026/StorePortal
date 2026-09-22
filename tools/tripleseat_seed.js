@@ -85,7 +85,10 @@
   header.forEach((h, i) => { col[h in col ? `${h} (2)` : h] = i; });       // second "Name"/"Status" are the booking's
   const get = (row, name) => (col[name] === undefined ? '' : String(row[col[name]] ?? '').trim());
   const getAny = (row, names) => { for (const n of names) { if (col[n] !== undefined) { const v = get(row, n); if (v !== '') return v; } } return ''; };
-  const isLeads = header[0] === 'Lead Id' || (col['Lead Id'] !== undefined && col['Event Id'] === undefined);   // a leads report may carry Event Id for the ones that converted
+  // Which report is this? The events report leads with "Event Id"; the Lead Details report leads with "Id" and is
+  // the only one with a "Submitted" column. A leads export may also carry an Event Id (the event it converted to),
+  // so the first column decides.
+  const isLeads = header[0] !== 'Event Id' && (header[0] === 'Id' || header[0] === 'Lead Id' || col['Submitted'] !== undefined);
   if (isLeads) return buildLeads();
   const money = (s) => { const v = String(s || '').replace(/[$,\s]/g, ''); return v === '' ? null : v; };
   const int = (s) => { const v = String(s || '').replace(/[,\s]/g, ''); return v === '' ? null : parseInt(v, 10); };
@@ -173,24 +176,27 @@
   // ---- a LEADS export -----------------------------------------------------------------------------------
   function buildLeads() {
     const money = (s) => { const v = String(s || '').replace(/[$,\s]/g, ''); return v === '' ? null : v; };
-    const int = (s) => { const v = String(s || '').replace(/[,\s]/g, ''); return v === '' ? null : parseInt(v, 10); };
+    const int = (s) => { const v = String(s || '').replace(/[^\d-]/g, ''); return v === '' ? null : parseInt(v, 10); };
     const iso = (mdy) => { const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(mdy || ''); return m ? `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}` : null; };
     const when = new Date().toISOString();
-    const stats = { rows: 0, skipped: 0, byLoc: {}, unmappedLoc: {}, typeMiss: {}, byStatus: {}, columnsUsed: {} };
+    const stats = { rows: 0, skipped: 0, byLoc: {}, unmappedLoc: {}, typeMiss: {}, byStatus: {}, columnsUsed: {}, noCreated: 0 };
     const rows = [];
     const NAMES = {
       first: ['First Name', 'First'], last: ['Last Name', 'Last'], name: ['Name', 'Contact', 'Contact Name', 'Lead Name'],
       company: ['Company', 'Company Name', 'Account'], status: ['Status', 'Lead Status'],
       created: ['Date Created', 'Created', 'Created Date', 'Created At', 'Submitted', 'Submitted On', 'Received'],
       eventDate: ['Event Date', 'Date', 'Date of Event'], guests: ['Guests', 'Guest Count', '# Guests', 'Number of Guests'],
-      location: ['Location'], type: ['Event Type', 'Type'], style: ['Event Style', 'Style'],
-      source: ['Source', 'Lead Source', 'Referred By'], form: ['Lead Form', 'Form'], title: ['Event Name', 'Event Title', 'Title'],
-      converted: ['Converted Date', 'Converted', 'Won Date', 'Date Won'], lost: ['Lost Date', 'Turned Down Date', 'Date Lost', 'Turned Down'],
-      eventId: ['Event Id'], value: ['Budget', 'Estimated Value', 'Value', 'Amount'],
+      location: ['Location'], type: ['Nature Of Event', 'Event Type', 'Type'], style: ['Event Style', 'Style'],
+      source: ['Source', 'Lead Source', 'Referred By'], form: ['Lead Form', 'Form'],
+      title: ['Event Description', 'Event Name', 'Event Title', 'Title', 'Booking Description'],
+      converted: ['Converted', 'Converted Date', 'Won Date', 'Date Won'],
+      lost: ['Turned Down At', 'Turned Down Date', 'Lost Date', 'Date Lost', 'Turned Down'],
+      eventId: ['Event Id', 'Converted To'], value: ['Budget', 'Estimated Value', 'Value', 'Amount'],
+      segment: ['Market Segment'], referred: ['Referred By'],
     };
     Object.keys(NAMES).forEach((k) => { const hit = NAMES[k].find((n) => col[n] !== undefined); if (hit) stats.columnsUsed[k] = hit; });
     for (const r of table) {
-      const id = parseInt(get(r, 'Lead Id'), 10);
+      const id = parseInt(getAny(r, ['Lead Id', 'Id']), 10);
       if (!id) { stats.skipped++; continue; }
       const locName = getAny(r, NAMES.location);
       const locId = cat.locByName[norm(locName)];
@@ -212,7 +218,9 @@
         lead_source: source || null, selected_lead_sources: source ? [{ lead_source_name: source }] : [],
         lead_form: form || null, event_name: getAny(r, NAMES.title) || null,
         created_at: getAny(r, NAMES.created) || null, converted_at: getAny(r, NAMES.converted) || null,
+        event_date_only: eventIso,
         turned_down_at: getAny(r, NAMES.lost) || null, event_id: int(getAny(r, NAMES.eventId)), budget: money(getAny(r, NAMES.value)),
+        market_segment: getAny(r, NAMES.segment) || null, referred_by: getAny(r, NAMES.referred) || null,
         seeded_from: `Leads report export ${exportDay}`,
       };
       const wrapper = { webhook_trigger_type: 'SEED_LEAD', message: `Seeded from the Tripleseat leads report export of ${exportDay}`, exported_at: exportedAt.toISOString(), lead };
@@ -220,6 +228,7 @@
       stats.rows++;
       stats.byLoc[cat.locName[locId]] = (stats.byLoc[cat.locName[locId]] || 0) + 1;
       stats.byStatus[status || '?'] = (stats.byStatus[status || '?'] || 0) + 1;
+      if (!lead.created_at) stats.noCreated++;
     }
     stats.longestJson = Math.max(0, ...rows.map((x) => x[7].length));
     console.log('DRY RUN (LEADS) — nothing sent. Export created', createdText.replace(/\s+/g, ' '), '->', exportedAt.toISOString());
