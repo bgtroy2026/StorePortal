@@ -493,7 +493,7 @@ footer.site div{margin-top:12px;font-size:10.5px;font-weight:700;letter-spacing:
   <label>Range</label>
   <div class="seg" id="rangeSeg"></div>
   <input type="date" id="d0"> <span style="color:var(--muted)">to</span> <input type="date" id="d1">
-  <label>Compare</label>
+  <label id="cmpLbl">Compare</label>
   <div class="seg" id="cmpSeg"><button data-c="prior" class="on">Prior period</button><button data-c="ly" title="Same weekdays a year ago (364 days back), with holidays matched to the same holiday">Last year</button></div>
   <button id="opBtn" class="ackb" title="A printable one-page week for the selected taproom" style="padding:6px 10px">Weekly one-pager</button>
  </div>
@@ -705,7 +705,7 @@ window.addEventListener('load',function(){
 /* =========================================================================================
    DASHBOARD APP
    ========================================================================================= */
-var D=null, P=null, S={loc:'all', preset:'l28', d0:null, d1:null, cmp:'prior', page:'overview', actSrc:'all'};
+var D=null, P=null, S={loc:'all', preset:'l28', d0:null, d1:null, cmp:'prior', page:'overview', actSrc:'all', evPreset:'n30', evD0:null, evD1:null};
 var K=null; // daily key index
 /* Everything in net sales that no menu category accounts for — service charges, check-level discounts, and
    anything the mapping did not recognise. It is the residual rather than any single field: Toast's
@@ -753,15 +753,18 @@ function startApp(data,profile){
   D.locations.forEach(function(l){ls.appendChild(new Option(l.name,l.id));});
   S.loc=D.locations.length>1?'all':D.locations[0].id; ls.value=S.loc;
   ls.onchange=function(){S.loc=ls.value;render();};
-  var seg=$('rangeSeg'); seg.innerHTML=''; [['l7','Last 7'],['l28','Last 28'],['mtd','MTD'],['lm','Last month'],['qtd','QTD'],['ytd','YTD'],['l91','Last 91']].forEach(function(p){
-    var b=document.createElement('button');b.textContent=p[1];b.dataset.p=p[0];b.onclick=function(){S.preset=p[0];applyPreset();render();};seg.appendChild(b);});
-  $('d0').onchange=$('d1').onchange=function(){S.preset='custom';S.d0=$('d0').value;S.d1=$('d1').value;render();};
+  buildRangeSeg();
+  $('d0').onchange=$('d1').onchange=function(){
+    var a=$('d0').value,b=$('d1').value; if(!a||!b) return; if(a>b){var x=a;a=b;b=x;}
+    if(S.page==='events'){ S.evPreset='custom'; S.evD0=a; S.evD1=b; } else { S.preset='custom'; S.d0=a; S.d1=b; }
+    render();
+  };
   $('cmpSeg').querySelectorAll('button').forEach(function(b){b.onclick=function(){S.cmp=b.dataset.c;render();};});
   var nav=$('nav'); nav.innerHTML=''; PAGES.filter(function(p){ return p[0]!=='scorecard' || hasScorecard(); }).forEach(function(p){var b=document.createElement('button');b.textContent=p[1];b.dataset.p=p[0];b.onclick=function(){S.page=p[0];render();};nav.appendChild(b);});
   $('opBtn').onclick=function(){ S.page='onepager'; render(); };
   var ft=$('fltToggle'); if(ft) ft.onclick=function(){ var open=$('pagehead').classList.toggle('open'); ft.setAttribute('aria-expanded',open?'true':'false'); ft.textContent=open?'Done':'Change taproom or dates'; };
   applyPreset();
-  if(readHash()){ ls.value=S.loc; $('d0').value=S.d0; $('d1').value=S.d1; }
+  if(readHash()){ ls.value=S.loc; syncRangeInputs(); }
   loadAcks();
   render();
   var br=document.querySelector('header .brand');
@@ -770,13 +773,40 @@ function startApp(data,profile){
   // was not ready for the first paint, paint once more when it is.
   try{ if(document.fonts && !document.fonts.check("600 12px Jost")) document.fonts.ready.then(function(){ try{ render(true); }catch(e){} }); }catch(e){}
 }
-function applyPreset(){
+/* The past presets are anchored on the last day with data; every page but Events reads them. The Events page
+   looks the other way: what is booked matters more than what was billed, so it keeps a window of its own
+   (S.evPreset) that starts TODAY — the calendar's today, not the data's — and runs 30, 60 or 90 days ahead, with
+   the same past presets available when someone wants event revenue against sales. The two never bleed into each
+   other: picking "Next 60" on Events does not move the Sales page into the future. */
+var RANGE_PAST=[['l7','Last 7'],['l28','Last 28'],['mtd','MTD'],['lm','Last month'],['qtd','QTD'],['ytd','YTD'],['l91','Last 91']];
+var RANGE_EVENTS=[['n30','Next 30'],['n60','Next 60'],['n90','Next 90'],['mtd','MTD'],['l28','Last 28'],['qtd','QTD'],['ytd','YTD']];
+var EV_AHEAD={n30:30,n60:60,n90:90};
+function presetWindow(p){
   var T=D.meta.through, t=pd(T);
-  var lm1=new Date(t.getFullYear(),t.getMonth(),0), lm0=new Date(lm1.getFullYear(),lm1.getMonth(),1);
-  if(S.preset==='lm'){ S.d0=ds(lm0)<D.meta.since?D.meta.since:ds(lm0); S.d1=ds(lm1); $('d0').value=S.d0; $('d1').value=S.d1; return; }
+  if(p==='lm'){ var lm1=new Date(t.getFullYear(),t.getMonth(),0), lm0=new Date(lm1.getFullYear(),lm1.getMonth(),1); return [ds(lm0)<D.meta.since?D.meta.since:ds(lm0), ds(lm1)]; }
   var map={l7:addDays(T,-6),l28:addDays(T,-27),l91:addDays(T,-90),mtd:ds(new Date(t.getFullYear(),t.getMonth(),1)),qtd:ds(new Date(t.getFullYear(),Math.floor(t.getMonth()/3)*3,1)),ytd:ds(new Date(t.getFullYear(),0,1))};
-  if(map[S.preset]){S.d0=map[S.preset];S.d1=T;}
-  $('d0').value=S.d0;$('d1').value=S.d1;
+  return map[p]?[map[p],T]:null;
+}
+function applyPreset(){ var w=presetWindow(S.preset); if(w){S.d0=w[0];S.d1=w[1];} syncRangeInputs(); }
+function todayStr(){ return ds(new Date()); }
+function evWindow(){
+  var p=S.evPreset||'n30', today=todayStr();
+  if(EV_AHEAD[p]) return [today, addDays(today,EV_AHEAD[p]-1)];
+  if(p==='custom' && S.evD0 && S.evD1) return [S.evD0, S.evD1];
+  return presetWindow(p)||[today, addDays(today,29)];
+}
+function evForward(){ var w=evWindow(); return w[1]>D.meta.through; }
+function activeWindow(){ return S.page==='events'?evWindow():[S.d0,S.d1]; }
+function activePreset(){ return S.page==='events'?(S.evPreset||'n30'):S.preset; }
+function syncRangeInputs(){ var w=activeWindow(); if(!w||!w[0]) return; $('d0').value=w[0]; $('d1').value=w[1]; }
+function buildRangeSeg(){
+  var seg=$('rangeSeg'), ev=(S.page==='events'), key=ev?'events':'past';
+  if(seg._key===key) return; seg._key=key; seg.innerHTML='';
+  (ev?RANGE_EVENTS:RANGE_PAST).forEach(function(p){
+    var b=document.createElement('button'); b.textContent=p[1]; b.dataset.p=p[0];
+    b.onclick=function(){ if(S.page==='events'){ S.evPreset=p[0]; } else { S.preset=p[0]; applyPreset(); } render(); };
+    seg.appendChild(b);
+  });
 }
 /* ---- data access ---- */
 function locIds(){return S.loc==='all'?D.locations.map(function(l){return l.id;}):[S.loc];}
@@ -929,8 +959,12 @@ function render(noHash){
   $('filters').style.display=sc?'none':'';
   panel._n=0;
   document.body.classList.toggle('sheetmode',sc);
-  document.querySelectorAll('#rangeSeg button').forEach(function(b){b.classList.toggle('on',b.dataset.p===S.preset);});
+  buildRangeSeg(); syncRangeInputs();
+  var ap=activePreset();
+  document.querySelectorAll('#rangeSeg button').forEach(function(b){b.classList.toggle('on',b.dataset.p===ap);});
   document.querySelectorAll('#cmpSeg button').forEach(function(b){b.classList.toggle('on',b.dataset.c===S.cmp);});
+  // Prior-period / last-year comparisons are about sales; a booked calendar has nothing to compare against.
+  var ev=(S.page==='events'); $('cmpSeg').style.display=ev?'none':''; var cl=$('cmpLbl'); if(cl) cl.style.display=ev?'none':'';
   document.querySelectorAll('#nav button').forEach(function(b){b.classList.toggle('on',b.dataset.p===S.page);});
   var m=$('main'); m.innerHTML='';
   if(S.page==='scorecard' && !hasScorecard()) S.page='overview';
@@ -980,7 +1014,7 @@ function pageHead(){
   var where=(S.loc==='all'||!S.loc)?(D.locations.length>1?'All taprooms':locName(D.locations[0].id)):locName(S.loc);
   if(S.page==='scorecard') sub.textContent='From the leadership scorecard workbook';
   else if(S.page==='onepager') sub.textContent=where+' · last full week';
-  else sub.textContent=where+' · '+fdate(S.d0)+' – '+fdate(S.d1)+', '+String(S.d1).slice(0,4);
+  else { var w=activeWindow(); sub.textContent=where+' · '+fdate(w[0])+' – '+fdate(w[1])+', '+String(w[1]).slice(0,4)+(S.page==='events'&&EV_AHEAD[S.evPreset]?' · next '+EV_AHEAD[S.evPreset]+' days':''); }
 }
 
 /* ---------- exception digest ----------
@@ -1793,55 +1827,87 @@ function pgEvents(m){
       +tsCatalogPanels();
     return;
   }
-  var a=S.d0,b=S.d1,T=D.meta.through;
-  var all=evRows(), inRange=all.filter(function(e){return e.d>=a&&e.d<=b;}), future=all.filter(function(e){return e.d>T;});
-  var defIn=inRange.filter(function(e){return evIsDef(e.status);});
-  var rev=defIn.reduce(function(p,c){return p+evValue(c);},0), gu=defIn.reduce(function(p,c){return p+(c.guests||0);},0);
-  var futDef=future.filter(function(e){return evIsDef(e.status);});
-  var futRev=futDef.reduce(function(p,c){return p+(c.booked||0);},0);
-  var k=kpis(a,b);
+  /* The window comes from the Events page's own picker (evWindow): by default today and the next 30 days, because
+     a director can still do something about what is booked and nothing about what was billed. A window that ends
+     after the last data day is "forward": the money in it is contracted, not earned, and the tiles say so. */
+  var w=evWindow(), a=w[0], b=w[1], T=D.meta.through, fwd=evForward();
+  var all=evRows(), inWin=all.filter(function(e){return e.d>=a&&e.d<=b;});
+  var defIn=inWin.filter(function(e){return evIsDef(e.status);}), other=inWin.length-defIn.length;
+  var val=defIn.reduce(function(p,c){return p+evValue(c);},0), gu=defIn.reduce(function(p,c){return p+(c.guests||0);},0);
+  var beyond=all.filter(function(e){return e.d>b&&evIsDef(e.status);}), beyondVal=beyond.reduce(function(p,c){return p+(c.booked||0);},0);
+  var winTitle=EV_AHEAD[S.evPreset]?'the next '+EV_AHEAD[S.evPreset]+' days':'the selected window';
+  var tiles;
+  if(fwd){
+    tiles=tile('Confirmed events',fn(defIn.length),'<span class="tg">'+fn(other)+' tentative or prospect</span>')
+      +tile('Booked value',fk(val),'<span class="tg">contracted, confirmed events only</span>')
+      +tile('Expected guests',fn(gu),'<span class="tg">'+fm(gu?val/gu:null,2)+' per guest</span>')
+      +tile('Avg event value',fm(defIn.length?val/defIn.length:null,0),'')
+      +tile('Beyond this window',fk(beyondVal),'<span class="tg">'+fn(beyond.length)+' confirmed after '+fdate(b)+'</span>');
+  } else {
+    var k=kpis(a,b), future=all.filter(function(e){return e.d>T&&evIsDef(e.status);}), futRev=future.reduce(function(p,c){return p+(c.booked||0);},0);
+    tiles=tile('Events in range',fn(defIn.length),'<span class="tg">'+fn(other)+' tentative/other</span>')
+      +tile('Event revenue',fk(val),'',k.net?'<span class="tg">'+fp(val/k.net)+' of net sales</span>':'')
+      +tile('Event guests',fn(gu),'<span class="tg">'+fm(gu?val/gu:null,2)+' per guest</span>')
+      +tile('Booked ahead',fk(futRev),'<span class="tg">'+fn(future.length)+' confirmed events after '+fdate(T)+'</span>')
+      +tile('Avg event value',fm(defIn.length?val/defIn.length:null,0),'');
+  }
+  var multi=locIds().length>1;
   m.innerHTML=tsStatusPanel()
-    +'<div class="grid tiles">'
-    +tile('Events in range',fn(defIn.length),'<span class="tg">'+fn(inRange.length-defIn.length)+' tentative/other</span>')
-    +tile('Event revenue',fk(rev),'',k.net?'<span class="tg">'+fp(rev/k.net)+' of net sales</span>':'')
-    +tile('Event guests',fn(gu),'<span class="tg">'+fm(gu?rev/gu:null,2)+' per guest</span>')
-    +tile('Booked ahead',fk(futRev),'<span class="tg">'+fn(futDef.length)+' confirmed events</span>')
-    +tile('Avg event value',fm(defIn.length?rev/defIn.length:null,0),'')
-    +'</div>'
+    +'<div class="grid tiles">'+tiles+'</div>'
     +'<div class="grid cols2" style="margin-top:14px">'
-    +panel('Event revenue by month','Booked (contracted) vs actual billed, from Tripleseat',chartBox('c_evm',true))
-    +panel('Lead pipeline','Inbound enquiries by status','<div id="evLead"></div>')
+    +panel('Event value by month','Booked (contracted) vs actual billed, from Tripleseat — months in the selected window are the solid bars',chartBox('c_evm',true))
+    +(multi?panel('By taproom','Confirmed events in '+winTitle,'<div id="evLoc"></div>'):panel('Lead pipeline','Inbound enquiries by status','<div id="evLead"></div>'))
     +'</div>'
     +'<div class="grid" style="margin-top:14px;grid-template-columns:repeat(auto-fit,minmax(min(560px,100%),1fr))">'
-    +panel('Upcoming events','Confirmed and tentative bookings after '+fdate(T),'<div id="evUp"></div>')
-    +panel('Events in the selected range','Definite events counted in the revenue tile above','<div id="evIn"></div>')
+    +(fwd
+      ?panel('Events in '+winTitle,'Every booking dated '+fdate(a)+' – '+fdate(b)+', confirmed or not, soonest first','<div id="evWin"></div>')
+       +(multi?panel('Lead pipeline','Inbound enquiries by status','<div id="evLead"></div>'):'')
+      :panel('Events in the selected range','Definite events counted in the revenue tile above','<div id="evWin"></div>')
+       +panel('Upcoming events','Confirmed and tentative bookings after '+fdate(T),'<div id="evUp"></div>')
+       +(multi?panel('Lead pipeline','Inbound enquiries by status','<div id="evLead"></div>'):''))
     +'</div>'
     +tsCatalogPanels();
+  // Twelve months or more around the window, whatever the data holds: three months before it starts, at least
+  // eleven after, three past its end. Without this the chart would show the LAST fourteen months that exist in the
+  // data — and with bookings out to next year, that is a strip of empty future.
   var mm={}; locIds().forEach(function(l){var e=(D.events_monthly||{})[l]||{};Object.keys(e).forEach(function(mo){var o=mm[mo]||(mm[mo]={n:0,booked:0,actual:0,guests:0});o.n+=e[mo][0];o.booked+=e[mo][1];o.actual+=e[mo][2];o.guests+=e[mo][3];});});
-  var ms=Object.keys(mm).sort().slice(-14);
+  function addMonths(mo,n){var p=mo.split('-');var d=new Date(+p[0],+p[1]-1+n,1);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');}
+  var m0=addMonths(a.slice(0,7),-3), mEnd=addMonths(b.slice(0,7),3), m11=addMonths(m0,11); if(mEnd<m11) mEnd=m11;
+  var ms=[]; for(var mo=m0; mo<=mEnd; mo=addMonths(mo,1)) ms.push(mo);
+  var inW=function(mo){return mo>=a.slice(0,7)&&mo<=b.slice(0,7);};
+  var g=function(mo,k){return mm[mo]?mm[mo][k]:0;};
   mk('c_evm',{type:'bar',data:{labels:ms.map(fmon),datasets:[
-      {label:'Booked',data:ms.map(function(x){return mm[x].booked;}),backgroundColor:css('s1'),borderRadius:4,maxBarThickness:34},
-      {label:'Actual billed',data:ms.map(function(x){return mm[x].actual;}),backgroundColor:css('s3'),borderRadius:4,maxBarThickness:34}]},
-    options:baseOpts({plugins:{legend:{display:true,position:'bottom'},tooltip:{callbacks:{label:function(c){return ' '+c.dataset.label+': '+fk(c.parsed.y)+'  ('+fn(mm[ms[c.dataIndex]].n)+' events)';}}}}})});
+      {label:'Booked',data:ms.map(function(x){return g(x,'booked');}),backgroundColor:ms.map(function(x){return css('s1')+(inW(x)?'':'66');}),borderRadius:4,maxBarThickness:34},
+      {label:'Actual billed',data:ms.map(function(x){return g(x,'actual');}),backgroundColor:ms.map(function(x){return css('s3')+(inW(x)?'':'66');}),borderRadius:4,maxBarThickness:34}]},
+    options:baseOpts({plugins:{legend:{display:true,position:'bottom'},tooltip:{callbacks:{label:function(c){return ' '+c.dataset.label+': '+fk(c.parsed.y)+'  ('+fn(g(ms[c.dataIndex],'n'))+' events)';}}}}})});
   var anyRoom=all.some(function(e){return e.rooms;}), anyType=all.some(function(e){return e.type;});
-  function evTable(list,showStatus){
+  function evTable(list,showStatus,cap,withActual){
     if(!list.length) return '<div class="empty">None in this window.</div>';
-    var multi=locIds().length>1;
-    return '<div style="overflow-x:auto"><table class="t"><tr><th>Date</th>'+(multi?'<th>Location</th>':'')+'<th>Event</th>'+(anyRoom?'<th>Room</th>':'')+(anyType?'<th>Type</th>':'')+(showStatus?'<th>Status</th>':'')+'<th class="r">Guests</th><th class="r">Booked</th><th class="r">Actual</th></tr>'
-      +list.slice(0,40).map(function(e){var L=D.locations.filter(function(z){return z.id===e.loc;})[0];
-        return '<tr><td>'+fdate(e.d)+'</td>'+(multi?'<td>'+esc(L?L.name:e.loc)+'</td>':'')+'<td class="n">'+esc(e.name)+'</td>'
+    cap=cap||40;
+    return '<div style="overflow-x:auto"><table class="t"><tr><th>Date</th>'+(multi?'<th>Location</th>':'')+'<th>Event</th>'+(anyRoom?'<th>Room</th>':'')+(anyType?'<th>Type</th>':'')+(showStatus?'<th>Status</th>':'')+'<th class="r">Guests</th><th class="r">Booked</th>'+(withActual?'<th class="r">Actual</th>':'')+'</tr>'
+      +list.slice(0,cap).map(function(e){
+        return '<tr><td>'+fdate(e.d)+'</td>'+(multi?'<td>'+esc(locName(e.loc))+'</td>':'')+'<td class="n">'+esc(e.name)+'</td>'
         +(anyRoom?'<td>'+esc(e.rooms)+'</td>':'')+(anyType?'<td>'+esc(e.type)+'</td>':'')
         +(showStatus?'<td><span class="pill"'+(evIsDef(e.status)?' style="background:#e6f4ea;color:var(--good)"':'')+'>'+esc(evStatus(e.status))+'</span></td>':'')
-        +'<td class="r">'+fn(e.guests)+'</td><td class="r">'+fm(e.booked)+'</td><td class="r">'+(e.actual!=null&&e.actual>0?fm(e.actual):'—')+'</td></tr>';}).join('')
-      +'</table>'+(list.length>40?'<div class="hint" style="margin-top:6px">Showing 40 of '+fn(list.length)+'</div>':'')+'</div>';
+        +'<td class="r">'+fn(e.guests)+'</td><td class="r">'+fm(e.booked)+'</td>'+(withActual?'<td class="r">'+(e.actual!=null&&e.actual>0?fm(e.actual):'—')+'</td>':'')+'</tr>';}).join('')
+      +'</table>'+(list.length>cap?'<div class="hint" style="margin-top:6px">Showing '+cap+' of '+fn(list.length)+' — pick one taproom or a shorter window for the rest</div>':'')+'</div>';
   }
-  $('evUp').innerHTML=evTable(future,true);
-  $('evIn').innerHTML=evTable(defIn.slice().reverse(),false);
+  // Nothing ahead of the last data day has been billed, so the forward tables leave the Actual column out.
+  if(fwd){ $('evWin').innerHTML=evTable(inWin,true,100,false); }
+  else { $('evWin').innerHTML=evTable(defIn.slice().reverse(),false,40,true); $('evUp').innerHTML=evTable(all.filter(function(e){return e.d>T;}),true,40,false); }
+  if(multi){
+    var byLoc={}; inWin.forEach(function(e){var o=byLoc[e.loc]||(byLoc[e.loc]={n:0,other:0,val:0,g:0}); if(evIsDef(e.status)){o.n++;o.val+=evValue(e);o.g+=(e.guests||0);} else o.other++;});
+    var ks=Object.keys(byLoc).sort(function(x,y){return byLoc[y].val-byLoc[x].val;});
+    $('evLoc').innerHTML=ks.length?('<table class="t"><tr><th>Taproom</th><th class="r">Confirmed</th><th class="r">Tentative</th><th class="r">Guests</th><th class="r">'+(fwd?'Booked':'Value')+'</th></tr>'
+      +ks.map(function(l){var o=byLoc[l];return '<tr><td class="n">'+esc(locName(l))+'</td><td class="r">'+fn(o.n)+'</td><td class="r">'+fn(o.other)+'</td><td class="r">'+fn(o.g)+'</td><td class="r">'+fm(o.val)+'</td></tr>';}).join('')
+      +'<tr style="font-weight:700"><td>All</td><td class="r">'+fn(defIn.length)+'</td><td class="r">'+fn(other)+'</td><td class="r">'+fn(gu)+'</td><td class="r">'+fm(val)+'</td></tr></table>')
+      :'<div class="empty">No events in this window.</div>';
+  }
   var ld={}; locIds().forEach(function(l){((D.leads||{})[l]||[]).forEach(function(r){var o=ld[r[0]]||(ld[r[0]]={n:0,g:0});o.n+=r[1];o.g+=r[2];});});
   var lk=Object.keys(ld).sort(function(x,y){return ld[y].n-ld[x].n;}), lt=lk.reduce(function(p,c){return p+ld[c].n;},0);
-  $('evLead').innerHTML=lk.length?('<table class="t"><tr><th>Status</th><th class="r">Leads</th><th class="r">Guests</th><th class="r">Share</th></tr>'
+  var le=$('evLead'); if(le) le.innerHTML=lk.length?('<table class="t"><tr><th>Status</th><th class="r">Leads</th><th class="r">Guests</th><th class="r">Share</th></tr>'
     +lk.map(function(x){return '<tr><td class="n">'+esc(x)+'</td><td class="r">'+fn(ld[x].n)+'</td><td class="r">'+fn(ld[x].g)+'</td><td class="r">'+fp(ld[x].n/lt)+'</td></tr>';}).join('')+'</table>')
-    :'<div class="empty">No leads in this window.</div>';
+    :'<div class="empty">No leads yet.</div>';
 }
 
 /* Does [a,b] at this location overlap any activation other than `except`? Used to keep a promo's baseline
@@ -2155,12 +2221,17 @@ function readHash(){
     if(q.r==='custom' && /^\d{4}-\d\d-\d\d$/.test(q.d0||'') && /^\d{4}-\d\d-\d\d$/.test(q.d1||'') && q.d0<=q.d1){ S.preset='custom'; S.d0=q.d0; S.d1=q.d1; ok=true; }
     else if(['l7','l28','mtd','qtd','ytd','l91','lm'].indexOf(q.r)>=0){ S.preset=q.r; applyPreset(); ok=true; }
   }
+  if(q.ev){
+    if(q.ev==='custom' && /^\d{4}-\d\d-\d\d$/.test(q.e0||'') && /^\d{4}-\d\d-\d\d$/.test(q.e1||'') && q.e0<=q.e1){ S.evPreset='custom'; S.evD0=q.e0; S.evD1=q.e1; ok=true; }
+    else if(RANGE_EVENTS.some(function(p){return p[0]===q.ev;})){ S.evPreset=q.ev; ok=true; }
+  }
   return ok;
 }
 var _hashWritten='';
 function writeHash(){
   var parts=['page='+S.page,'loc='+S.loc,'r='+S.preset];
   if(S.preset==='custom'){ parts.push('d0='+S.d0,'d1='+S.d1); }
+  if(S.page==='events'){ parts.push('ev='+S.evPreset); if(S.evPreset==='custom'){ parts.push('e0='+S.evD0,'e1='+S.evD1); } }
   if(S.cmp!=='prior') parts.push('cmp='+S.cmp);
   var h='#'+parts.join('&');
   if(h===location.hash){ _hashWritten=h; return; }
@@ -2168,7 +2239,7 @@ function writeHash(){
   var first=!_hashWritten; _hashWritten=h;
   try{ history[first?'replaceState':'pushState'](null,'',h); }catch(e){ location.hash=h; }
 }
-window.addEventListener('popstate',function(){ if(!D) return; if(readHash()){ var ls=$('locSel'); if(ls) ls.value=S.loc; $('d0').value=S.d0; $('d1').value=S.d1; render(true); } });
+window.addEventListener('popstate',function(){ if(!D) return; if(readHash()){ var ls=$('locSel'); if(ls) ls.value=S.loc; syncRangeInputs(); render(true); } });
 
 /* ---------- page views ----------
    One beacon per page per session. This is a record of which pages earn their keep, not a click stream — and
