@@ -28,7 +28,14 @@
  *   {"a":"signin","t":<id token>}  → sign-in → { ok, profile:{...}, bundles:[{label,id,key}], detail:{loc:{id,key}}, sid }
  *                                    `detail` keys are for the per-location drilldown bundles, fetched lazily
  *                                    bundles[0] is the data bundle; leadership/admin also get the "scorecard" bundle
- *   {"a":"ping","s":<sid>}         → log a portal open
+ *   {"a":"refresh","s":<sid>}      → the same answer again for a REMEMBERED session, from the sid alone (no Google
+ *                                    token): the browser keeps the sign-in for SESSION_HOURS and asks for this in the
+ *                                    background on every open, so a roster change reaches the person on their next
+ *                                    visit and someone taken off the roster is signed out on theirs. A new sid comes
+ *                                    back each time, so the session slides for as long as they keep visiting.
+ *   {"a":"ping","s":<sid>}         → log a portal open ("ev":"signin" logs a sign-in instead — the browser sends that
+ *                                    right after a successful sign-in, so the sign-in answer itself never waits on
+ *                                    the Logins tab)
  *   {"a":"scorecard","k":<key>}    → the Leadership Scorecard tab, for the nightly pipeline (no user session)
  *   {"a":"usage","s":<sid>}        → portal usage (admins only): who has signed in, how often, and who never has
  *   {"a":"view","s":<sid>,"p":<page>,"l":<loc>} → log one page view (which pages earn their keep)
@@ -68,7 +75,11 @@ var DEFAULTS = {
   SITE_URL: 'https://bgtroy2026.github.io/StorePortal'   // read for the current bundle epoch (manifest.json)
 };
 function prop(name) { return PropertiesService.getScriptProperties().getProperty(name) || DEFAULTS[name] || null; }
-var SESSION_HOURS = 24;
+// How long a remembered session lasts since its last visit. Every open refreshes it (doRefresh), so this is the
+// longest gap between visits before the Google button comes back. Bundle keys outlive it anyway — the epoch
+// (sdp/bundle.py) is the revoke button, this is the sign-in-again button.
+var SESSION_HOURS = 24 * 30;
+var ROSTER_CACHE_SECONDS = 120;   // a roster edit takes effect on sign-ins within two minutes
 
 function doPost(e) {
   var out;
@@ -85,8 +96,9 @@ function handle(body) {
   if (!body) return { ok: false, error: 'no token' };
   var req;
   try { req = JSON.parse(body); } catch (e) { return doSignin(body); }
-  if (req.a === 'ping') return doPing(req.s);
+  if (req.a === 'ping') return doPing(String(req.s || ''), String(req.ev || ''));
   if (req.a === 'signin') return doSignin(String(req.t || ''));
+  if (req.a === 'refresh') return doRefresh(String(req.s || ''));
   if (req.a === 'scorecard') return doScorecard(String(req.k || ''));
   if (req.a === 'usage') return doUsage(String(req.s || ''));
   if (req.a === 'view') return doView(String(req.s || ''), String(req.p || ''), String(req.l || ''));
@@ -177,19 +189,51 @@ function doSignin(token) {
   var email = String(info.email || '').toLowerCase().trim();
   var domain = email.split('@')[1] || '';
   if (ALLOWED_DOMAINS.indexOf(domain) === -1) return { ok: false, error: 'outside domain' };
+  // The sign-in itself is not logged here: the browser sends {"a":"ping","ev":"signin"} once it has the answer,
+  // so opening the workbook a second time to append a row never sits between the person and the portal.
+  return sessionFor(props, email, String(info.name || ''));
+}
 
-  var rows = rosterSheet(SpreadsheetApp.openById(prop('SHEET_ID'))).getDataRange().getValues();
-  var hit = null;
-  for (var i = 1; i < rows.length; i++) if (String(rows[i][0]).toLowerCase().trim() === email) { hit = rows[i]; break; }
+/**
+ * A remembered session asking to carry on. The sid is proof enough: it was minted after a verified Google
+ * sign-in and is signed with LOG_SECRET, and what comes back is exactly what a fresh sign-in would return for
+ * this person TODAY — so a changed role or location list, or removal from the roster, takes effect here.
+ */
+function doRefresh(sid) {
+  var s = readSid(sid);
+  if (!s) return { ok: false, error: 'expired session' };
+  return sessionFor(PropertiesService.getScriptProperties(), String(s.e || '').toLowerCase().trim(), String(s.n || ''));
+}
+
+function sessionFor(props, email, googleName) {
+  var hit = rosterEntry(email);
   if (!hit) return { ok: false, error: 'not on the roster' };
-
-  var name = String(hit[1] || info.name || '');
+  var name = String(hit[1] || googleName || '');
   var role = String(hit[2] || 'Director').trim();
   var locs = String(hit[3] || '').toLowerCase().replace(/\s+/g, '');
   var access = portalAccess(props, role, locs);
-  logEvent(email, name, role, 'signin');
   return { ok: true, profile: { email: email, name: name, role: role, locations: access.locations },
            bundles: access.bundles, detail: access.detail || {}, sid: makeSid(email, name, role) };
+}
+
+/**
+ * The roster, cached for ROSTER_CACHE_SECONDS. Opening the workbook and finding the roster tab is the slowest
+ * part of a sign-in (several round trips); a burst of morning sign-ins now pays for it once.
+ */
+function rosterRows() {
+  var cache = CacheService.getScriptCache();
+  var hit = cache.get('roster');
+  if (hit) { try { return JSON.parse(hit); } catch (ignored) {} }
+  var rows = rosterSheet(SpreadsheetApp.openById(prop('SHEET_ID'))).getDataRange().getValues()
+    .map(function (r) { return [String(r[0] || ''), String(r[1] || ''), String(r[2] || ''), String(r[3] || '')]; });
+  try { cache.put('roster', JSON.stringify(rows), ROSTER_CACHE_SECONDS); } catch (ignored) {}   // over 100 KB would not fit; fine
+  return rows;
+}
+
+function rosterEntry(email) {
+  var rows = rosterRows();
+  for (var i = 1; i < rows.length; i++) if (rows[i][0].toLowerCase().trim() === email) return rows[i];
+  return null;
 }
 
 // ---- which bundle(s) this person may open, and the keys (derived, never stored) --------------------------
@@ -266,10 +310,10 @@ function bundleFor(secret, label) {
 
 // ---- portal-open ping -----------------------------------------------------------------------------------
 
-function doPing(sid) {
+function doPing(sid, ev) {
   var s = readSid(sid);
   if (!s) return { ok: false, error: 'expired session' };
-  logEvent(s.e, s.n, s.r, 'open');
+  logEvent(s.e, s.n, s.r, ev === 'signin' ? 'signin' : 'open');
   return { ok: true };
 }
 

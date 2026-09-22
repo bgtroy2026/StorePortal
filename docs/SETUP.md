@@ -129,6 +129,18 @@ Run `testDerivation()` once and compare with
 **D. Wire the shell** — paste the Client ID and `/exec` URL into the `CFG` block at the top of
 `site/index.html`, commit, and the next workflow run publishes it.
 
+**How a sign-in behaves (since 2026-09-22).** The Google button is needed once per browser: the session the
+script hands back (profile, bundle keys, a signed session token) is kept in the browser for 30 days from the
+last visit, so a returning person opens straight into the portal with no round trip to the script — the slow,
+occasionally hanging part. Every open then asks the script in the background (`{"a":"refresh"}`) what a fresh
+sign-in would return today: a changed role or taproom list shows a "reload to see it" line, and someone taken
+off the roster is signed out on their next visit. The first sign-in is *hedged*: if the script has not
+answered in 2.5 s a second request goes out (and a third at 6 s), the first answer wins — Apps Script
+intermittently hangs one request for ~30 s while a second answers in two. The roster is cached in the script
+for two minutes, and the sign-in is logged by a separate beacon so the answer never waits on the Logins tab.
+On a shared computer, **Sign out** forgets the session. To revoke keys already handed out, bump `PORTAL_EPOCH`
+(`sdp/bundle.py`) — a remembered session whose keys no longer open anything falls back to the Google button.
+
 ## 5. Manual inputs
 
 `inputs/activations.csv` (events/promos/launches with cost) and `inputs/targets.csv` (monthly sales, COGS %,

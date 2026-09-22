@@ -559,14 +559,60 @@ async function gunzipText(u8){
   await new Promise(function(res,rej){var s=document.createElement('script');s.src='vendor/pako.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
   return pako.ungzip(u8,{to:'string'});
 }
-/* Sign out. Beyond the obvious reason, this is the fix when someone's ACCESS changes: the signed-in session
-   caches the bundle keys the backend handed out, so a role change (say, being granted the leadership
-   scorecard) does not reach an open session until it signs in again. Google's auto-select is disabled too,
-   otherwise the next page load silently signs the same account straight back in. */
+/* ---------- the remembered sign-in ----------
+   The session the backend hands out (profile, bundle keys, a signed sid) is kept in localStorage for up to
+   REMEMBER_DAYS, so a returning person opens straight into the portal with no Google button and no round trip to
+   the sign-in service — which is the slow, occasionally hanging part. Every open then asks the backend in the
+   background ({"a":"refresh"}) for what a fresh sign-in would return today: the answer replaces what is stored
+   (so the 30 days count from the last visit), a changed role or taproom list is announced with a reload link,
+   and someone taken off the roster is signed out on the spot. Bundle keys outlive all of this by design; the
+   epoch in sdp/bundle.py is the revoke button. sessionStorage is the fallback when localStorage is not allowed. */
+var AUTH_KEY='sdp_auth', REMEMBER_DAYS=30;
+function loadAuth(){
+  var s=null;
+  try{ s=localStorage.getItem(AUTH_KEY); }catch(e){}
+  if(!s){ try{ s=sessionStorage.getItem(AUTH_KEY); }catch(e){} }
+  if(!s) return null;
+  try{
+    var j=JSON.parse(s);
+    if(!j||!j.bundles||!j.bundles.length) return null;
+    if(j.saved_at && Date.now()-j.saved_at>REMEMBER_DAYS*864e5){ forgetAuth(); return null; }
+    return j;
+  }catch(e){ return null; }
+}
+function saveAuth(j){
+  j.saved_at=Date.now();
+  var s=JSON.stringify(j);
+  try{ localStorage.setItem(AUTH_KEY,s); }catch(e){ try{ sessionStorage.setItem(AUTH_KEY,s); }catch(_){} }
+}
+function forgetAuth(){ try{ localStorage.removeItem(AUTH_KEY); }catch(e){} try{ sessionStorage.removeItem(AUTH_KEY); }catch(e){} }
+/* Sign out. Beyond the obvious reason, this is the fix on a shared computer: the remembered session would
+   otherwise open the portal for whoever sits down next. Google's auto-select is disabled too, otherwise the next
+   page load silently signs the same account straight back in. */
 function signOut(){
-  try{ sessionStorage.removeItem('sdp_auth'); }catch(e){}
+  forgetAuth();
   try{ if(window.google&&google.accounts&&google.accounts.id) google.accounts.id.disableAutoSelect(); }catch(e){}
   location.replace(location.pathname);
+}
+async function refreshSession(saved){
+  try{
+    var r=await scriptPost(JSON.stringify({a:'refresh',s:saved.sid}));
+    var j=await r.json();
+    if(!j.ok){
+      // A refusal is the backend's word: this person is no longer on the roster, or the session is past its life.
+      if(/roster|expired|domain|not signed in/i.test(j.error||'')){ forgetAuth(); accessNotice('Your portal sign-in has ended — <a href="#" id="reSignin">sign in again</a>.'); }
+      return;
+    }
+    var shape=function(a){ return JSON.stringify([a.profile.role,a.profile.locations,(a.bundles||[]).map(function(b){return b.id;}),Object.keys(a.detail||{}).sort()]); };
+    var changed=shape(j)!==shape(saved);
+    saveAuth(j);
+    if(changed) accessNotice('Your portal access changed — <a href="#" id="reSignin">reload to see it</a>.');
+  }catch(e){}                                   // a slow or unreachable backend changes nothing; next open tries again
+}
+function accessNotice(html){
+  var f=$('fresh'); if(!f) return;
+  f.innerHTML+=' · <span style="color:var(--bad);font-weight:700">'+html+'</span>';
+  var a=$('reSignin'); if(a) a.onclick=function(e){ e.preventDefault(); location.reload(); };
 }
 /* ---------- detail bundles (lazy) ----------
    The headline bundle is deliberately small; count-sheet level data lives in one bundle per location that is
@@ -664,19 +710,46 @@ async function scriptPost(body, onRetry){
   }
   throw last||new Error('sign-in service unreachable');
 }
+/* The sign-in call is HEDGED rather than retried in turn. The hang described above is per request — a second
+   request sent a moment later answers in the usual two seconds while the first is still stuck — so if the first
+   has not answered in 2.5s a second goes out, and at 6s a third; the first real answer wins and the rest are
+   abandoned. Repeating a sign-in is safe: the token is verified again and the roster read again, nothing is
+   written (the sign-in is logged by a separate beacon once it has succeeded). The slow case now costs about four
+   seconds instead of ten, and the worst case (three dead tries) about sixteen instead of twenty-seven. A refusal
+   from the script, or a redirect that lands on a 404, counts as that try failing rather than as the answer. */
+function scriptPostHedged(body, onSlow){
+  return new Promise(function(resolve,reject){
+    var starts=[0,2500,6000], fired=[], failed=0, done=false, ctls=[], timers=[];
+    function fire(i){
+      if(done||fired[i]) return; fired[i]=true;
+      if(i>0&&onSlow) onSlow(i);
+      var ctl=new AbortController(); ctls.push(ctl);
+      var t=setTimeout(function(){ctl.abort();},10000);
+      fetch(CFG.API_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:body,signal:ctl.signal})
+        .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+        .then(function(j){ clearTimeout(t); if(done) return; done=true; timers.forEach(clearTimeout); ctls.forEach(function(c){ if(c!==ctl){ try{c.abort();}catch(e){} } }); resolve(j); })
+        .catch(function(e){ clearTimeout(t); if(done) return; failed++;
+          if(failed>=starts.length){ done=true; timers.forEach(clearTimeout); reject(e); return; }
+          if(i+1<starts.length && !fired[i+1]) fire(i+1);      // a fast failure need not wait for the schedule
+        });
+    }
+    fire(0);
+    for(var i=1;i<starts.length;i++) timers.push(setTimeout(fire.bind(null,i), starts[i]));
+  });
+}
 async function onCred(resp){
   var j;
   if(_booting||D) return;                     // already signing in, or already in
   try{
     setStatus('Checking access…'); $('err').textContent='';
-    var r=await scriptPost(JSON.stringify({a:'signin',t:resp.credential}), function(n){
-      setStatus('Sign-in service is slow — retrying ('+n+' of 2)…');
+    j=await scriptPostHedged(JSON.stringify({a:'signin',t:resp.credential}), function(n){
+      setStatus('Sign-in service is slow — asking again ('+n+' of 2)…');
     });
-    j=await r.json();
     if(!j.ok){ setErr(j.error==='not on the roster'?'Your account is not on the portal roster — ask Troy to add you.':('Sign-in refused: '+(j.error||'unknown'))); return; }
-    try{ sessionStorage.setItem('sdp_auth',JSON.stringify(j)); }catch(e){}
-  }catch(e){ setErr('Could not reach the sign-in service after three tries. It is usually back within a minute — press the sign-in button again. ('+(e&&e.name==='AbortError'?'timed out':e.message)+')'); return; }
-  try{ await boot(j); }catch(e){ try{sessionStorage.removeItem('sdp_auth');}catch(_){} setErr('Signed in fine, but the portal data would not load. If the site was being updated just now, wait about a minute and refresh. ('+e.message+')'); }
+    saveAuth(j);
+    try{ navigator.sendBeacon(CFG.API_URL, JSON.stringify({a:'ping',s:j.sid,ev:'signin'})); }catch(e){}
+  }catch(e){ setErr('Could not reach the sign-in service. It is usually back within a minute — press the sign-in button again. ('+(e&&e.name==='AbortError'?'timed out':e.message)+')'); return; }
+  try{ await boot(j); }catch(e){ forgetAuth(); setErr('Signed in fine, but the portal data would not load. If the site was being updated just now, wait about a minute and refresh. ('+e.message+')'); }
 }
 var gsiOK=false;
 function gsiFail(){ if(gsiOK||$('gbtn').firstChild)return; setErr('The Google sign-in button could not load. Open the portal directly in Chrome or Safari (not inside Gmail/Outlook/Messages) and try again.'); }
@@ -692,10 +765,15 @@ window.addEventListener('load',function(){
     fetch('data/dev.json',{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){ DETAIL=d.detail||{}; DETAIL_KEYS={}; Object.keys(DETAIL).forEach(function(k){DETAIL_KEYS[k]={id:'dev',key:'dev'};}); startApp(d,{name:'Dev preview',role:'Admin',email:''}); }).catch(function(e){ setErr('dev.json not found — run: python -m sdp build --no-encrypt'); });
     return;
   }
-  try{ var s=sessionStorage.getItem('sdp_auth'); if(s){
-      // A saved session is loading: take the sign-in button away until that either works or fails.
-      $('gbtn').style.visibility='hidden';
-      boot(JSON.parse(s)).catch(function(e){ try{sessionStorage.removeItem('sdp_auth');}catch(_){} $('gbtn').style.visibility=''; setErr('Session reload failed — sign in again. '+e.message); }); return; } }catch(e){}
+  var saved=loadAuth();
+  if(saved){
+    // A remembered session is loading: take the sign-in button away until that either works or fails, then ask
+    // the backend in the background whether anything about this person's access has changed.
+    $('gbtn').style.visibility='hidden';
+    boot(saved).then(function(){ refreshSession(saved); })
+      .catch(function(e){ forgetAuth(); $('gbtn').style.visibility=''; setErr('Your saved sign-in no longer opens the portal (the data keys may have been rotated) — sign in again. '+e.message); });
+    return;
+  }
   setTimeout(gsiFail,6000);
 });
 </script>
@@ -2154,7 +2232,7 @@ function scChart(SC){
 
 /* ---------- portal usage (admin only) ---------- */
 // The session token lives in the stored auth blob, not on the profile object the app keeps in memory.
-function sessionSid(){ try{ return (JSON.parse(sessionStorage.getItem('sdp_auth')||'{}').sid)||''; }catch(e){ return ''; } }
+function sessionSid(){ var a=loadAuth(); return (a&&a.sid)||''; }
 
 function showUsage(){
   var w=document.createElement('div'); w.id='usageWrap';
