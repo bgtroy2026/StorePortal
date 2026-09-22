@@ -41,6 +41,8 @@
  *
  *   POST <exec URL>?hook=<TRIPLESEAT_HOOK_TOKEN>  (any JSON body) → a Tripleseat webhook delivery, appended to the
  *                                    "Tripleseat" tab. See the TRIPLESEAT WEBHOOKS section for what it keeps and drops.
+ *   POST <exec URL>?hook=<token>&seed=1  {"rows":[[when,action,kind,object_id,ts_location_id,event_date,status,json],…]}
+ *                                    → a one-time history seed from a Tripleseat report export, appended in bulk to the same tab
  *   {"a":"tripleseat","k":<key>,"since":N,"limit":M} → rows N.. of that tab, for the nightly pipeline (HMAC like scorecard)
  *
  * Time-driven (no request): morningTick() runs every 15 minutes once installTriggers() has been run ONCE from
@@ -72,7 +74,7 @@ function doPost(e) {
   var out;
   try {
     // A Tripleseat webhook delivery names itself in the query string; everything else is the portal protocol.
-    if (e && e.parameter && e.parameter.hook) out = doTripleseatHook(e);
+    if (e && e.parameter && e.parameter.hook) out = e.parameter.seed ? doTripleseatSeed(e) : doTripleseatHook(e);
     else out = handle(((e && e.postData && e.postData.contents) || '').trim());
   }
   catch (err) { out = { ok: false, error: 'server error: ' + err }; }
@@ -687,6 +689,46 @@ function doTripleseatHook(e) {
     try { lock.releaseLock(); } catch (ignored) {}
   }
   return { ok: true };
+}
+
+/** One-time history seed. Webhooks only carry what changes from the day they were switched on; the past comes from
+ *  a Tripleseat "Event Details" report export, reshaped in the browser into the same rows a webhook would have
+ *  produced (action SEED_EVENT, kind event, the event object in the API's field names) and posted here in batches.
+ *  Same token as the webhook, same tab, same PII scrub, one setValues per batch instead of one appendRow per row.
+ *  A later real delivery for the same event simply lands after these rows and wins, as it should. */
+var SEED_MAX_ROWS = 500;
+
+function doTripleseatSeed(e) {
+  var want = hookToken();
+  var got = String((e && e.parameter && e.parameter.hook) || '');
+  if (!got || got.length !== want.length || got !== want) return { ok: false, error: 'bad hook' };
+  var body = ((e.postData && e.postData.contents) || '').trim();
+  var req;
+  try { req = JSON.parse(body); } catch (err) { return { ok: false, error: 'seed body is not JSON' }; }
+  var rows = req && req.rows;
+  if (!rows || !rows.length || rows.length > SEED_MAX_ROWS) return { ok: false, error: 'expected 1-' + SEED_MAX_ROWS + ' rows' };
+  var out = [];
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    if (!r || r.length !== HOOK_HEADER.length) return { ok: false, error: 'row ' + (i + 1) + ' has ' + (r ? r.length : 0) + ' cells, not ' + HOOK_HEADER.length };
+    var obj = null;
+    try { obj = JSON.parse(String(r[7])); } catch (err) { return { ok: false, error: 'row ' + (i + 1) + ' json does not parse' }; }
+    var json = trimHook(scrubPii(obj));
+    out.push([String(r[0]).slice(0, 40), cellSafe(String(r[1]).slice(0, 60)), cellSafe(String(r[2]).slice(0, 20)), cellSafe(String(r[3]).slice(0, 20)),
+              cellSafe(String(r[4]).slice(0, 20)), cellSafe(String(r[5]).slice(0, 10)), cellSafe(String(r[6]).slice(0, 40)), json]);
+  }
+  var lock = LockService.getScriptLock();
+  try { lock.waitLock(20000); } catch (ignored) {}
+  var total;
+  try {
+    var sh = hookSheet(SpreadsheetApp.openById(prop('SHEET_ID')));
+    var start = sh.getLastRow() + 1;
+    sh.getRange(start, 1, out.length, HOOK_HEADER.length).setValues(out);
+    total = sh.getLastRow() - 1;
+  } finally {
+    try { lock.releaseLock(); } catch (ignored) {}
+  }
+  return { ok: true, appended: out.length, total: total };
 }
 
 /** Rows [since, since+limit) of the Tripleseat tab for the pipeline, plus the total so it knows when to stop. The
