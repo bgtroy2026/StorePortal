@@ -17,6 +17,16 @@ CREATE TABLE IF NOT EXISTS locations (
 
 -- ---------- Toast (POS) ----------
 
+-- Every business day Toast has been ASKED for, including the ones that came back empty (before a taproom went
+-- live on Toast, or a day it was closed). Without this the nightly pull could not tell "empty" from "never
+-- asked" and re-asked for every empty day in the window each night — 270 of them for Prairie Village alone.
+CREATE TABLE IF NOT EXISTS toast_pull_days (
+  location_id   TEXT NOT NULL, business_date TEXT NOT NULL,
+  orders        INTEGER,                          -- how many orders that day had when it was last pulled
+  pulled_at     TEXT,
+  PRIMARY KEY (location_id, business_date)
+);
+
 CREATE TABLE IF NOT EXISTS toast_orders (           -- grain: one order (may hold many checks)
   order_guid        TEXT PRIMARY KEY,
   location_id       TEXT NOT NULL,

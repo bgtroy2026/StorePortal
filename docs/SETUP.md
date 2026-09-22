@@ -17,8 +17,8 @@ Until Toast credentials arrive the workflow simply skips Toast (it logs a warnin
 MarginEdge alone and marks the order-level panels "needs Toast".
 
 **Backfill timing.** MarginEdge allows 1 request/second per key. The first run pulls a daily sales report and a
-daily P&L for every unit for `backfill_days` (400) — about 80 minutes for six units — plus invoice detail and
-inventories. The pull stops cleanly at `max_minutes_per_run` (300) and the next nightly run continues from
+daily P&L for every unit for `marginedge.backfill_days` (400; MarginEdge keeps its own window because its history
+only goes back to onboarding) — about 80 minutes for six units — plus invoice detail and inventories. The pull stops cleanly at `max_minutes_per_run` (300) and the next nightly run continues from
 where it left off, so a full backfill may take two or three nights. Nightly runs afterwards take a few minutes.
 
 ## 2. Locations
@@ -103,8 +103,12 @@ delivery before it is written.
 2. Repo → **Settings → Actions → General → Workflow permissions: Read and write** (needed for the encrypted
    warehouse release asset).
 3. Run the workflow once by hand: **Actions → Nightly refresh → Run workflow** (tick *mock* for a demo build
-   with sample data). The first real run backfills `backfill_days` (400) and takes a while because of Toast's
-   5 req/s per-location limit; later runs re-pull only the last 7 days.
+   with sample data). The first real run backfills `backfill_days` (800 since 2026-09-22 — 26 months, so every
+   window in the portal has its last-year twin, YTD in December included) and takes a while because of Toast's
+   5 req/s per-location limit: a busy taproom runs at 7–13 s per business day, so the pull stops cleanly at
+   `toast.max_minutes_per_run` (240) and the next run continues. Later runs re-pull only the last 7 days per
+   taproom plus any day never asked for; days that came back empty (before go-live, closed days) are remembered
+   in `toast_pull_days` and not asked for again.
 
 The published URL is `https://<org>.github.io/<repo>/`.
 

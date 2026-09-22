@@ -32,15 +32,23 @@ from .util import DB_PATH, env, locations, log, settings
 
 
 def _warehouse_days() -> set[tuple[str, str]]:
+    """(slug, business_date) the nightly pull need not ask Toast for again: days with orders in the warehouse plus
+    every day ever asked for (toast_pull_days), so a day that was empty stays known-empty instead of being
+    fetched every night. The incremental window is re-pulled regardless, so late edits still land."""
     if not DB_PATH.exists():
         return set()
     con = sqlite3.connect(DB_PATH)
+    out: set[tuple[str, str]] = set()
     try:
-        return set(con.execute("SELECT DISTINCT location_id, business_date FROM toast_orders").fetchall())
-    except sqlite3.OperationalError:
-        return set()
+        for sql in ("SELECT DISTINCT location_id, business_date FROM toast_orders",
+                    "SELECT location_id, business_date FROM toast_pull_days"):
+            try:
+                out |= set(con.execute(sql).fetchall())
+            except sqlite3.OperationalError:
+                pass
     finally:
         con.close()
+    return out
 
 
 def _unhealed_days() -> set[tuple[str, str]]:
@@ -116,7 +124,10 @@ def cmd_pull(a):
             try:
                 from . import marginedge
                 me_cfg = cfg["marginedge"]
-                marginedge.pull(locs, days_back=cfg["backfill_days"], incremental_days=inc_days, have=({} if a.backfill else _me_have()),
+                # MarginEdge keeps its own window: its history walks at one request a second, and its data only
+                # goes back to onboarding, so widening Toast's window (for last-year comparisons) must not send
+                # the history job off after two years of empty MarginEdge days.
+                marginedge.pull(locs, days_back=int(me_cfg.get("backfill_days") or cfg["backfill_days"]), incremental_days=inc_days, have=({} if a.backfill else _me_have()),
                                 max_minutes=a.max_minutes or me_cfg.get("max_minutes_per_run"), phase=a.phase)
             except Exception as e:
                 failed.append("marginedge"); log.error("MarginEdge pull failed (%s: %s) — continuing with other sources", type(e).__name__, e)

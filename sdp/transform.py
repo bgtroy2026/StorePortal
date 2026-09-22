@@ -241,8 +241,12 @@ def load_toast(con, bk: Buckets) -> dict:
 
     pours = PourParser()
     tzs = {l["slug"]: l.get("timezone") or "America/Chicago" for l in locations()}
+    now = datetime.utcnow().isoformat(timespec="seconds") + "Z"
     for slug, ds, p, j in iter_raw("toast", dataset="orders"):
         orders, items, pays, discs, loy = [], [], [], [], []
+        # Remember the ask itself, orders or not, so an empty day is never fetched again (see toast_pull_days).
+        pulled_day = _bd(j.get("businessDate") or p.stem)
+        con.execute("INSERT OR REPLACE INTO toast_pull_days VALUES (?,?,?,?)", (slug, pulled_day, len(j.get("orders", [])), now))
         for o in j.get("orders", []):
             bd = _bd(o.get("businessDate"))
             net = tax = tips = disc = svc = refunds = 0.0
