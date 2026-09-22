@@ -1947,9 +1947,11 @@ var EV_STATUS_ORDER=['definite','tentative','prospect','closed','lost','other'];
 var EV_STATUS_LABEL={definite:'Definite',closed:'Closed',tentative:'Tentative',prospect:'Prospect',lost:'Lost',other:'Other'};
 function evStatusKey(s){ s=String(s||'').toLowerCase(); if(/^(definite|confirmed)/.test(s)) return 'definite'; if(/lost|turned/.test(s)) return 'lost'; if(/^closed/.test(s)) return 'closed'; if(/^tentative/.test(s)) return 'tentative'; if(/^prospect|^new|^inquir/.test(s)) return 'prospect'; return 'other'; }
 function evIsBooked(st){ var k=evStatusKey(st); return k==='definite'||k==='closed'; }   /* Tripleseat's "Definite/Closed Status" */
-/* Leads speak their own vocabulary: New / Contacted / Proposal Sent / Won / Lost / Turned down (or Converted / Open
-   when the webhook only gave timestamps). Coloured on the same scale as events: won is as good as definite. */
-function leadStatusKey(s){ s=String(s||'').toLowerCase(); if(/won|convert/.test(s)) return 'definite'; if(/lost|turned|declin/.test(s)) return 'lost'; if(/proposal|quote|contact/.test(s)) return 'tentative'; if(/new|open|inquir/.test(s)) return 'prospect'; return 'other'; }
+/* Leads speak two vocabularies. The webhook's own lead object says Open / Converted / Turned down; Tripleseat's
+   Lead Details report says whatever the EVENT the lead converted into now says (Definite, Closed, Lost, …), which
+   is how a seeded lead arrives. Try the lead words first, then fall through to the event scale — won is as good as
+   definite, and a lead whose event was lost is lost. */
+function leadStatusKey(s){ s=String(s||'').toLowerCase(); if(/won|convert/.test(s)) return 'definite'; if(/turned|declin/.test(s)) return 'lost'; if(/proposal|quote|contact/.test(s)) return 'tentative'; if(/^new\b|open|inquir/.test(s)) return 'prospect'; return evStatusKey(s); }
 function evLeads(){ var out=[]; locIds().forEach(function(l){((D.leads||{})[l]||[]).forEach(function(r){ if(!Array.isArray(r)||r.length<10) return; out.push({loc:l,id:r[0],name:r[1]||'',company:r[2]||'',status:r[3]||'',created:r[4]||'',d:r[5]||'',guests:r[6],type:r[7]||'',style:r[8]||'',src:r[9]||'',form:r[10]||'',converted:r[11]||'',turnedDown:r[12]||'',title:r[13]||''}); });}); return out.sort(function(a,b){return a.created<b.created?1:-1;}); }
 function leadsDaily(){ var m={}; locIds().forEach(function(l){ var x=(D.leads_daily||{})[l]||{}; Object.keys(x).forEach(function(d){ var o=m[d]||(m[d]={n:0,c:0,v:0}); o.n+=x[d][0]||0; o.c+=x[d][1]||0; o.v+=x[d][2]||0; }); }); return m; }
 function fwd_(d){ return pd(d).toLocaleDateString(undefined,{weekday:'short'}); }
@@ -1995,7 +1997,7 @@ function evNewLeadsPanel(){
         +(multi?'<td>'+esc(locName(r.loc))+'</td>':'')+'<td>'+(r.d?fdate(r.d)+', '+r.d.slice(0,4):'—')+'</td><td class="r">'+fn(r.guests)+'</td>'
         +'<td'+(r.style?' title="'+esc(r.style)+'"':'')+'>'+esc(r.type||'—')+'</td><td>'+fdt(r.created)+'</td>'
         +'<td'+(r.form?' title="'+esc(r.form)+'"':'')+'>'+esc(r.src||'—')+'</td>'
-        +'<td><span class="pill" style="background:'+EV_STATUS_COLORS[k]+'22;color:'+EV_STATUS_COLORS[k]+'">'+esc(evStatus(r.status))+'</span>'+(r.converted?'<div class="tg">converted '+fdate(r.converted)+'</div>':'')+'</td></tr>'; }).join('')
+        +'<td>'+(r.status?'<span class="pill" style="background:'+EV_STATUS_COLORS[k]+'22;color:'+EV_STATUS_COLORS[k]+'">'+esc(evStatus(r.status))+'</span>':'<span class="tg">—</span>')+(r.converted?'<div class="tg">booked '+fdate(r.converted)+'</div>':'')+'</td></tr>'; }).join('')
     +'</table></div>';
   // Status roll-up of every lead in the bundle window, not just the fifteen shown.
   var ld={}; locIds().forEach(function(l){((D.leads_status||{})[l]||[]).forEach(function(r){var o=ld[r[0]]||(ld[r[0]]={n:0,g:0});o.n+=r[1];o.g+=r[2];});});
