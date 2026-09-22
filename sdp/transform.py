@@ -682,7 +682,15 @@ def _ts_event_row(e: dict, slug: str, by_room_name: dict, type_names: dict, orig
             "rooms": ", ".join(names.get(r) or by_room_name[r] for r in rids if names.get(r) or r in by_room_name),
             "event_type_name": type_names.get(et), "source": origin,
             "deleted": 1 if e.get("deleted_at") else 0, "seen_at": seen_at,
-            "lead_source": src, "definite_at": definite_at}
+            "lead_source": src, "definite_at": definite_at, "lead_id": _ts_lead_id(e)}
+
+
+def _ts_lead_id(e: dict):
+    """The lead behind an event: `lead_id`, or the id of the nested {"lead": {...}} the webhook and the seed carry."""
+    v = e.get("lead_id")
+    if v in (None, "") and isinstance(e.get("lead"), dict):
+        v = e["lead"].get("id")
+    return str(v) if v not in (None, "") else None
 
 
 def _ts_loc_id(o: dict):
@@ -721,8 +729,19 @@ def _ts_date(v) -> str | None:
     return None
 
 
-def _ts_lead_row(l: dict, slug: str, origin: str, seen_at: str | None) -> dict:
+def _ts_lead_row(l: dict, slug: str, origin: str, seen_at: str | None, type_names: dict | None = None) -> dict:
     nm = " ".join(x for x in [l.get("first_name"), l.get("last_name")] if x).strip()
+    # What the enquiry is for. The API/webhook object names the type by id (resolved through the site's picklist)
+    # or as a nested object; a seeded row from a report carries the name outright.
+    et = l.get("event_type_name")
+    if not et and isinstance(l.get("event_type"), dict):
+        et = l["event_type"].get("name")
+    if not et and l.get("event_type_id") not in (None, "") and type_names:
+        et = type_names.get(str(l.get("event_type_id")))
+    style = l.get("event_style")
+    if isinstance(style, dict):
+        style = style.get("name")
+    title = l.get("event_name") or l.get("title") or l.get("name")
     src = l.get("lead_source")
     if not src and isinstance(l.get("selected_lead_sources"), list) and l["selected_lead_sources"]:
         s0 = l["selected_lead_sources"][0]
@@ -743,7 +762,8 @@ def _ts_lead_row(l: dict, slug: str, origin: str, seen_at: str | None) -> dict:
             "lead_form": (form.get("name") if isinstance(form, dict) else form),
             "converted_at": _ts_datetime(l.get("converted_at")) or l.get("converted_at"),
             "turned_down_at": _ts_datetime(l.get("turned_down_at")) or l.get("turned_down_at"),
-            "origin": origin, "seen_at": seen_at}
+            "origin": origin, "seen_at": seen_at,
+            "event_type_name": et, "event_style": style, "title": (str(title)[:120] if title else None)}
 
 
 def load_tripleseat_catalog(con) -> dict:
@@ -832,7 +852,7 @@ def load_tripleseat_api(con) -> dict:
         rows = []
         for l in j.get("leads") or []:
             l = dict(l); l.setdefault("location_id", tid)
-            rows.append(_ts_lead_row(l, slug, "api", None))
+            rows.append(_ts_lead_row(l, slug, "api", None, type_names))
         con.execute("DELETE FROM ts_leads WHERE location_id=? AND COALESCE(origin,'api')='api'", (slug,))
         n_ld += _upsert(con, "ts_leads", rows)
     return {"events": n_ev, "leads": n_ld}
@@ -969,7 +989,7 @@ def load_tripleseat_webhooks(con) -> dict:
                     n_unmapped += 1; continue
                 if _hook_newer_exists(con, "ts_leads", "lead_id", str(o.get("id")), eff):
                     n_stale += 1; continue
-                row = _ts_lead_row(o, slug, origin, eff)
+                row = _ts_lead_row(o, slug, origin, eff, type_names)
                 if "CONVERT" in action:
                     row["status"] = "Converted"
                 elif "TURNED_DOWN" in action or "TURN_DOWN" in action:
@@ -1017,7 +1037,8 @@ def load_inputs(con) -> dict:
           "cost": float(r.get("cost") or 0), "owner": r.get("owner"), "notes": r.get("notes")} for r in inputs.read_activations()]
     con.execute("DELETE FROM activations"); _upsert(con, "activations", a)
     t = [{"location_id": r["location_id"], "month": r["month"], "sales_target": float(r.get("sales_target") or 0) or None, "cogs_pct_target": float(r.get("cogs_pct_target") or 0) or None,
-          "labor_pct_target": float(r.get("labor_pct_target") or 0) or None, "guests_target": int(float(r.get("guests_target") or 0)) or None} for r in inputs.read_targets()]
+          "labor_pct_target": float(r.get("labor_pct_target") or 0) or None, "guests_target": int(float(r.get("guests_target") or 0)) or None,
+          "event_sales_target": float(r.get("event_sales_target") or 0) or None} for r in inputs.read_targets()]
     _upsert(con, "targets", t)
     inv = [{"location_id": r["location_id"], "count_date": r["count_date"], "bucket": r["bucket"], "value": float(r.get("value") or 0), "source": "csv"} for r in inputs.read_inventory_counts()]
     con.execute("DELETE FROM me_inventory_counts WHERE source='csv'")

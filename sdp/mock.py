@@ -434,12 +434,25 @@ def gen_tripleseat(loc: dict, loc_idx: int, start: date, end: date, forward: dat
                            "amount_due": (0.0 if past else round(total * 0.75, 2)), "price_per_person": ppp,
                            "created_at": iso(d - timedelta(days=rnd.randint(20, 120))) + "T10:00:00-05:00",
                            "updated_at": iso(min(d, end)) + "T10:00:00-05:00", "deleted_at": None})
+            if rnd.random() < 0.45:
+                # About half the events start life as a web lead: the lead converts the day the event is created.
+                ev = events[-1]
+                lead_id = int(f"{loc_idx}7{len(leads):04d}")
+                leads.append({"id": lead_id, "first_name": rnd.choice(["Sam", "Alex", "Jordan", "Casey", "Riley", "Morgan"]),
+                              "last_name": rnd.choice(["Nguyen", "Patel", "Johnson", "Garcia", "Smith", "Olson"]), "company": "",
+                              "location_id": int(tid), "event_date": iso(d), "guest_count": guests, "status": "Won",
+                              "event_type_id": ev["event_type_id"], "event_style": ev["event_style"],
+                              "lead_source": {"name": "Website"}, "lead_form": {"name": "Web Lead Form"},
+                              "event_description": ev["name"], "created_at": iso(d - timedelta(days=rnd.randint(25, 130))) + "T09:00:00-05:00",
+                              "converted_at": ev["created_at"], "updated_at": ev["created_at"]})
+                ev["lead_id"] = lead_id
         if rnd.random() < base * 1.6:
             leads.append({"id": int(f"{loc_idx}8{len(leads):04d}"), "first_name": rnd.choice(["Sam", "Alex", "Jordan", "Casey", "Riley", "Morgan"]),
                           "last_name": rnd.choice(["Nguyen", "Patel", "Johnson", "Garcia", "Smith", "Olson"]),
                           "company": rnd.choice(["", "Hills Bank", "ACT", "Collins Aerospace", "UIHC", "Kum & Go", "", ""]),
                           "location_id": int(tid), "event_date": iso(d), "guest_count": rnd.choice([10, 20, 30, 45, 60, 100]),
                           "status": rnd.choices(LEAD_STATUS, weights=[22, 20, 18, 28, 12])[0],
+                          "event_type_id": rnd.randint(1, 8), "event_style": rnd.choice(["On-Premise Event", "Off-Premise Event"]),
                           "lead_source": {"name": rnd.choice(["Website", "Referral", "Phone", "Walk-in", "Repeat client"])},
                           "event_description": rnd.choice(EVENT_NAMES), "created_at": iso(d - timedelta(days=rnd.randint(10, 90))) + "T09:00:00-05:00",
                           "updated_at": iso(min(d, end)) + "T09:00:00-05:00"})

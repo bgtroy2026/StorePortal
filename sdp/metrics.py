@@ -45,7 +45,7 @@ def build_payload(con, through: date | None = None) -> dict:
                               # site suppresses its change-vs-prior figures instead of dividing by a partial baseline.
                               "first_date": (con.execute("SELECT MIN(business_date) FROM daily_summary WHERE location_id=? AND net_sales>0", (l["slug"],)).fetchone() or [None])[0]}
                              for l in locs],
-               "daily": {}, "hourly": {}, "top_items": {}, "labor_jobs": {}, "vendors": {}, "inventory": {}, "activations": [], "targets": {}, "payments": {}, "dining": {}, "revctr": {}, "labor_hourly": {}, "schedule": {}, "tender": {}, "voids": {}, "invoices": {}, "servers": {}, "cash": {}, "pacing": {}, "digest": {}, "discounts": {}, "pnl": {}, "sources": {}, "events": {}, "leads": {}, "events_monthly": {}, "scorecard": {},
+               "daily": {}, "hourly": {}, "top_items": {}, "labor_jobs": {}, "vendors": {}, "inventory": {}, "activations": [], "targets": {}, "payments": {}, "dining": {}, "revctr": {}, "labor_hourly": {}, "schedule": {}, "tender": {}, "voids": {}, "invoices": {}, "servers": {}, "cash": {}, "pacing": {}, "digest": {}, "discounts": {}, "pnl": {}, "sources": {}, "events": {}, "leads": {}, "leads_daily": {}, "leads_status": {}, "events_monthly": {}, "scorecard": {},
                "ops": {}, "menu_prices": [], "price_compare": [],
                "beer": {}, "channels": {}, "loyalty": {}, "menu": {}, "beer_mix": {}, "compliance": {}, "weather": {}, "market": {}}
     # MarginEdge onboarding is still settling, so everything sourced from it is badged provisional in the portal.
@@ -241,18 +241,34 @@ def build_payload(con, through: date | None = None) -> dict:
         # Deleted events stay in the warehouse (so a late re-send cannot resurrect them) but never reach a page.
         payload["events"][lid] = [[r["event_id"], r["name"], r["event_date"], r["status"], r["guest_count"],
                                    _r(r["grand_total"]), _r(r["actual_amount"]), _r(r["fb_minimum"]), _r(r["deposit"]), r["event_style"],
-                                   r["rooms"], r["event_type_name"], r["source"], r["lead_source"]]
+                                   r["rooms"], r["event_type_name"], r["source"], r["lead_source"],
+                                   r["start_at"], r["end_at"], r["lead_id"], (r["created_at"] or "")[:10]]
                                   for r in _rows(con, """SELECT event_id, name, event_date, status, guest_count, grand_total, actual_amount, fb_minimum, deposit, event_style,
-                                                                rooms, event_type_name, source, lead_source
+                                                                rooms, event_type_name, source, lead_source, start_at, end_at, lead_id, created_at
                                                          FROM ts_events WHERE location_id=? AND event_date>=? AND COALESCE(deleted,0)=0 ORDER BY event_date""", (lid, since.isoformat()))]
         payload["events_monthly"][lid] = {r["m"]: [r["n"], _r(r["booked"]), _r(r["actual"]), r["guests"]] for r in _rows(con, """
             SELECT substr(event_date,1,7) m, COUNT(*) n, SUM(COALESCE(grand_total,0)) booked, SUM(COALESCE(actual_amount,0)) actual, SUM(COALESCE(guest_count,0)) guests
             FROM ts_events WHERE location_id=? AND event_date>=? AND COALESCE(deleted,0)=0 GROUP BY 1 ORDER BY 1""", (lid, since.isoformat()))}
-        payload["leads"][lid] = [[r["status"] or "?", r["n"], r["guests"]] for r in _rows(con, """
+        # Leads, shaped for a Tripleseat-style dashboard: the newest ones in full (never contact details — those are
+        # stripped before storage anyway), and a per-day series of leads created / converted / the booked value of
+        # the events they became, back to the start of the bundle window. The "New leads" list and the "Incoming
+        # leads" chart read these; status roll-ups are done in the page.
+        payload["leads"][lid] = [[r["lead_id"], r["contact_name"] or r["company"] or "", r["company"], r["status"] or "?", (r["created_at"] or ""),
+                                  r["event_date"], r["guest_count"], r["event_type_name"], r["event_style"], r["source"], r["lead_form"],
+                                  (r["converted_at"] or "")[:10], (r["turned_down_at"] or "")[:10], r["title"]]
+                                 for r in _rows(con, """SELECT lead_id, contact_name, company, status, created_at, event_date, guest_count, event_type_name,
+                                                               event_style, source, lead_form, converted_at, turned_down_at, title
+                                                        FROM ts_leads WHERE location_id=? ORDER BY created_at DESC LIMIT 60""", (lid,))]
+        payload["leads_status"][lid] = [[r["status"] or "?", r["n"], r["guests"]] for r in _rows(con, """
             SELECT COALESCE(status,'?') status, COUNT(*) n, SUM(COALESCE(guest_count,0)) guests FROM ts_leads
-            WHERE location_id=? AND event_date>=? GROUP BY 1 ORDER BY n DESC""", (lid, since.isoformat()))]
+            WHERE location_id=? AND created_at>=? GROUP BY 1 ORDER BY n DESC""", (lid, since.isoformat()))]
+        payload["leads_daily"][lid] = {r["d"]: [r["n"], r["conv"], _r(r["value"])] for r in _rows(con, """
+            SELECT substr(l.created_at,1,10) d, COUNT(*) n, SUM(CASE WHEN l.converted_at IS NOT NULL AND l.converted_at<>'' THEN 1 ELSE 0 END) conv,
+                   SUM(COALESCE((SELECT MAX(COALESCE(NULLIF(e.actual_amount,0), e.grand_total, 0)) FROM ts_events e
+                                 WHERE e.lead_id=l.lead_id AND e.location_id=l.location_id AND COALESCE(e.deleted,0)=0), 0)) value
+            FROM ts_leads l WHERE l.location_id=? AND l.created_at>=? GROUP BY 1 ORDER BY 1""", (lid, since.isoformat()))}
 
-        payload["targets"][lid] = {r["month"]: [r["sales_target"], r["cogs_pct_target"], r["labor_pct_target"], r["guests_target"]] for r in _rows(con, "SELECT * FROM targets WHERE location_id=?", (lid,))}
+        payload["targets"][lid] = {r["month"]: [r["sales_target"], r["cogs_pct_target"], r["labor_pct_target"], r["guests_target"], r["event_sales_target"]] for r in _rows(con, "SELECT * FROM targets WHERE location_id=?", (lid,))}
 
     for key, fn, args in (("menu_prices", ops.menu_price_consistency, ()), ("price_compare", ops.purchase_price_compare, (through,))):
         try:
@@ -1122,7 +1138,7 @@ def slice_for_location(payload: dict, lid: str) -> dict:
         return keep
     out["menu_prices"] = _cut(payload.get("menu_prices"), 2)
     out["price_compare"] = _cut(payload.get("price_compare"), 3, lambda v: v[0])
-    for k in ("ops", "beer", "channels", "loyalty", "menu", "beer_mix", "compliance", "weather", "market", "daily", "hourly", "top_items", "labor_jobs", "vendors", "inventory", "targets", "payments", "dining", "revctr", "labor_hourly", "schedule", "tender", "voids", "invoices", "servers", "cash", "pacing", "digest", "discounts", "pnl", "sources", "events", "leads", "events_monthly"):
+    for k in ("ops", "beer", "channels", "loyalty", "menu", "beer_mix", "compliance", "weather", "market", "daily", "hourly", "top_items", "labor_jobs", "vendors", "inventory", "targets", "payments", "dining", "revctr", "labor_hourly", "schedule", "tender", "voids", "invoices", "servers", "cash", "pacing", "digest", "discounts", "pnl", "sources", "events", "leads", "leads_daily", "leads_status", "events_monthly"):
         out[k] = {lid: payload[k].get(lid)} if lid in payload[k] else {}
     return out
 

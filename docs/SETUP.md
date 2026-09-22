@@ -78,7 +78,11 @@ object: status upper-case (`DEFINITE`), money as strings, `created_at` as `7/27/
 with names, `status_changes` and `selected_lead_sources` included, `event_type_id` null.
 
 **History seeded 2026-09-22** from a Tripleseat *Event Details* report export (`tools/tripleseat_seed.js`, run in
-the browser console on Reports → History; instructions at the top of the file). The export — all locations,
+the browser console on Reports → History; instructions at the top of the file). The same tool seeds **leads** when
+the newest completed export is a leads report (a "Lead Id" first column): Reports → Leads → Lead Details with a
+Created-date range, every location, exported to CSV — rows go up as `SEED_LEAD` and load into `ts_leads`; email,
+phone and free-text columns are never read. The Events page's "Incoming leads" panel is only as deep as this
+seed plus what the webhook has delivered since 2026-09-21. The export — all locations,
 statuses Prospect / Tentative / Definite / Closed, 8/1/2025 through 12/31/2027, Lost left out on purpose — held
 2,956 events (Cedar Rapids 810, Des Moines 753, Omaha 589, Iowa City 584, Prairie Village 220; none in the
 "Solon" room). The tool reshapes each report line into the object the webhook would have delivered (rooms and
@@ -150,7 +154,9 @@ On a shared computer, **Sign out** forgets the session. To revoke keys already h
 ## 5. Manual inputs
 
 `inputs/activations.csv` (events/promos/launches with cost) and `inputs/targets.csv` (monthly sales, COGS %,
-labor %, guests per location). `inputs/inventory_counts.csv` is an optional fallback — inventory values come
+labor %, guests per location, and — optional, blank by default — `event_sales_target`, the private-event sales
+goal the Events page's "Monthly event sales goal" bar measures against; Tripleseat's own goal is unset).
+`inputs/inventory_counts.csv` is an optional fallback — inventory values come
 from the MarginEdge `/inventories` API (every counted item, rolled up by category). Edit in GitHub or keep them
 as a Google Sheet and export; commit → picked up next run.
 

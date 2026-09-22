@@ -458,6 +458,39 @@ footer.site div{margin-top:12px;font-size:10.5px;font-weight:700;letter-spacing:
   table.t{font-size:12px}
   .panel,.tile{box-shadow:none}
 }
+
+/* ---- Events page, Tripleseat-dashboard shape ---- */
+.panel.nofind .pt{display:none}
+.hint .seg.mini{float:right;margin:-3px 0 0 8px}
+.seg.mini button{padding:3px 8px;font-size:11px}
+.dashrow{display:flex;gap:16px;align-items:stretch;margin-top:4px}
+.dashrow .cw{flex:1 1 auto;min-width:0;height:230px}
+.kstats{flex:0 0 190px;display:flex;flex-direction:column;justify-content:center;gap:12px}
+.kstat .v{font-size:22px;font-weight:700;color:var(--navy);line-height:1.15}
+.kstat .c{font-size:11.5px;color:var(--muted);margin-top:2px}
+.evrow2{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:14px}
+.evside{display:flex;flex-direction:column;gap:14px;min-width:0}
+.goalwrap{padding:22px 4px 4px}
+.goalbar{position:relative;height:14px;border-radius:7px;background:var(--plane);overflow:visible}
+.goalbar .fill{position:absolute;left:0;top:0;bottom:0;border-radius:7px;background:var(--green)}
+.goalbar .pipe{position:absolute;top:0;bottom:0;background:repeating-linear-gradient(45deg,#c98a0066,#c98a0066 4px,transparent 4px,transparent 8px);border-radius:0 7px 7px 0}
+.goalbar .todaymark{position:absolute;top:-6px;bottom:-6px;width:2px;background:var(--navy);transform:translateX(-1px)}
+.goalbar .todaymark span{position:absolute;top:-19px;left:50%;transform:translateX(-50%);font-size:9.5px;font-weight:700;letter-spacing:.06em;color:#fff;background:var(--navy);padding:1px 6px;border-radius:4px;white-space:nowrap}
+.goalline{margin-top:10px;font-size:13px;color:var(--ink2)}
+.goalline code{font-size:11.5px;background:var(--plane);padding:1px 4px;border-radius:4px}
+.calhead{display:flex;align-items:center;justify-content:space-between;margin:2px 0 8px}
+.calnav{border:1px solid var(--border);background:#fff;border-radius:7px;padding:4px 9px;font-size:12px;font-weight:600;color:var(--navy);cursor:pointer}
+.cal{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:3px}
+.cal .dh{font-size:10.5px;font-weight:700;color:var(--muted);text-align:center;padding:2px 0 4px;letter-spacing:.04em}
+.cal .dc{min-height:56px;border:1px solid var(--border);border-radius:6px;padding:2px 3px 3px;font-size:11px;background:#fff}
+.cal .dc.has{cursor:pointer}.cal .dc.has:hover{border-color:var(--navy)}
+.cal .dc.out{border-color:transparent;background:transparent}
+.cal .dc.today{box-shadow:inset 0 0 0 2px var(--green)}
+.cal .dn{color:var(--muted);text-align:right;font-size:10.5px;padding-right:1px}
+.cp{display:block;border-radius:4px;color:#fff;text-align:center;font-weight:700;font-size:10.5px;line-height:15px;margin-top:2px}
+.cp.lg{display:inline-block;width:14px;height:10px;margin:0;vertical-align:-1px;border-radius:3px}
+@media (max-width:900px){.evrow2{grid-template-columns:1fr}}
+@media (max-width:720px){.dashrow{flex-direction:column}.kstats{flex:none;flex-direction:row;flex-wrap:wrap;gap:10px 18px}.kstat .v{font-size:19px}.cal .dc{min-height:44px}.hint .seg.mini{float:none;display:inline-flex;margin:6px 0 0}}
 </style>
 </head>
 <body>
@@ -1852,7 +1885,7 @@ function spark(vals){
 
 /* ---------- Tripleseat events ---------- */
 function hasEvents(){ return locIds().some(function(l){return ((D.events||{})[l]||[]).length;}); }
-function evRows(){ var out=[]; locIds().forEach(function(l){((D.events||{})[l]||[]).forEach(function(r){ out.push({loc:l,id:r[0],name:r[1],d:r[2],status:r[3],guests:r[4],booked:r[5],actual:r[6],fb:r[7],dep:r[8],style:r[9],rooms:r[10]||'',type:r[11]||'',src:r[12]||'',leadSrc:r[13]||''}); });}); return out.sort(function(a,b){return a.d<b.d?-1:1;}); }
+function evRows(){ var out=[]; locIds().forEach(function(l){((D.events||{})[l]||[]).forEach(function(r){ out.push({loc:l,id:r[0],name:r[1],d:r[2],status:r[3],guests:r[4],booked:r[5],actual:r[6],fb:r[7],dep:r[8],style:r[9],rooms:r[10]||'',type:r[11]||'',src:r[12]||'',leadSrc:r[13]||'',start:r[14]||'',end:r[15]||'',leadId:r[16]||'',created:r[17]||''}); });}); return out.sort(function(a,b){return a.d<b.d?-1:1;}); }
 function evIsDef(st){ return /^(definite|confirmed)/i.test(st||''); }
 function evValue(e){ return (e.actual!=null&&e.actual>0)?e.actual:(e.booked||0); }
 function evStatus(s){ s=String(s||''); return s.length>1&&s===s.toUpperCase()?s[0]+s.slice(1).toLowerCase():s; }   /* Tripleseat sends DEFINITE; the mock says Definite */
@@ -1902,52 +1935,156 @@ function tsCatalogPanels(){
     +'</div>';
 }
 
+/* ---------- the Events page, in the shape of Tripleseat's own dashboard (leadership's ask, 2026-09-22) ----------
+   Two panels at the top with their own quick windows — incoming leads (last 7 / 30 days / 6 months) and upcoming
+   events (next 7 / 30 days / 6 months) — then the newest leads, the month's event-sales goal, and a calendar with
+   every day's bookings by status. Below that the page's own window (Next 30 by default) drives the detailed table,
+   the by-taproom roll-up and the month chart, and the catalog panels close the page. Contact details never reach
+   the browser: the Apps Script strips them before storage, so a lead here is a name, a company and what they asked
+   for — the phone call happens in Tripleseat, one click away. */
+var EV_STATUS_COLORS={definite:'#2f6b12',closed:'#3d7ea6',tentative:'#c98a00',prospect:'#8a8fa8',lost:'#c8372f',other:'#b8bccb'};
+var EV_STATUS_ORDER=['definite','tentative','prospect','closed','lost','other'];
+var EV_STATUS_LABEL={definite:'Definite',closed:'Closed',tentative:'Tentative',prospect:'Prospect',lost:'Lost',other:'Other'};
+function evStatusKey(s){ s=String(s||'').toLowerCase(); if(/^(definite|confirmed)/.test(s)) return 'definite'; if(/lost|turned/.test(s)) return 'lost'; if(/^closed/.test(s)) return 'closed'; if(/^tentative/.test(s)) return 'tentative'; if(/^prospect|^new|^inquir/.test(s)) return 'prospect'; return 'other'; }
+function evIsBooked(st){ var k=evStatusKey(st); return k==='definite'||k==='closed'; }   /* Tripleseat's "Definite/Closed Status" */
+/* Leads speak their own vocabulary: New / Contacted / Proposal Sent / Won / Lost / Turned down (or Converted / Open
+   when the webhook only gave timestamps). Coloured on the same scale as events: won is as good as definite. */
+function leadStatusKey(s){ s=String(s||'').toLowerCase(); if(/won|convert/.test(s)) return 'definite'; if(/lost|turned|declin/.test(s)) return 'lost'; if(/proposal|quote|contact/.test(s)) return 'tentative'; if(/new|open|inquir/.test(s)) return 'prospect'; return 'other'; }
+function evLeads(){ var out=[]; locIds().forEach(function(l){((D.leads||{})[l]||[]).forEach(function(r){ if(!Array.isArray(r)||r.length<10) return; out.push({loc:l,id:r[0],name:r[1]||'',company:r[2]||'',status:r[3]||'',created:r[4]||'',d:r[5]||'',guests:r[6],type:r[7]||'',style:r[8]||'',src:r[9]||'',form:r[10]||'',converted:r[11]||'',turnedDown:r[12]||'',title:r[13]||''}); });}); return out.sort(function(a,b){return a.created<b.created?1:-1;}); }
+function leadsDaily(){ var m={}; locIds().forEach(function(l){ var x=(D.leads_daily||{})[l]||{}; Object.keys(x).forEach(function(d){ var o=m[d]||(m[d]={n:0,c:0,v:0}); o.n+=x[d][0]||0; o.c+=x[d][1]||0; o.v+=x[d][2]||0; }); }); return m; }
+function fwd_(d){ return pd(d).toLocaleDateString(undefined,{weekday:'short'}); }
+function evSeg(kind,cur,opts){ return '<span class="seg mini" data-evseg="'+kind+'">'+opts.map(function(o){return '<button data-v="'+o[0]+'"'+(o[0]===cur?' class="on"':'')+'>'+o[1]+'</button>';}).join('')+'</span>'; }
+function kstat(v,c){ return '<div class="kstat"><div class="v">'+v+'</div><div class="c">'+c+'</div></div>'; }
+/* Days for a short window, seven-day buckets for six months: the same shape Tripleseat draws. */
+function evSeries(a,N,pick){
+  var pts=[], step=N>35?7:1, d=a;
+  while(d<=addDays(a,N-1)){ var e=addDays(d,step-1); if(e>addDays(a,N-1)) e=addDays(a,N-1); pts.push({a:d,b:e,v:pick(d,e)}); d=addDays(d,step); }
+  return pts;
+}
+function evLeadsPanel(){
+  var N=S.evLeadWin||7, today=todayStr(), a=addDays(today,-(N-1)), b=today, daily=leadsDaily();
+  var first=Object.keys(daily).sort()[0], n=0,c=0,v=0;
+  Object.keys(daily).forEach(function(d){ if(d>=a&&d<=b){ n+=daily[d].n; c+=daily[d].c; v+=daily[d].v; } });
+  var pts=evSeries(a,N,function(x,y){ var t=0; Object.keys(daily).forEach(function(d){ if(d>=x&&d<=y) t+=daily[d].n; }); return t; });
+  window._evLeadPts=pts;
+  var label=N===7?'for the last 7 days':N===30?'for the last 30 days':'for the last 6 months';
+  var note='';
+  if(!first) note='<div class="hint" style="margin-top:8px">No leads have arrived yet. They start flowing with the Tripleseat webhook; older ones can be seeded from a leads report export (tools/tripleseat_seed.js).</div>';
+  else if(first>a) note='<div class="hint" style="margin-top:8px">Lead history starts '+fdate(first)+' (the webhook switch-on) — earlier leads can be seeded from a Tripleseat leads report export.</div>';
+  var body='<div class="dashrow"><div class="cw"><canvas id="c_leads"></canvas></div><div class="kstats">'
+    +kstat(fn(n)+' Leads','Created in this period')+kstat(fn(c)+' Events','Resulting from leads')+kstat(fm(v),'Forecasted revenue from leads')+'</div></div>'+note;
+  return panel('Incoming leads',label+evSeg('lead',N,[[7,'Last 7 days'],[30,'Last 30 days'],[180,'Last 6 months']]),body,'noprov nofind');
+}
+function evUpcomingPanel(all){
+  var N=S.evUpWin||7, today=todayStr(), a=today, b=addDays(today,N-1);
+  var inW=all.filter(function(e){return e.d>=a&&e.d<=b;}), booked=inW.filter(function(e){return evIsBooked(e.status);});
+  var val=booked.reduce(function(p,e){return p+evValue(e);},0), open_=inW.length-booked.length;
+  var pts=evSeries(a,N,function(x,y){ return booked.filter(function(e){return e.d>=x&&e.d<=y;}).length; });
+  window._evUpPts=pts;
+  var label=N===7?'for the next 7 days':N===30?'for the next 30 days':'for the next 6 months';
+  var body='<div class="dashrow"><div class="cw"><canvas id="c_up"></canvas></div><div class="kstats">'
+    +kstat(fn(booked.length)+' Events','Definite / closed status')+kstat(fm(val),'Expected revenue from events')+kstat(fn(open_)+' More','Tentative or prospect in the same days')+'</div></div>';
+  return panel('Upcoming events',label+evSeg('up',N,[[7,'Next 7 days'],[30,'Next 30 days'],[180,'Next 6 months']]),body,'noprov nofind');
+}
+function evNewLeadsPanel(){
+  var rows=evLeads().slice(0,15), multi=locIds().length>1;
+  if(!rows.length) return panel('New leads','The most recent enquiries, newest first','<div class="empty">No leads yet.</div>','noprov');
+  var t='<div style="overflow-x:auto"><table class="t"><tr><th>Lead</th>'+(multi?'<th>Taproom</th>':'')+'<th>Event date</th><th class="r">Guests</th><th>Asked for</th><th>Submitted</th><th>Came via</th><th>Status</th></tr>'
+    +rows.map(function(r){ var k=leadStatusKey(r.status);
+      return '<tr><td class="n">'+esc(r.name||'—')+(r.company?'<div class="tg" style="font-weight:400">'+esc(r.company)+'</div>':'')+(r.title?'<div class="tg" style="font-weight:400">'+esc(r.title)+'</div>':'')+'</td>'
+        +(multi?'<td>'+esc(locName(r.loc))+'</td>':'')+'<td>'+(r.d?fdate(r.d)+', '+r.d.slice(0,4):'—')+'</td><td class="r">'+fn(r.guests)+'</td>'
+        +'<td'+(r.style?' title="'+esc(r.style)+'"':'')+'>'+esc(r.type||'—')+'</td><td>'+fdt(r.created)+'</td>'
+        +'<td'+(r.form?' title="'+esc(r.form)+'"':'')+'>'+esc(r.src||'—')+'</td>'
+        +'<td><span class="pill" style="background:'+EV_STATUS_COLORS[k]+'22;color:'+EV_STATUS_COLORS[k]+'">'+esc(evStatus(r.status))+'</span>'+(r.converted?'<div class="tg">converted '+fdate(r.converted)+'</div>':'')+'</td></tr>'; }).join('')
+    +'</table></div>';
+  // Status roll-up of every lead in the bundle window, not just the fifteen shown.
+  var ld={}; locIds().forEach(function(l){((D.leads_status||{})[l]||[]).forEach(function(r){var o=ld[r[0]]||(ld[r[0]]={n:0,g:0});o.n+=r[1];o.g+=r[2];});});
+  var lk=Object.keys(ld).sort(function(x,y){return ld[y].n-ld[x].n;}), lt=lk.reduce(function(p,c){return p+ld[c].n;},0);
+  var roll=lk.length?'<div class="hint" style="margin-top:8px"><b>All leads by status:</b> '+lk.map(function(x){return esc(x)+' '+fn(ld[x].n)+' ('+fp(ld[x].n/lt,0)+')';}).join(' · ')+'.</div>':'';
+  return panel('New leads','The most recent enquiries, newest first — open the lead in Tripleseat to reach the contact',t+roll,'noprov');
+}
+function evGoalPanel(all){
+  var today=todayStr(), mo=today.slice(0,7), y=+mo.slice(0,4), m=+mo.slice(5,7), dim=new Date(y,m,0).getDate();
+  var a=mo+'-01', b=mo+'-'+String(dim).padStart(2,'0');
+  var inM=all.filter(function(e){return e.d>=a&&e.d<=b;});
+  var booked=inM.filter(function(e){return evIsBooked(e.status);}).reduce(function(p,e){return p+evValue(e);},0);
+  var pipe=inM.filter(function(e){var k=evStatusKey(e.status);return k==='tentative'||k==='prospect';}).reduce(function(p,e){return p+(e.booked||0);},0);
+  var goal=0; locIds().forEach(function(l){ var t=((D.targets||{})[l]||{})[mo]; if(t&&t[4]) goal+=t[4]; });
+  var pct=goal?Math.min(1,booked/goal):0, todayPct=(+today.slice(8,10))/dim*100;
+  var bar='<div class="goalwrap"><div class="goalbar"><div class="fill" style="width:'+(goal?(pct*100).toFixed(1):0)+'%"></div>'
+    +(goal&&pipe?'<div class="pipe" style="left:'+(pct*100).toFixed(1)+'%;width:'+Math.min(100-pct*100,pipe/goal*100).toFixed(1)+'%"></div>':'')
+    +'<div class="todaymark" style="left:'+todayPct.toFixed(1)+'%"><span>'+pd(today).toLocaleDateString(undefined,{month:'short',day:'numeric'}).toUpperCase()+'</span></div></div></div>';
+  var line=goal?'<div class="goalline"><b>'+fm(booked)+'</b> of '+fm(goal)+' goal <span class="tg">('+fp(booked/goal,0)+')</span>'+(pipe?' · '+fm(pipe)+' more tentative or prospect':'')+'</div>'
+               :'<div class="goalline"><b>'+fm(booked)+'</b> booked this month <span class="tg">· no goal set — add an <code>event_sales_target</code> column to inputs/targets.csv</span>'+(pipe?' · '+fm(pipe)+' more tentative or prospect':'')+'</div>';
+  return panel('Monthly event sales goal','Definite and closed events dated '+fdate(a)+' – '+fdate(b)+', '+y+(locIds().length>1?', all taprooms':''),bar+line,'noprov nofind');
+}
+function evCalendarPanel(all){
+  var mo=S.evCal||todayStr().slice(0,7), y=+mo.slice(0,4), m=+mo.slice(5,7), dim=new Date(y,m,0).getDate(), first=new Date(y,m-1,1).getDay(), today=todayStr();
+  var by={}; all.forEach(function(e){ if(e.d.slice(0,7)!==mo) return; var o=by[e.d]||(by[e.d]={}); var k=evStatusKey(e.status); o[k]=(o[k]||0)+1; });
+  var cells='', dn=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  for(var i=0;i<7;i++) cells+='<div class="dh">'+dn[i]+'</div>';
+  for(var p=0;p<first;p++) cells+='<div class="dc out"></div>';
+  for(var d=1; d<=dim; d++){
+    var ds_=mo+'-'+String(d).padStart(2,'0'), o=by[ds_]||{}, pills='';
+    EV_STATUS_ORDER.forEach(function(k){ if(o[k]) pills+='<span class="cp" style="background:'+EV_STATUS_COLORS[k]+'" title="'+o[k]+' '+EV_STATUS_LABEL[k].toLowerCase()+'">'+o[k]+'</span>'; });
+    cells+='<div class="dc'+(ds_===today?' today':'')+(pills?' has':'')+'" data-day="'+ds_+'" title="Show '+fdate(ds_)+' below"><div class="dn">'+d+'</div>'+pills+'</div>';
+  }
+  var title=new Date(y,m-1,1).toLocaleDateString(undefined,{month:'short',year:'numeric'});
+  var head='<div class="calhead"><button class="calnav" data-cal="-1">‹ Prev</button><b>'+title+'</b><button class="calnav" data-cal="1">Next ›</button></div>';
+  var legend='<div class="hint" style="margin-top:8px">'+EV_STATUS_ORDER.filter(function(k){return k!=='other';}).map(function(k){return '<span class="cp lg" style="background:'+EV_STATUS_COLORS[k]+'">&nbsp;</span> '+EV_STATUS_LABEL[k];}).join(' &nbsp; ')+' &nbsp;·&nbsp; click a day to list its events below</div>';
+  return panel('Calendar','Bookings per day by status',head+'<div class="cal">'+cells+'</div>'+legend,'noprov nofind');
+}
+
 function pgEvents(m){
   if(!hasEvents()){
     m.innerHTML=(tsStatusPanel()||'<div class="panel"><h3>Events</h3><div class="empty">No Tripleseat data yet. Once Tripleseat is connected, booked private events and the lead pipeline appear here.</div></div>')
       +tsCatalogPanels();
     return;
   }
-  /* The window comes from the Events page's own picker (evWindow): by default today and the next 30 days, because
-     a director can still do something about what is booked and nothing about what was billed. A window that ends
-     after the last data day is "forward": the money in it is contracted, not earned, and the tiles say so. */
+  /* The window below the dashboard comes from the Events page's own picker (evWindow): by default today and the
+     next 30 days, because a director can still do something about what is booked and nothing about what was
+     billed. A window that ends after the last data day is "forward": the money in it is contracted, not earned. */
   var w=evWindow(), a=w[0], b=w[1], T=D.meta.through, fwd=evForward();
   var all=evRows(), inWin=all.filter(function(e){return e.d>=a&&e.d<=b;});
   var defIn=inWin.filter(function(e){return evIsDef(e.status);}), other=inWin.length-defIn.length;
   var val=defIn.reduce(function(p,c){return p+evValue(c);},0), gu=defIn.reduce(function(p,c){return p+(c.guests||0);},0);
-  var beyond=all.filter(function(e){return e.d>b&&evIsDef(e.status);}), beyondVal=beyond.reduce(function(p,c){return p+(c.booked||0);},0);
   var winTitle=EV_AHEAD[S.evPreset]?'the next '+EV_AHEAD[S.evPreset]+' days':'the selected window';
-  var tiles;
-  if(fwd){
-    tiles=tile('Confirmed events',fn(defIn.length),'<span class="tg">'+fn(other)+' tentative or prospect</span>')
-      +tile('Booked value',fk(val),'<span class="tg">contracted, confirmed events only</span>')
-      +tile('Expected guests',fn(gu),'<span class="tg">'+fm(gu?val/gu:null,2)+' per guest</span>')
-      +tile('Avg event value',fm(defIn.length?val/defIn.length:null,0),'')
-      +tile('Beyond this window',fk(beyondVal),'<span class="tg">'+fn(beyond.length)+' confirmed after '+fdate(b)+'</span>');
-  } else {
+  var multi=locIds().length>1;
+  var tiles='';
+  if(!fwd){
     var k=kpis(a,b), future=all.filter(function(e){return e.d>T&&evIsDef(e.status);}), futRev=future.reduce(function(p,c){return p+(c.booked||0);},0);
-    tiles=tile('Events in range',fn(defIn.length),'<span class="tg">'+fn(other)+' tentative/other</span>')
+    tiles='<div class="grid tiles" style="margin-top:14px">'
+      +tile('Events in range',fn(defIn.length),'<span class="tg">'+fn(other)+' tentative/other</span>')
       +tile('Event revenue',fk(val),'',k.net?'<span class="tg">'+fp(val/k.net)+' of net sales</span>':'')
       +tile('Event guests',fn(gu),'<span class="tg">'+fm(gu?val/gu:null,2)+' per guest</span>')
       +tile('Booked ahead',fk(futRev),'<span class="tg">'+fn(future.length)+' confirmed events after '+fdate(T)+'</span>')
-      +tile('Avg event value',fm(defIn.length?val/defIn.length:null,0),'');
+      +tile('Avg event value',fm(defIn.length?val/defIn.length:null,0),'')
+      +'</div>';
   }
-  var multi=locIds().length>1;
   m.innerHTML=tsStatusPanel()
-    +'<div class="grid tiles">'+tiles+'</div>'
+    +'<div class="grid cols2">'+evLeadsPanel()+evUpcomingPanel(all)+'</div>'
+    +'<div class="evrow2" style="margin-top:14px">'+evNewLeadsPanel()+'<div class="evside">'+evGoalPanel(all)+evCalendarPanel(all)+'</div></div>'
+    +tiles
     +'<div class="grid cols2" style="margin-top:14px">'
     +panel('Event value by month','Booked (contracted) vs actual billed, from Tripleseat — months in the selected window are the solid bars',chartBox('c_evm',true))
-    +(multi?panel('By taproom','Confirmed events in '+winTitle,'<div id="evLoc"></div>'):panel('Lead pipeline','Inbound enquiries by status','<div id="evLead"></div>'))
+    +(multi?panel('By taproom','Confirmed events in '+winTitle,'<div id="evLoc"></div>'):panel('Events in '+winTitle+' by status','What is on the books for this taproom','<div id="evStat"></div>'))
     +'</div>'
     +'<div class="grid" style="margin-top:14px;grid-template-columns:repeat(auto-fit,minmax(min(560px,100%),1fr))">'
     +(fwd
       ?panel('Events in '+winTitle,'Every booking dated '+fdate(a)+' – '+fdate(b)+', confirmed or not, soonest first','<div id="evWin"></div>')
-       +(multi?panel('Lead pipeline','Inbound enquiries by status','<div id="evLead"></div>'):'')
       :panel('Events in the selected range','Definite events counted in the revenue tile above','<div id="evWin"></div>')
-       +panel('Upcoming events','Confirmed and tentative bookings after '+fdate(T),'<div id="evUp"></div>')
-       +(multi?panel('Lead pipeline','Inbound enquiries by status','<div id="evLead"></div>'):''))
+       +panel('Upcoming events','Confirmed and tentative bookings after '+fdate(T),'<div id="evUp"></div>'))
     +'</div>'
     +tsCatalogPanels();
+  // The two dashboard charts: an area per day (or per week for six months), like Tripleseat draws them.
+  var intAxis={x:{grid:{display:false},ticks:{maxRotation:0,autoSkip:true,maxTicksLimit:10}},y:{beginAtZero:true,grid:{color:css('grid')},border:{display:false},ticks:{precision:0,callback:function(v){return fn(v);}}}};
+  var lab=function(p,N){ return N===7?fwd_(p.a):fdate(p.a); };
+  var lp=window._evLeadPts||[], up=window._evUpPts||[];
+  mk('c_leads',{type:'line',data:{labels:lp.map(function(p){return lab(p,S.evLeadWin||7);}),datasets:[{label:'Leads created',fmt:'int',data:lp.map(function(p){return p.v;}),borderColor:css('s2'),backgroundColor:css('s2')+'55',fill:true,tension:.35,pointRadius:3,pointBackgroundColor:css('s2'),borderWidth:2}]},options:baseOpts({scales:intAxis})});
+  mk('c_up',{type:'line',data:{labels:up.map(function(p){return lab(p,S.evUpWin||7);}),datasets:[{label:'Definite / closed events',fmt:'int',data:up.map(function(p){return p.v;}),borderColor:css('s3'),backgroundColor:css('s3')+'55',fill:true,tension:.35,pointRadius:3,pointBackgroundColor:css('s3'),borderWidth:2}]},options:baseOpts({scales:intAxis})});
+  m.querySelectorAll('[data-evseg] button').forEach(function(btn){ btn.onclick=function(){ var kind=btn.parentNode.dataset.evseg, v=+btn.dataset.v; if(kind==='lead') S.evLeadWin=v; else S.evUpWin=v; render(true); }; });
+  m.querySelectorAll('[data-cal]').forEach(function(btn){ btn.onclick=function(){ var mo=S.evCal||todayStr().slice(0,7), y=+mo.slice(0,4), mm=+mo.slice(5,7)+(+btn.dataset.cal); var d=new Date(y,mm-1,1); S.evCal=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); render(true); }; });
+  m.querySelectorAll('[data-day]').forEach(function(c){ c.onclick=function(){ S.evPreset='custom'; S.evD0=S.evD1=c.dataset.day; render(); var t=$('evWin'); if(t) t.scrollIntoView({behavior:'smooth',block:'start'}); }; });
   // Twelve months or more around the window, whatever the data holds: three months before it starts, at least
   // eleven after, three past its end. Without this the chart would show the LAST fourteen months that exist in the
   // data — and with bookings out to next year, that is a strip of empty future.
@@ -1962,14 +2099,15 @@ function pgEvents(m){
       {label:'Actual billed',data:ms.map(function(x){return g(x,'actual');}),backgroundColor:ms.map(function(x){return css('s3')+(inW(x)?'':'66');}),borderRadius:4,maxBarThickness:34}]},
     options:baseOpts({plugins:{legend:{display:true,position:'bottom'},tooltip:{callbacks:{label:function(c){return ' '+c.dataset.label+': '+fk(c.parsed.y)+'  ('+fn(g(ms[c.dataIndex],'n'))+' events)';}}}}})});
   var anyRoom=all.some(function(e){return e.rooms;}), anyType=all.some(function(e){return e.type;});
+  function evTime(e){ var s=e.start&&/T(\d\d):(\d\d)/.exec(e.start), t=e.end&&/T(\d\d):(\d\d)/.exec(e.end); var f=function(x){var h=+x[1],mi=x[2];return (h%12||12)+(mi!=='00'?':'+mi:'')+(h<12?'am':'pm');}; return s?(f(s)+(t?'–'+f(t):'')):''; }
   function evTable(list,showStatus,cap,withActual){
     if(!list.length) return '<div class="empty">None in this window.</div>';
     cap=cap||40;
     return '<div style="overflow-x:auto"><table class="t"><tr><th>Date</th>'+(multi?'<th>Location</th>':'')+'<th>Event</th>'+(anyRoom?'<th>Room</th>':'')+(anyType?'<th>Type</th>':'')+(showStatus?'<th>Status</th>':'')+'<th class="r">Guests</th><th class="r">Booked</th>'+(withActual?'<th class="r">Actual</th>':'')+'</tr>'
-      +list.slice(0,cap).map(function(e){
-        return '<tr><td>'+fdate(e.d)+'</td>'+(multi?'<td>'+esc(locName(e.loc))+'</td>':'')+'<td class="n">'+esc(e.name)+'</td>'
+      +list.slice(0,cap).map(function(e){ var k=evStatusKey(e.status), tm=evTime(e);
+        return '<tr><td>'+fdate(e.d)+(tm?'<div class="tg">'+tm+'</div>':'')+'</td>'+(multi?'<td>'+esc(locName(e.loc))+'</td>':'')+'<td class="n">'+esc(e.name)+(e.style?'<div class="tg" style="font-weight:400">'+esc(e.style)+'</div>':'')+'</td>'
         +(anyRoom?'<td>'+esc(e.rooms)+'</td>':'')+(anyType?'<td>'+esc(e.type)+'</td>':'')
-        +(showStatus?'<td><span class="pill"'+(evIsDef(e.status)?' style="background:#e6f4ea;color:var(--good)"':'')+'>'+esc(evStatus(e.status))+'</span></td>':'')
+        +(showStatus?'<td><span class="pill" style="background:'+EV_STATUS_COLORS[k]+'22;color:'+EV_STATUS_COLORS[k]+'">'+esc(evStatus(e.status))+'</span></td>':'')
         +'<td class="r">'+fn(e.guests)+'</td><td class="r">'+fm(e.booked)+'</td>'+(withActual?'<td class="r">'+(e.actual!=null&&e.actual>0?fm(e.actual):'—')+'</td>':'')+'</tr>';}).join('')
       +'</table>'+(list.length>cap?'<div class="hint" style="margin-top:6px">Showing '+cap+' of '+fn(list.length)+' — pick one taproom or a shorter window for the rest</div>':'')+'</div>';
   }
@@ -1983,12 +2121,13 @@ function pgEvents(m){
       +ks.map(function(l){var o=byLoc[l];return '<tr><td class="n">'+esc(locName(l))+'</td><td class="r">'+fn(o.n)+'</td><td class="r">'+fn(o.other)+'</td><td class="r">'+fn(o.g)+'</td><td class="r">'+fm(o.val)+'</td></tr>';}).join('')
       +'<tr style="font-weight:700"><td>All</td><td class="r">'+fn(defIn.length)+'</td><td class="r">'+fn(other)+'</td><td class="r">'+fn(gu)+'</td><td class="r">'+fm(val)+'</td></tr></table>')
       :'<div class="empty">No events in this window.</div>';
+  } else {
+    var st={}; inWin.forEach(function(e){var k=evStatusKey(e.status); var o=st[k]||(st[k]={n:0,g:0,v:0}); o.n++; o.g+=(e.guests||0); o.v+=(e.booked||0);});
+    var sk=EV_STATUS_ORDER.filter(function(k){return st[k];});
+    $('evStat').innerHTML=sk.length?('<table class="t"><tr><th>Status</th><th class="r">Events</th><th class="r">Guests</th><th class="r">Booked</th></tr>'
+      +sk.map(function(k){var o=st[k];return '<tr><td class="n"><span class="cp lg" style="background:'+EV_STATUS_COLORS[k]+'">&nbsp;</span> '+EV_STATUS_LABEL[k]+'</td><td class="r">'+fn(o.n)+'</td><td class="r">'+fn(o.g)+'</td><td class="r">'+fm(o.v)+'</td></tr>';}).join('')+'</table>')
+      :'<div class="empty">No events in this window.</div>';
   }
-  var ld={}; locIds().forEach(function(l){((D.leads||{})[l]||[]).forEach(function(r){var o=ld[r[0]]||(ld[r[0]]={n:0,g:0});o.n+=r[1];o.g+=r[2];});});
-  var lk=Object.keys(ld).sort(function(x,y){return ld[y].n-ld[x].n;}), lt=lk.reduce(function(p,c){return p+ld[c].n;},0);
-  var le=$('evLead'); if(le) le.innerHTML=lk.length?('<table class="t"><tr><th>Status</th><th class="r">Leads</th><th class="r">Guests</th><th class="r">Share</th></tr>'
-    +lk.map(function(x){return '<tr><td class="n">'+esc(x)+'</td><td class="r">'+fn(ld[x].n)+'</td><td class="r">'+fn(ld[x].g)+'</td><td class="r">'+fp(ld[x].n/lt)+'</td></tr>';}).join('')+'</table>')
-    :'<div class="empty">No leads yet.</div>';
 }
 
 /* Does [a,b] at this location overlap any activation other than `except`? Used to keep a promo's baseline

@@ -1,4 +1,4 @@
-/* Seed the portal's Tripleseat history from an "Event Details" report export.
+/* Seed the portal's Tripleseat history from an "Event Details" report export — or a LEADS report export.
  *
  * WHY. The webhook route (sdp/tripleseat.py, route 2) only ever sees an event once someone touches it, and the
  * public key cannot read events at all. This reshapes a report export into the same rows the webhook would have
@@ -27,7 +27,13 @@
  *      answer ({ok, appended, total}). Then run the workflow with source = tripleseat (backfill = true if you
  *      are re-seeding over rows the warehouse already holds).
  *
- * Contacts, emails and phone numbers are not in this report; the Apps Script strips them anyway (scrubPii).
+ * LEADS. The same tool seeds lead history when the newest completed export on Reports → History is a leads report
+ * (a "Lead Id" column and no "Event Id" column): run Reports → Leads → Lead Details with a Created-date range and
+ * every location, export to CSV, then paste this file exactly as above. Rows go up as SEED_LEAD and load into
+ * ts_leads (name, company, taproom, status, created / event date, guests, type, style, source, lead form,
+ * converted / turned-down dates). Email, phone and free-text columns are never read, let alone posted.
+ *
+ * Contacts, emails and phone numbers are not in the events report; the Apps Script strips them anyway (scrubPii).
  */
 (async () => {
   const EXEC = 'https://script.google.com/macros/s/AKfycbzaXWDdxKjR6s9n2AqDB2lePy2Gg4GxTMCmlS3bKhtTfev539hVoooSeBeC5xuFv2PBNQ/exec';
@@ -56,13 +62,14 @@
   }
 
   // ---- the export: newest completed "Event report" on Reports -> History -------------------------------
-  let link = null, createdText = '';
+  let link = null, createdText = '', reportType = '';
   for (const tr of document.querySelectorAll('table tr')) {
     const cells = [...tr.querySelectorAll('td')].map((td) => td.textContent.trim());
     const a = tr.querySelector('a[href*="download_report_export"]');
-    if (a && /^Event report/i.test(cells[0] || '') && /Complete/i.test(cells[2] || '')) { link = a.href; createdText = cells[1] || ''; break; }
+    if (a && /report/i.test(cells[0] || '') && /Complete/i.test(cells[2] || '')) { link = a.href; createdText = cells[1] || ''; reportType = cells[0]; break; }
   }
-  if (!link) throw new Error('no completed Event report on this page — run the export first, then open Reports → History');
+  if (!link) throw new Error('no completed report export on this page — run the export first, then open Reports → History');
+  console.log('Using the newest completed export:', reportType, createdText.replace(/\s+/g, ' '));
   const csv = await (await fetch(link, { credentials: 'include' })).text();
 
   // "Mon, Sep 21, 2026 7:40 pm" in the account's zone -> when the snapshot was true (ISO UTC)
@@ -77,6 +84,9 @@
   const col = {};
   header.forEach((h, i) => { col[h in col ? `${h} (2)` : h] = i; });       // second "Name"/"Status" are the booking's
   const get = (row, name) => (col[name] === undefined ? '' : String(row[col[name]] ?? '').trim());
+  const getAny = (row, names) => { for (const n of names) { if (col[n] !== undefined) { const v = get(row, n); if (v !== '') return v; } } return ''; };
+  const isLeads = header[0] === 'Lead Id' || (col['Lead Id'] !== undefined && col['Event Id'] === undefined);   // a leads report may carry Event Id for the ones that converted
+  if (isLeads) return buildLeads();
   const money = (s) => { const v = String(s || '').replace(/[$,\s]/g, ''); return v === '' ? null : v; };
   const int = (s) => { const v = String(s || '').replace(/[,\s]/g, ''); return v === '' ? null : parseInt(v, 10); };
   const iso = (mdy) => { const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(mdy || ''); return m ? `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}` : null; };
@@ -159,6 +169,82 @@
       return log;
     },
   };
+
+  // ---- a LEADS export -----------------------------------------------------------------------------------
+  function buildLeads() {
+    const money = (s) => { const v = String(s || '').replace(/[$,\s]/g, ''); return v === '' ? null : v; };
+    const int = (s) => { const v = String(s || '').replace(/[,\s]/g, ''); return v === '' ? null : parseInt(v, 10); };
+    const iso = (mdy) => { const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(mdy || ''); return m ? `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}` : null; };
+    const when = new Date().toISOString();
+    const stats = { rows: 0, skipped: 0, byLoc: {}, unmappedLoc: {}, typeMiss: {}, byStatus: {}, columnsUsed: {} };
+    const rows = [];
+    const NAMES = {
+      first: ['First Name', 'First'], last: ['Last Name', 'Last'], name: ['Name', 'Contact', 'Contact Name', 'Lead Name'],
+      company: ['Company', 'Company Name', 'Account'], status: ['Status', 'Lead Status'],
+      created: ['Date Created', 'Created', 'Created Date', 'Created At', 'Submitted', 'Submitted On', 'Received'],
+      eventDate: ['Event Date', 'Date', 'Date of Event'], guests: ['Guests', 'Guest Count', '# Guests', 'Number of Guests'],
+      location: ['Location'], type: ['Event Type', 'Type'], style: ['Event Style', 'Style'],
+      source: ['Source', 'Lead Source', 'Referred By'], form: ['Lead Form', 'Form'], title: ['Event Name', 'Event Title', 'Title'],
+      converted: ['Converted Date', 'Converted', 'Won Date', 'Date Won'], lost: ['Lost Date', 'Turned Down Date', 'Date Lost', 'Turned Down'],
+      eventId: ['Event Id'], value: ['Budget', 'Estimated Value', 'Value', 'Amount'],
+    };
+    Object.keys(NAMES).forEach((k) => { const hit = NAMES[k].find((n) => col[n] !== undefined); if (hit) stats.columnsUsed[k] = hit; });
+    for (const r of table) {
+      const id = parseInt(get(r, 'Lead Id'), 10);
+      if (!id) { stats.skipped++; continue; }
+      const locName = getAny(r, NAMES.location);
+      const locId = cat.locByName[norm(locName)];
+      if (!locId) { stats.unmappedLoc[locName] = (stats.unmappedLoc[locName] || 0) + 1; continue; }
+      const first = getAny(r, NAMES.first), last = getAny(r, NAMES.last);
+      let fullName = getAny(r, NAMES.name);
+      if (!first && !last && fullName) fullName = fullName.trim();
+      const typeName = getAny(r, NAMES.type) || null;
+      const typeId = typeName ? cat.types[norm(typeName)] || null : null;
+      if (typeName && !typeId) stats.typeMiss[typeName] = (stats.typeMiss[typeName] || 0) + 1;
+      const status = getAny(r, NAMES.status) || null;
+      const eventDate = getAny(r, NAMES.eventDate), eventIso = iso(eventDate);
+      const source = getAny(r, NAMES.source), form = getAny(r, NAMES.form);
+      const lead = {
+        id, first_name: first || (fullName ? fullName.split(' ')[0] : null), last_name: last || (fullName ? fullName.split(' ').slice(1).join(' ') : null),
+        company: getAny(r, NAMES.company) || null, location_id: locId, location: { id: locId, name: cat.locName[locId] },
+        status, event_date: eventDate || null, event_date_iso8601: eventIso, guest_count: int(getAny(r, NAMES.guests)),
+        event_type_id: typeId, event_type_name: typeName, event_style: getAny(r, NAMES.style) || null,
+        lead_source: source || null, selected_lead_sources: source ? [{ lead_source_name: source }] : [],
+        lead_form: form || null, event_name: getAny(r, NAMES.title) || null,
+        created_at: getAny(r, NAMES.created) || null, converted_at: getAny(r, NAMES.converted) || null,
+        turned_down_at: getAny(r, NAMES.lost) || null, event_id: int(getAny(r, NAMES.eventId)), budget: money(getAny(r, NAMES.value)),
+        seeded_from: `Leads report export ${exportDay}`,
+      };
+      const wrapper = { webhook_trigger_type: 'SEED_LEAD', message: `Seeded from the Tripleseat leads report export of ${exportDay}`, exported_at: exportedAt.toISOString(), lead };
+      rows.push([when, 'SEED_LEAD', 'lead', String(id), String(locId), eventIso || '', String(status || '').toUpperCase(), JSON.stringify(wrapper)]);
+      stats.rows++;
+      stats.byLoc[cat.locName[locId]] = (stats.byLoc[cat.locName[locId]] || 0) + 1;
+      stats.byStatus[status || '?'] = (stats.byStatus[status || '?'] || 0) + 1;
+    }
+    stats.longestJson = Math.max(0, ...rows.map((x) => x[7].length));
+    console.log('DRY RUN (LEADS) — nothing sent. Export created', createdText.replace(/\s+/g, ' '), '->', exportedAt.toISOString());
+    console.log('Columns found:', JSON.stringify(stats.columnsUsed), '\nColumns in the file:', header.join(' | '));
+    console.log(JSON.stringify(stats, null, 1));
+    console.log('first row:', rows[0]);
+    if (!stats.columnsUsed.created) console.warn('No created-date column was recognised — the Incoming Leads chart needs one. Add "Date Created" to the report.');
+    if (Object.keys(stats.unmappedLoc).length || Object.keys(stats.typeMiss).length)
+      console.warn('Some locations or types did not resolve (see above). An unresolved location skips the lead.');
+    console.log('If this looks right:  await TS_SEED.post()');
+    window.TS_SEED = { rows, stats, exportedAt, kind: 'leads',
+      async post() {
+        const url = `${EXEC}?hook=${token}&seed=1`;
+        const log = [];
+        for (let i = 0; i < rows.length; i += BATCH) {
+          const slice = rows.slice(i, i + BATCH);
+          const r = await fetch(url, { method: 'POST', body: JSON.stringify({ rows: slice }), headers: { 'Content-Type': 'text/plain;charset=utf-8' }, redirect: 'follow' });
+          let j; try { j = await r.json(); } catch (e) { j = { ok: false, error: `HTTP ${r.status}, not JSON` }; }
+          log.push({ from: i, n: slice.length, ...j });
+          console.log(`rows ${i}-${i + slice.length - 1}:`, j);
+          if (!j.ok) { console.error('stopped — fix and re-run post() from', i); break; }
+        }
+        return log;
+      } };
+  }
 
   // ---- helpers -------------------------------------------------------------------------------------------
   function parseCsv(text) {

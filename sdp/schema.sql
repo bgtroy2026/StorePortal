@@ -282,6 +282,7 @@ CREATE TABLE IF NOT EXISTS ts_events (                  -- grain: one Tripleseat
   seen_at TEXT,                                         -- when this state was true: delivery time, or the export time for a seeded row (newest wins)
   lead_source TEXT,                                     -- selected_lead_sources[0] (webhook route): where the booking came from
   definite_at TEXT,                                     -- when the status last became DEFINITE (status_changes) — booked pace later
+  lead_id TEXT,                                         -- the lead this event came from, when it did (Tripleseat's dashboard counts "events resulting from leads")
   PRIMARY KEY (event_id, location_id)
 );
 CREATE INDEX IF NOT EXISTS ix_ts_events_loc_date ON ts_events(location_id, event_date);
@@ -294,6 +295,9 @@ CREATE TABLE IF NOT EXISTS ts_leads (                   -- grain: one inbound le
   converted_at TEXT, turned_down_at TEXT,
   origin TEXT,                                          -- 'api', 'webhook' or 'seed'
   seen_at TEXT,
+  event_type_name TEXT,                                 -- what they asked for ("Wedding"), resolved from the site's picklist when only an id came
+  event_style TEXT,                                     -- "On-Premise Event" and the like
+  title TEXT,                                           -- the lead's own name for the event, when it gave one
   PRIMARY KEY (lead_id, location_id)
 );
 CREATE INDEX IF NOT EXISTS ix_ts_leads_loc_date ON ts_leads(location_id, event_date);
@@ -323,6 +327,7 @@ CREATE TABLE IF NOT EXISTS activations (               -- market activations / e
 CREATE TABLE IF NOT EXISTS targets (                   -- monthly budget/targets per location
   location_id TEXT NOT NULL, month TEXT NOT NULL,      -- month = YYYY-MM
   sales_target REAL, cogs_pct_target REAL, labor_pct_target REAL, guests_target INTEGER,
+  event_sales_target REAL,                              -- private-event sales goal for the month (Tripleseat's "Monthly Event Sales Goal"), optional
   PRIMARY KEY (location_id, month)
 );
 
