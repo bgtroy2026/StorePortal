@@ -468,7 +468,8 @@ footer.site div{margin-top:12px;font-size:10.5px;font-weight:700;letter-spacing:
 .kstats{flex:0 0 190px;display:flex;flex-direction:column;justify-content:center;gap:12px}
 .kstat .v{font-size:22px;font-weight:700;color:var(--navy);line-height:1.15}
 .kstat .c{font-size:11.5px;color:var(--muted);margin-top:2px}
-.evrow2{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:14px}
+.evrow2{display:grid;grid-template-columns:minmax(0,1.85fr) minmax(0,1fr);gap:14px}
+.leadwhat{white-space:normal;max-width:190px}
 .evside{display:flex;flex-direction:column;gap:14px;min-width:0}
 .goalwrap{padding:22px 4px 4px}
 .goalbar{position:relative;height:14px;border-radius:7px;background:var(--plane);overflow:visible}
@@ -1995,7 +1996,7 @@ function evNewLeadsPanel(){
     +rows.map(function(r){ var k=leadStatusKey(r.status);
       return '<tr><td class="n">'+esc(r.name||'—')+(r.company?'<div class="tg" style="font-weight:400">'+esc(r.company)+'</div>':'')+(r.title?'<div class="tg" style="font-weight:400">'+esc(r.title)+'</div>':'')+'</td>'
         +(multi?'<td>'+esc(locName(r.loc))+'</td>':'')+'<td>'+(r.d?fdate(r.d)+', '+r.d.slice(0,4):'—')+'</td><td class="r">'+fn(r.guests)+'</td>'
-        +'<td'+(r.style?' title="'+esc(r.style)+'"':'')+'>'+esc(r.type||'—')+'</td><td>'+fdt(r.created)+'</td>'
+        +'<td class="leadwhat"'+(r.style?' title="'+esc(r.style)+'"':'')+'>'+esc(r.type||'—')+'</td><td>'+fdt(r.created)+'</td>'
         +'<td'+(r.form?' title="'+esc(r.form)+'"':'')+'>'+esc(r.src||'—')+'</td>'
         +'<td>'+(r.status?'<span class="pill" style="background:'+EV_STATUS_COLORS[k]+'22;color:'+EV_STATUS_COLORS[k]+'">'+esc(evStatus(r.status))+'</span>':'<span class="tg">—</span>')+(r.converted?'<div class="tg">booked '+fdate(r.converted)+'</div>':'')+'</td></tr>'; }).join('')
     +'</table></div>';
