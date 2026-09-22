@@ -63,10 +63,19 @@ City's location id plus `tripleseat_room_ids: ["232405"]`, and a room match wins
    "Include Event Payment and Line Item Information" unticked to start (it can make a delivery too large for a
    cell; the receiver trims, but nothing reads line items yet). Paste the URL as the Target URL.
 4. Edit any event in Tripleseat, then check two places: the "Tripleseat" tab of the roster workbook has a new row,
-   and the Webhooks tab in Tripleseat does not count the delivery as failed. Apps Script answers every POST with
+   and the endpoint on the Webhooks tab in Tripleseat is still enabled. Apps Script answers every POST with
    a **302 redirect** (after recording the body); Tripleseat may count that as a failure and disable the endpoint
-   after too many, and enabling it again resets the count. If it does, the receiver has to move to something that
-   answers 200 directly (a Cloudflare Worker relaying to the same script is the smallest such thing).
+   after too many, and enabling it again resets the count. If that ever happens, the receiver has to move to
+   something that answers 200 directly (a Cloudflare Worker relaying to the same script is the smallest such thing).
+
+**Proven 2026-09-21 19:08 CT.** A guest-count nudge on event 61680687 (Business Lunch, Cedar Rapids) produced three
+deliveries within a minute — `UPDATE_BOOKING`, `CHANGE_EVENT_GUEST_COUNTS`, `UPDATE_EVENT` — and the revert three
+more; all six landed on the tab, the next `source = tripleseat` run absorbed them, and the event published under
+Cedar Rapids with its room and lead source. The endpoint was still enabled afterwards, so six 302s in a row did not
+trip Tripleseat's failure limit (its UI shows no counter, so "still enabled" is the only readable signal). The real
+payload is `{"webhook_trigger_type": "...", "message": "...", "event" | "booking" | "lead": {...}}` with the full
+object: status upper-case (`DEFINITE`), money as strings, `created_at` as `7/27/2026 11:08 PM`, `rooms` as objects
+with names, `status_changes` and `selected_lead_sources` included, `event_type_id` null.
 
 The receiver cannot verify Tripleseat's `X-Signature` header — Apps Script never sees request headers — so the
 random token in the URL is what stands between the tab and the internet. The tab is append-only, the pipeline
