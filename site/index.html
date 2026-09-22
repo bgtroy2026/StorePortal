@@ -470,7 +470,20 @@ footer.site div{margin-top:12px;font-size:10.5px;font-weight:700;letter-spacing:
 .kstat .v{font-size:22px;font-weight:700;color:var(--navy);line-height:1.15}
 .kstat .c{font-size:11.5px;color:var(--muted);margin-top:2px}
 .evrow2{display:grid;grid-template-columns:minmax(0,1.85fr) minmax(0,1fr);gap:14px}
-.leadwhat{white-space:normal;max-width:190px}
+/* Tripleseat's "nature of event" and event descriptions are free text, so a cell holding one can be a sentence.
+   Clip it to the width the column can afford and hang the whole of it off an "i" (see infoIcon / tipInit). */
+.clip{display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
+/* The glyph is drawn, not written, so the icon adds nothing to textContent — which is what the CSV button and
+   the panel filter read. A clipped cell still holds its whole string, so an export is complete even where the
+   screen shows an ellipsis. */
+.ic{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:50%;border:1px solid var(--border);background:#fff;color:var(--muted);font-size:9.5px;font-weight:700;font-style:normal;line-height:1;cursor:help;vertical-align:1px;margin-left:5px;flex:0 0 auto}
+.ic::before{content:"i"}
+@media print{.ic{display:none}}
+.ic:hover,.ic:focus{border-color:var(--navy);color:var(--navy);outline:none}
+#tipbox{position:fixed;z-index:200;max-width:340px;background:var(--navy);color:#fff;border-radius:9px;padding:9px 11px;font-size:11.5px;font-weight:400;line-height:1.45;white-space:normal;text-align:left;box-shadow:0 8px 24px rgba(16,24,40,.26);pointer-events:none;display:none}
+#tipbox b{display:block;font-size:9.5px;text-transform:uppercase;letter-spacing:.08em;opacity:.65;margin-bottom:1px}
+#tipbox b~b{margin-top:8px}
+#tipbox span{display:block}
 .evside{display:flex;flex-direction:column;gap:14px;min-width:0}
 .goalwrap{padding:22px 4px 4px}
 .goalbar{position:relative;height:14px;border-radius:7px;background:var(--plane);overflow:visible}
@@ -837,6 +850,44 @@ function fk(n){ if(n==null||isNaN(n))return '—'; return Math.abs(n)>=1e6?'$'+(
 function fn(n,d){ if(n==null||isNaN(n))return '—'; return Number(n).toLocaleString(undefined,{maximumFractionDigits:d||0}); }
 function fp(x,d){ if(x==null||isNaN(x)||!isFinite(x))return '—'; return (x*100).toFixed(d==null?1:d)+'%'; }
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+/* ---- Clipped cells and their "i" ----------------------------------------------------------------
+   Several Tripleseat fields are free text a person typed into an enquiry form, so a cell that has to
+   hold one cannot be sized by its content: one long answer drags the column over its neighbour. The
+   rule here is that a table cell shows as much as its column can afford and nothing more, and the
+   whole of it lives behind an icon. CLIP_LONG is the point past which a value is assumed not to fit. */
+var CLIP_LONG=26;
+function isLong(s){ return String(s==null?'':s).length>CLIP_LONG; }
+function clipT(s,w){ return '<span class="clip" style="max-width:'+w+'px">'+esc(s==null||s===''?'—':s)+'</span>'; }
+/* parts is [[label, text], …]; blank ones drop out and an icon with nothing to say is not drawn. The
+   tooltip's markup rides in the attribute escaped, and tipInit hands it back to innerHTML. */
+function infoIcon(parts){
+  var h=(parts||[]).filter(function(p){return p[1];}).map(function(p){return '<b>'+esc(p[0])+'</b><span>'+esc(p[1])+'</span>';}).join('');
+  return h?'<i class="ic" tabindex="0" role="button" aria-label="More detail" data-tip="'+esc(h)+'"></i>':'';
+}
+/* One tooltip for the whole page, fixed to the viewport: a box inside a table would be clipped by that
+   table's own horizontal scroll box, and a box per row would be thousands of nodes. Delegated, so markup
+   rendered after this runs is covered too. */
+function tipInit(){
+  if($('tipbox')) return;
+  var b=document.createElement('div'); b.id='tipbox'; document.body.appendChild(b);
+  function show(el){
+    var h=el.getAttribute('data-tip'); if(!h) return;
+    b.innerHTML=h; b.style.display='block'; b.style.left='0px'; b.style.top='0px';
+    var r=el.getBoundingClientRect(), w=b.offsetWidth, ht=b.offsetHeight;
+    var x=Math.min(Math.max(8,r.left+r.width/2-w/2),Math.max(8,innerWidth-w-8));
+    var y=r.bottom+8; if(y+ht>innerHeight-8) y=Math.max(8,r.top-ht-8);
+    b.style.left=Math.round(x)+'px'; b.style.top=Math.round(y)+'px';
+  }
+  function hide(){ b.style.display='none'; }
+  function at(e){ return e.target&&e.target.closest?e.target.closest('[data-tip]'):null; }
+  document.addEventListener('mouseover',function(e){ var t=at(e); if(t) show(t); });
+  document.addEventListener('mouseout',function(e){ if(at(e)) hide(); });
+  document.addEventListener('focusin',function(e){ var t=at(e); if(t) show(t); else hide(); });
+  document.addEventListener('focusout',hide);
+  document.addEventListener('keydown',function(e){ if(e.key==='Escape') hide(); });
+  window.addEventListener('scroll',hide,true);
+  window.addEventListener('resize',hide);
+}
 function pd(s){var p=s.split('-');return new Date(+p[0],+p[1]-1,+p[2]);}
 function ds(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
 function addDays(s,n){var d=pd(s);d.setDate(d.getDate()+n);return ds(d);}
@@ -845,6 +896,7 @@ function fdate(s){return pd(s).toLocaleDateString(undefined,{month:'short',day:'
 
 function startApp(data,profile){
   D=data; P=profile; K={}; D.meta.daily_keys.forEach(function(k,i){K[k]=i;});
+  tipInit();
   $('login').style.display='none'; $('app').style.display='block';
   $('who').innerHTML='<b>'+esc(P.name||P.email)+'</b> · '+esc(P.role||'');
   $('signout').onclick=signOut;
@@ -2015,11 +2067,15 @@ function evNewLeadsPanel(){
   var rows=evLeads().slice(0,15), multi=locIds().length>1;
   if(!rows.length) return panel('New leads','The most recent enquiries, newest first','<div class="empty">No leads yet.</div>','noprov');
   var t='<div style="overflow-x:auto"><table class="t"><tr><th>Lead</th>'+(multi?'<th>Taproom</th>':'')+'<th>Event date</th><th class="r">Guests</th><th>Asked for</th><th>Submitted</th><th>Came via</th><th>Status</th></tr>'
+    /* "Asked for" is whatever the enquirer typed, so it is clipped and the icon beside it carries the full
+       answer plus the style and the description that used to sit under the lead's name. The clip is tighter
+       when the Taproom column is there to be paid for, so the eight columns still fit without scrolling. */
     +rows.map(function(r){ var k=leadStatusKey(r.status);
-      return '<tr><td class="n">'+esc(r.name||'—')+(r.company?'<div class="tg" style="font-weight:400">'+esc(r.company)+'</div>':'')+(r.title?'<div class="tg" style="font-weight:400">'+esc(r.title)+'</div>':'')+'</td>'
+      var tip=infoIcon([['Asked for',isLong(r.type)?r.type:''],['Style',r.style],['Description',r.title]]);
+      return '<tr><td class="n">'+clipT(r.name||'—',multi?130:170)+(r.company?'<div class="tg" style="font-weight:400">'+clipT(r.company,multi?130:170)+'</div>':'')+'</td>'
         +(multi?'<td>'+esc(locName(r.loc))+'</td>':'')+'<td>'+(r.d?fdate(r.d)+', '+r.d.slice(0,4):'—')+'</td><td class="r">'+fn(r.guests)+'</td>'
-        +'<td class="leadwhat"'+(r.style?' title="'+esc(r.style)+'"':'')+'>'+esc(r.type||'—')+'</td><td>'+fdt(r.created)+'</td>'
-        +'<td'+(r.form?' title="'+esc(r.form)+'"':'')+'>'+esc(r.src||'—')+'</td>'
+        +'<td style="white-space:nowrap">'+clipT(r.type,multi?118:190)+tip+'</td><td>'+fdt(r.created)+'</td>'
+        +'<td'+(r.form?' title="'+esc(r.form)+'"':'')+'>'+clipT(r.src,120)+'</td>'
         +'<td>'+(r.status?'<span class="pill" style="background:'+EV_STATUS_COLORS[k]+'22;color:'+EV_STATUS_COLORS[k]+'">'+esc(evStatus(r.status))+'</span>':'<span class="tg">—</span>')+(r.converted?'<div class="tg">booked '+fdate(r.converted)+'</div>':'')+'</td></tr>'; }).join('')
     +'</table></div>';
   // Status roll-up of every lead in the bundle window, not just the fifteen shown.
@@ -2130,8 +2186,12 @@ function pgEvents(m){
     cap=cap||40;
     return '<div style="overflow-x:auto"><table class="t"><tr><th>Date</th>'+(multi?'<th>Location</th>':'')+'<th>Event</th>'+(anyRoom?'<th>Room</th>':'')+(anyType?'<th>Type</th>':'')+(showStatus?'<th>Status</th>':'')+'<th class="r">Guests</th><th class="r">Booked</th>'+(withActual?'<th class="r">Actual</th>':'')+'</tr>'
       +list.slice(0,cap).map(function(e){ var k=evStatusKey(e.status), tm=evTime(e);
-        return '<tr><td>'+fdate(e.d)+(tm?'<div class="tg">'+tm+'</div>':'')+'</td>'+(multi?'<td>'+esc(locName(e.loc))+'</td>':'')+'<td class="n">'+esc(e.name)+(e.style?'<div class="tg" style="font-weight:400">'+esc(e.style)+'</div>':'')+'</td>'
-        +(anyRoom?'<td>'+esc(e.rooms)+'</td>':'')+(anyType?'<td>'+esc(e.type)+'</td>':'')
+        /* Event name, room list and type are all free text in Tripleseat; clip them and put anything that did
+           not fit behind one icon at the end of the row's name. */
+        var tip=infoIcon([['Event',isLong(e.name)?e.name:''],['Style',e.style],['Room',isLong(e.rooms)?e.rooms:''],['Type',isLong(e.type)?e.type:'']]);
+        return '<tr><td>'+fdate(e.d)+(tm?'<div class="tg">'+tm+'</div>':'')+'</td>'+(multi?'<td>'+esc(locName(e.loc))+'</td>':'')
+        +'<td class="n" style="white-space:nowrap">'+clipT(e.name,210)+tip+(e.style?'<div class="tg" style="font-weight:400">'+clipT(e.style,210)+'</div>':'')+'</td>'
+        +(anyRoom?'<td>'+clipT(e.rooms,150)+'</td>':'')+(anyType?'<td>'+clipT(e.type,150)+'</td>':'')
         +(showStatus?'<td><span class="pill" style="background:'+EV_STATUS_COLORS[k]+'22;color:'+EV_STATUS_COLORS[k]+'">'+esc(evStatus(e.status))+'</span></td>':'')
         +'<td class="r">'+fn(e.guests)+'</td><td class="r">'+fm(e.booked)+'</td>'+(withActual?'<td class="r">'+(e.actual!=null&&e.actual>0?fm(e.actual):'—')+'</td>':'')+'</tr>';}).join('')
       +'</table>'+(list.length>cap?'<div class="hint" style="margin-top:6px">Showing '+cap+' of '+fn(list.length)+' — pick one taproom or a shorter window for the rest</div>':'')+'</div>';
