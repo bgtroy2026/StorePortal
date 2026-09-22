@@ -27,11 +27,20 @@
  *      answer ({ok, appended, total}). Then run the workflow with source = tripleseat (backfill = true if you
  *      are re-seeding over rows the warehouse already holds).
  *
- * LEADS. The same tool seeds lead history when the newest completed export on Reports → History is a leads report
- * (a "Lead Id" column and no "Event Id" column): run Reports → Leads → Lead Details with a Created-date range and
- * every location, export to CSV, then paste this file exactly as above. Rows go up as SEED_LEAD and load into
- * ts_leads (name, company, taproom, status, created / event date, guests, type, style, source, lead form,
- * converted / turned-down dates). Email, phone and free-text columns are never read, let alone posted.
+ * LEADS. The same tool seeds lead history when the newest completed export is a leads report — recognised by its
+ * first column being "Id" (the events report's is "Event Id"). To make one: Reports → Leads → "Lead Details
+ * Report", then set Status to **All** and the date range wide. Note the range filters by EVENT date, not by when
+ * the lead came in, so use something that covers every booked date (01/01/2024 - 12/31/2028 was used on
+ * 2026-09-22) or leads for far-off events are silently left out. Tick these columns and NOT Email or Phone —
+ * there is no reason for them to leave Tripleseat:
+ *     Id, First Name, Last Name, Company, Submitted, Converted, Converted To, Status, Event Date, Event Style,
+ *     Nature Of Event, Source, Lead Form, Location, Guest Count, Turned Down At, Referred By, Market Segment,
+ *     Event Id, Event Description
+ * Export → CSV (Formatted), wait for Reports → History to say Complete, then paste this file exactly as above.
+ * Rows go up as SEED_LEAD and load into ts_leads. Two things worth knowing about the data: "Submitted" is when
+ * the lead arrived (what the portal's Incoming Leads chart counts), and "Status" is the status of the EVENT the
+ * lead converted into (Definite, Closed, Lost…) rather than a lead word — the portal colours both vocabularies.
+ * First run 2026-09-22: 7,558 leads, Jan 2024 to Sep 2026, nineteen POSTs, about a minute.
  *
  * Contacts, emails and phone numbers are not in the events report; the Apps Script strips them anyway (scrubPii).
  */
