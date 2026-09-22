@@ -241,9 +241,9 @@ def build_payload(con, through: date | None = None) -> dict:
         # Deleted events stay in the warehouse (so a late re-send cannot resurrect them) but never reach a page.
         payload["events"][lid] = [[r["event_id"], r["name"], r["event_date"], r["status"], r["guest_count"],
                                    _r(r["grand_total"]), _r(r["actual_amount"]), _r(r["fb_minimum"]), _r(r["deposit"]), r["event_style"],
-                                   r["rooms"], r["event_type_name"], r["source"]]
+                                   r["rooms"], r["event_type_name"], r["source"], r["lead_source"]]
                                   for r in _rows(con, """SELECT event_id, name, event_date, status, guest_count, grand_total, actual_amount, fb_minimum, deposit, event_style,
-                                                                rooms, event_type_name, source
+                                                                rooms, event_type_name, source, lead_source
                                                          FROM ts_events WHERE location_id=? AND event_date>=? AND COALESCE(deleted,0)=0 ORDER BY event_date""", (lid, since.isoformat()))]
         payload["events_monthly"][lid] = {r["m"]: [r["n"], _r(r["booked"]), _r(r["actual"]), r["guests"]] for r in _rows(con, """
             SELECT substr(event_date,1,7) m, COUNT(*) n, SUM(COALESCE(grand_total,0)) booked, SUM(COALESCE(actual_amount,0)) actual, SUM(COALESCE(guest_count,0)) guests

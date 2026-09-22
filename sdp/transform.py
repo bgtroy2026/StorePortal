@@ -633,12 +633,34 @@ def _ts_ids(v) -> list[str]:
 
 
 def _ts_event_row(e: dict, slug: str, by_room_name: dict, type_names: dict, origin: str, seen_at: str | None) -> dict:
-    """One Tripleseat Event object (API shape; the webhook carries the same object) -> a ts_events row."""
+    """One Tripleseat Event object -> a ts_events row.
+
+    The webhook delivers the same object the API would, plus a few things the API search does not: `rooms` as
+    objects with names, `status_changes` (when it went definite), `selected_lead_sources`. Read 2026-09-21 off
+    the first real delivery (CHANGE_EVENT_GUEST_COUNTS on event 61680687): status is upper-case ("DEFINITE"),
+    money comes as strings ("1225.5"), created/updated as "7/27/2026 11:08 PM", event_type_id is null."""
     rids = _ts_ids(e.get("room_ids") if e.get("room_ids") is not None else e.get("rooms"))
+    names = {}
+    for r in e.get("rooms") or []:
+        if isinstance(r, dict) and r.get("id") is not None and r.get("name"):
+            names[str(r["id"])] = str(r["name"]).strip()
     et = e.get("event_type_id")
     if et in (None, "") and isinstance(e.get("event_type"), dict):
         et = e["event_type"].get("id")
     et = str(et or "")
+    src = None
+    for x in e.get("selected_lead_sources") or []:
+        if isinstance(x, dict):
+            src = x.get("lead_source_name") or x.get("name") or src
+        elif x:
+            src = str(x)
+        if src:
+            break
+    definite_at = None
+    for ch in e.get("status_changes") or []:                # newest first as delivered; keep the latest DEFINITE
+        if isinstance(ch, dict) and str(ch.get("status") or "").upper() == "DEFINITE":
+            definite_at = _ts_datetime(ch.get("created_at"))
+            break
     return {"event_id": str(e.get("id")), "location_id": slug, "ts_location_id": str(_ts_loc_id(e) or ""),
             "booking_id": str(e.get("booking_id") or ""), "name": e.get("name"), "status": e.get("status"),
             "event_type": et, "event_style": e.get("event_style"),
@@ -650,10 +672,13 @@ def _ts_event_row(e: dict, slug: str, by_room_name: dict, type_names: dict, orig
             "deposit": _num(e.get("deposit_amount")), "grand_total": _num(e.get("grand_total")),
             "actual_amount": _num(e.get("actual_amount")), "amount_due": _num(e.get("amount_due")),
             "price_per_person": _num(e.get("price_per_person")),
-            "created_at": e.get("created_at"), "updated_at": e.get("updated_at"),
-            "room_ids": ",".join(rids), "rooms": ", ".join(by_room_name[r] for r in rids if r in by_room_name),
+            "created_at": _ts_datetime(e.get("created_at")) or e.get("created_at"),
+            "updated_at": _ts_datetime(e.get("updated_at")) or e.get("updated_at"),
+            "room_ids": ",".join(rids),
+            "rooms": ", ".join(names.get(r) or by_room_name[r] for r in rids if names.get(r) or r in by_room_name),
             "event_type_name": type_names.get(et), "source": origin,
-            "deleted": 1 if e.get("deleted_at") else 0, "seen_at": seen_at}
+            "deleted": 1 if e.get("deleted_at") else 0, "seen_at": seen_at,
+            "lead_source": src, "definite_at": definite_at}
 
 
 def _ts_loc_id(o: dict):
@@ -662,6 +687,21 @@ def _ts_loc_id(o: dict):
     if v in (None, "") and isinstance(o.get("location"), dict):
         v = o["location"].get("id")
     return v
+
+
+def _ts_datetime(v) -> str | None:
+    """"7/27/2026 11:08 PM" (Tripleseat's created_at/updated_at) -> "2026-07-27T23:08:00"; ISO passes through."""
+    if not v:
+        return None
+    sv = str(v).strip()
+    if re.match(r"^\d{4}-\d{2}-\d{2}", sv):
+        return sv
+    for fmt in ("%m/%d/%Y %I:%M %p", "%m/%d/%Y %H:%M", "%m/%d/%Y"):
+        try:
+            return datetime.strptime(sv, fmt).isoformat(timespec="seconds")
+        except ValueError:
+            continue
+    return None
 
 
 def _ts_date(v) -> str | None:
@@ -682,7 +722,7 @@ def _ts_lead_row(l: dict, slug: str, origin: str, seen_at: str | None) -> dict:
     src = l.get("lead_source")
     if not src and isinstance(l.get("selected_lead_sources"), list) and l["selected_lead_sources"]:
         s0 = l["selected_lead_sources"][0]
-        src = s0.get("name") if isinstance(s0, dict) else s0
+        src = (s0.get("lead_source_name") or s0.get("name")) if isinstance(s0, dict) else s0
     loc = l.get("location")
     tid = str(l.get("location_id") or (loc.get("id") if isinstance(loc, dict) else "") or "")
     status = l.get("status") or l.get("state")
@@ -694,9 +734,11 @@ def _ts_lead_row(l: dict, slug: str, origin: str, seen_at: str | None) -> dict:
             "source": (src.get("name") if isinstance(src, dict) else src),
             "event_date": (_ts_date(l.get("event_date")) or ""), "guest_count": int(l.get("guest_count") or 0),
             "description": (l.get("event_description") or "")[:500],
-            "created_at": l.get("created_at"), "updated_at": l.get("updated_at"),
+            "created_at": _ts_datetime(l.get("created_at")) or l.get("created_at"),
+            "updated_at": _ts_datetime(l.get("updated_at")) or l.get("updated_at"),
             "lead_form": (form.get("name") if isinstance(form, dict) else form),
-            "converted_at": l.get("converted_at"), "turned_down_at": l.get("turned_down_at"),
+            "converted_at": _ts_datetime(l.get("converted_at")) or l.get("converted_at"),
+            "turned_down_at": _ts_datetime(l.get("turned_down_at")) or l.get("turned_down_at"),
             "origin": origin, "seen_at": seen_at}
 
 
@@ -849,6 +891,8 @@ def load_tripleseat_webhooks(con) -> dict:
             except (ValueError, IndexError):
                 obj = {}
             action = str(r[idx["action"]] if "action" in idx else "").upper()
+            if not action and isinstance(obj, dict):
+                action = str(obj.get("webhook_trigger_type") or obj.get("action") or obj.get("trigger") or "").upper()
             kind, o = _unwrap_hook(obj)
             kind = (str(r[idx["kind"]]).lower() if "kind" in idx and r[idx["kind"]] else kind) or kind
             seen = str(r[idx["when"]]) if "when" in idx else None

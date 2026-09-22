@@ -270,6 +270,8 @@ CREATE TABLE IF NOT EXISTS ts_events (                  -- grain: one Tripleseat
   source TEXT,                                          -- 'api' (nightly window) or 'webhook' (arrived as it changed)
   deleted INTEGER DEFAULT 0,                            -- a webhook said DELETE, or deleted_at is set; kept so a stale re-send cannot resurrect it
   seen_at TEXT,                                         -- when the row that produced this state was received
+  lead_source TEXT,                                     -- selected_lead_sources[0] (webhook route): where the booking came from
+  definite_at TEXT,                                     -- when the status last became DEFINITE (status_changes) — booked pace later
   PRIMARY KEY (event_id, location_id)
 );
 CREATE INDEX IF NOT EXISTS ix_ts_events_loc_date ON ts_events(location_id, event_date);

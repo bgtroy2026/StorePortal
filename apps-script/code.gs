@@ -589,13 +589,14 @@ function scrubPii(v) {
 }
 
 /** The object inside a delivery and the words that describe it, for the summary columns. Tripleseat's payload shape
- *  is not documented beyond "a JSON payload describing the change", so every plausible shape is accepted and the
- *  raw JSON is kept regardless -- these columns exist so the tab is readable by a person and filterable by the
- *  pipeline, not because anything depends on them. */
+ *  is not documented; the real one, read off the first delivery, is {webhook_trigger_type, message, <kind>: {...}}
+ *  with the kind being event / booking / lead. Other plausible shapes are still accepted and the raw JSON is kept
+ *  regardless -- these columns exist so the tab is readable by a person and filterable by the pipeline. */
 function hookSummary(obj) {
   var s = { action: '', kind: '', id: '', loc: '', date: '', status: '' };
   if (!obj || typeof obj !== 'object') return s;
-  s.action = String(obj.action || obj.trigger || obj.trigger_action || obj.webhook_action || obj.event_type || obj.type || '').slice(0, 60);
+  // The real shape (first delivery, 2026-09-21): {"webhook_trigger_type":"CHANGE_EVENT_GUEST_COUNTS","message":"...","event":{...}}
+  s.action = String(obj.webhook_trigger_type || obj.action || obj.trigger || obj.trigger_action || obj.webhook_action || obj.event_type || obj.type || '').slice(0, 60);
   var kinds = ['event', 'lead', 'booking', 'contact', 'account', 'room', 'document', 'payment', 'guest_room_block'];
   var inner = null;
   // A wrapper ({"action":..,"event":{..}}) has no id of its own; a bare object does. An event carries a nested

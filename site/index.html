@@ -1737,9 +1737,10 @@ function spark(vals){
 
 /* ---------- Tripleseat events ---------- */
 function hasEvents(){ return locIds().some(function(l){return ((D.events||{})[l]||[]).length;}); }
-function evRows(){ var out=[]; locIds().forEach(function(l){((D.events||{})[l]||[]).forEach(function(r){ out.push({loc:l,id:r[0],name:r[1],d:r[2],status:r[3],guests:r[4],booked:r[5],actual:r[6],fb:r[7],dep:r[8],style:r[9],rooms:r[10]||'',type:r[11]||'',src:r[12]||''}); });}); return out.sort(function(a,b){return a.d<b.d?-1:1;}); }
+function evRows(){ var out=[]; locIds().forEach(function(l){((D.events||{})[l]||[]).forEach(function(r){ out.push({loc:l,id:r[0],name:r[1],d:r[2],status:r[3],guests:r[4],booked:r[5],actual:r[6],fb:r[7],dep:r[8],style:r[9],rooms:r[10]||'',type:r[11]||'',src:r[12]||'',leadSrc:r[13]||''}); });}); return out.sort(function(a,b){return a.d<b.d?-1:1;}); }
 function evIsDef(st){ return /^(definite|confirmed)/i.test(st||''); }
 function evValue(e){ return (e.actual!=null&&e.actual>0)?e.actual:(e.booked||0); }
+function evStatus(s){ s=String(s||''); return s.length>1&&s===s.toUpperCase()?s[0]+s.slice(1).toLowerCase():s; }   /* Tripleseat sends DEFINITE; the mock says Definite */
 function tsInfo(){ return (D&&D.tripleseat)||null; }
 function tsHasCatalog(){ var t=tsInfo(); return !!(t&&((t.event_types||[]).length||locIds().some(function(l){return ((t.rooms||{})[l]||[]).length;}))); }
 function fdt(s){ if(!s) return '—'; var d=new Date(s); return isNaN(d)?esc(s):d.toLocaleDateString(undefined,{month:'short',day:'numeric'})+' '+d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'}); }
@@ -1825,7 +1826,7 @@ function pgEvents(m){
       +list.slice(0,40).map(function(e){var L=D.locations.filter(function(z){return z.id===e.loc;})[0];
         return '<tr><td>'+fdate(e.d)+'</td>'+(multi?'<td>'+esc(L?L.name:e.loc)+'</td>':'')+'<td class="n">'+esc(e.name)+'</td>'
         +(anyRoom?'<td>'+esc(e.rooms)+'</td>':'')+(anyType?'<td>'+esc(e.type)+'</td>':'')
-        +(showStatus?'<td><span class="pill"'+(evIsDef(e.status)?' style="background:#e6f4ea;color:var(--good)"':'')+'>'+esc(e.status||'')+'</span></td>':'')
+        +(showStatus?'<td><span class="pill"'+(evIsDef(e.status)?' style="background:#e6f4ea;color:var(--good)"':'')+'>'+esc(evStatus(e.status))+'</span></td>':'')
         +'<td class="r">'+fn(e.guests)+'</td><td class="r">'+fm(e.booked)+'</td><td class="r">'+(e.actual!=null&&e.actual>0?fm(e.actual):'—')+'</td></tr>';}).join('')
       +'</table>'+(list.length>40?'<div class="hint" style="margin-top:6px">Showing 40 of '+fn(list.length)+'</div>':'')+'</div>';
   }
