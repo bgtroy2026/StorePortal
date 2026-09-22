@@ -469,7 +469,7 @@ footer.site div{margin-top:12px;font-size:10.5px;font-weight:700;letter-spacing:
 .kstats{flex:0 0 190px;display:flex;flex-direction:column;justify-content:center;gap:12px}
 .kstat .v{font-size:22px;font-weight:700;color:var(--navy);line-height:1.15}
 .kstat .c{font-size:11.5px;color:var(--muted);margin-top:2px}
-.evrow2{display:grid;grid-template-columns:minmax(0,1.85fr) minmax(0,1fr);gap:14px}
+.evrow2{display:grid;grid-template-columns:minmax(0,1.85fr) minmax(0,1fr);gap:14px;align-items:start}
 /* Tripleseat's "nature of event" and event descriptions are free text, so a cell holding one can be a sentence.
    Clip it to the width the column can afford and hang the whole of it off an "i" (see infoIcon / tipInit). */
 .clip{display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
@@ -484,6 +484,21 @@ footer.site div{margin-top:12px;font-size:10.5px;font-weight:700;letter-spacing:
 #tipbox b{display:block;font-size:9.5px;text-transform:uppercase;letter-spacing:.08em;opacity:.65;margin-bottom:1px}
 #tipbox b~b{margin-top:8px}
 #tipbox span{display:block}
+.pill[data-tip]{cursor:help}
+/* A foldable panel: the title is the control, so there is no extra button competing with Filter and CSV. */
+.foldh{cursor:pointer;user-select:none}
+.foldh .car{display:inline-block;margin-left:7px;font-size:11px;color:var(--muted);transition:transform .13s;vertical-align:1px}
+.panel.shut .foldh .car{transform:rotate(-90deg)}
+.panel.shut{padding-bottom:13px}
+.panel.shut .pt{display:none}
+/* The leads list is long by nature, so it gets back the two pixels a row that the wider tables can afford. */
+table.t.tight td{padding:4px 8px}
+table.t.tight td.n{line-height:1.3}
+.linkb{border:0;background:none;padding:0;font:inherit;font-weight:700;color:var(--navy);cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+.linkb:hover{color:var(--green)}
+.rollup{margin-top:8px;display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.rollmore{flex:none;margin-left:auto}
+@media print{.rollmore,.foldh .car{display:none}}
 .evside{display:flex;flex-direction:column;gap:14px;min-width:0}
 .goalwrap{padding:22px 4px 4px}
 .goalbar{position:relative;height:14px;border-radius:7px;background:var(--plane);overflow:visible}
@@ -859,10 +874,15 @@ var CLIP_LONG=26;
 function isLong(s){ return String(s==null?'':s).length>CLIP_LONG; }
 function clipT(s,w){ return '<span class="clip" style="max-width:'+w+'px">'+esc(s==null||s===''?'—':s)+'</span>'; }
 /* parts is [[label, text], …]; blank ones drop out and an icon with nothing to say is not drawn. The
-   tooltip's markup rides in the attribute escaped, and tipInit hands it back to innerHTML. */
-function infoIcon(parts){
+   tooltip's markup rides in the attribute escaped, and tipInit hands it back to innerHTML. tipAttr puts the
+   same tooltip on something already on the page — a status pill, say — without adding an icon to carry it. */
+function tipAttr(parts){
   var h=(parts||[]).filter(function(p){return p[1];}).map(function(p){return '<b>'+esc(p[0])+'</b><span>'+esc(p[1])+'</span>';}).join('');
-  return h?'<i class="ic" tabindex="0" role="button" aria-label="More detail" data-tip="'+esc(h)+'"></i>':'';
+  return h?' data-tip="'+esc(h)+'"':'';
+}
+function infoIcon(parts){
+  var a=tipAttr(parts);
+  return a?'<i class="ic" tabindex="0" role="button" aria-label="More detail"'+a+'></i>':'';
 }
 /* One tooltip for the whole page, fixed to the viewport: a box inside a table would be clipped by that
    table's own horizontal scroll box, and a box per row would be thousands of nodes. Delegated, so markup
@@ -1035,12 +1055,17 @@ function panel(title,hint,body,cls){
   var plain=esc(String(title).replace(/<[^>]*>/g,''));
   // Anything built on MarginEdge is badged while onboarding is still settling (config: marginedge.provisional).
   var badge=(isProv() && PROV_RX.test(String(title)) && String(title).indexOf('class="prov"')<0 && !/noprov/.test(cls||''))?provBadge():'';
-  return '<div class="panel '+(cls||'')+'" id="'+id+'"><div class="ph"><h3>'+title+badge+'</h3>'
+  // A panel marked 'foldable' can be shut away by its title; whether it is stays in localStorage per browser,
+  // so a director who does not want to see a section keeps not seeing it tomorrow.
+  var fold=/foldable/.test(cls||''), fk=foldKey(title), shut=fold&&isFolded(title);
+  return '<div class="panel '+(cls||'')+(shut?' shut':'')+'" id="'+id+'"><div class="ph">'
+    +'<h3'+(fold?' class="foldh" role="button" tabindex="0" data-fold="'+esc(fk)+'" aria-expanded="'+(shut?'false':'true')+'" title="Click to '+(shut?'open':'collapse')+' this section"':'')+'>'
+      +title+badge+(fold?'<span class="car">▾</span>':'')+'</h3>'
     +'<div class="pt">'
       +'<input class="find" type="search" data-find="'+id+'" placeholder="Filter…" aria-label="Filter '+plain+'">'
       +'<button class="csv" data-csv="'+id+'" title="Download this table as CSV" aria-label="Download '+plain+' as CSV">CSV</button>'
     +'</div></div>'
-    +'<div class="hint">'+(hint||'')+'</div>'+body+'</div>';
+    +'<div class="pbody"'+(shut?' hidden':'')+'><div class="hint">'+(hint||'')+'</div>'+body+'</div></div>';
 }
 function csvCell(v){
   v=String(v==null?'':v).replace(/\u00a0/g,' ').trim();
@@ -1077,6 +1102,26 @@ function panelCsv(pid){
 document.addEventListener('click',function(e){
   var b=e.target&&e.target.closest&&e.target.closest('button[data-csv]');
   if(b){ e.preventDefault(); panelCsv(b.dataset.csv); }
+});
+/* ---- Folding a panel away ---------------------------------------------------------------------- */
+function foldKey(t){ return 'fold.'+String(t).replace(/<[^>]*>/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,40); }
+function isFolded(t){ try{ return localStorage.getItem('sdp.'+foldKey(t))==='1'; }catch(e){ return false; } }
+function toggleFold(h){
+  var p=h.closest('.panel'), body=p&&p.querySelector('.pbody'), shut=!p.classList.contains('shut');
+  p.classList.toggle('shut',shut);
+  if(body) body.hidden=shut;
+  h.setAttribute('aria-expanded',shut?'false':'true');
+  h.setAttribute('title','Click to '+(shut?'open':'collapse')+' this section');
+  try{ localStorage.setItem('sdp.'+h.dataset.fold, shut?'1':'0'); }catch(e){}
+}
+document.addEventListener('click',function(e){
+  var h=e.target&&e.target.closest&&e.target.closest('h3[data-fold]');
+  if(h) toggleFold(h);
+});
+document.addEventListener('keydown',function(e){
+  if(e.key!=='Enter'&&e.key!==' ') return;
+  var h=e.target&&e.target.matches&&e.target.matches('h3[data-fold]')?e.target:null;
+  if(h){ e.preventDefault(); toggleFold(h); }
 });
 /* Filter rows by what is typed. Header rows stay put — a table whose headings vanish is unreadable — and the
    match is over the row's whole text, because someone looking for "Rob" or for "IPA" does not know or care
@@ -1969,6 +2014,18 @@ function evStyle(s){ s=String(s||''); if(/^on[- ]?premise/i.test(s)) return 'On-
 function tsInfo(){ return (D&&D.tripleseat)||null; }
 function tsHasCatalog(){ var t=tsInfo(); return !!(t&&((t.event_types||[]).length||locIds().some(function(l){return ((t.rooms||{})[l]||[]).length;}))); }
 function fdt(s){ if(!s) return '—'; var d=new Date(s); return isNaN(d)?esc(s):d.toLocaleDateString(undefined,{month:'short',day:'numeric'})+' '+d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'}); }
+/* On a list of the newest enquiries, "Submitted" is read as recency — how warm is this — not as a timestamp.
+   Two characters beat thirteen, and the exact moment is one hover away. */
+function fago(s){
+  if(!s) return '—';
+  var d=new Date(s); if(isNaN(d)) return esc(s);
+  var mins=Math.round((Date.now()-d.getTime())/60000);
+  if(mins<2) return 'just now';
+  if(mins<60) return mins+'m ago';
+  var h=Math.round(mins/60); if(h<24) return h+'h ago';
+  var days=Math.round(h/24);
+  return days===1?'yesterday':days<7?days+'d ago':d.toLocaleDateString(undefined,{month:'short',day:'numeric'});
+}
 function fdd(s){ if(!s) return '—'; var d=new Date(s); return isNaN(d)?esc(s):d.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}); }
 
 /* What is connected, in words a director can act on. The three routes are described in sdp/tripleseat.py:
@@ -2065,13 +2122,23 @@ function evUpcomingPanel(all){
     +kstat(fn(booked.length)+' Events','Definite / closed status')+kstat(fm(val),'Expected revenue from events')+kstat(fn(open_)+' More','Tentative or prospect in the same days')+'</div></div>';
   return panel('Upcoming events',label+evSeg('up',N,[[7,'Next 7 days'],[30,'Next 30 days'],[180,'Next 6 months']]),body,'noprov nofind');
 }
+var LEADS_SHORT=8, LEADS_FULL=25;
+/* Lead statuses arrive in two vocabularies — the webhook's own (Open / Converted / Turned down) and, for a
+   seeded lead, the status of the EVENT it became (Definite / Closed / Lost). Rolling them up verbatim produced
+   eight categories saying four things; these are the four. */
+var LEAD_ROLL_LABEL={definite:'Won',lost:'Lost',tentative:'In progress',prospect:'New',closed:'Won',other:'Other'};
 function evNewLeadsPanel(){
-  var rows=evLeads().slice(0,15), multi=locIds().length>1;
-  if(!rows.length) return panel('New leads','The most recent enquiries, newest first','<div class="empty">No leads yet.</div>','noprov');
-  var t='<div style="overflow-x:auto"><table class="t"><tr><th>Lead</th>'+(multi?'<th>Taproom</th>':'')+'<th>Event date</th><th class="r">Guests</th><th>Asked for</th><th>Submitted</th><th>Came via</th><th>Status</th></tr>'
+  var all=evLeads(), multi=locIds().length>1;
+  if(!all.length) return panel('New leads','The most recent enquiries, newest first','<div class="empty">No leads yet.</div>','noprov foldable');
+  var full=!!S.leadsAll, rows=all.slice(0,full?LEADS_FULL:LEADS_SHORT);
+  /* "Came via" earns a column only when the rows disagree. When every visible lead arrived the same way — and
+     lately they all arrive as web leads — the hint says it once instead of the table saying it fifteen times. */
+  var srcs={}; rows.forEach(function(r){ srcs[r.src||'\u2014']=1; });
+  var sk=Object.keys(srcs), oneSrc=sk.length===1?sk[0]:'';
+  var t='<div style="overflow-x:auto"><table class="t tight"><tr><th>Lead</th>'+(multi?'<th>Taproom</th>':'')
+      +'<th>Event date</th><th class="r">Guests</th><th>Asked for</th><th>Submitted</th>'+(oneSrc?'':'<th>Came via</th>')+'<th>Status</th></tr>'
     /* "Asked for" is whatever the enquirer typed, so it is clipped and the icon beside it carries the full
-       answer plus the style and the description that used to sit under the lead's name. The clip is tighter
-       when the Taproom column is there to be paid for, so the eight columns still fit without scrolling. */
+       answer plus the style and the description that used to sit under the lead's name. */
     +rows.map(function(r){ var k=leadStatusKey(r.status);
       /* A webhook lead often carries no event type — the enquiry form does not ask for one — but it usually does
          carry what the person wrote, so show that rather than a dash. Style is a poor third choice because nearly
@@ -2081,18 +2148,30 @@ function evNewLeadsPanel(){
       if(isLong(r.type)) tp.push(['Asked for',r.type]);
       if(r.title&&(shown!==r.title||isLong(r.title))) tp.push(['Description',r.title]);
       if(r.style&&shown!==evStyle(r.style)&&(tp.length||off)) tp.push(['Style',evStyle(r.style)]);
-      var tip=infoIcon(tp);
-      return '<tr><td class="n">'+clipT(r.name||'—',multi?130:170)+(r.company?'<div class="tg" style="font-weight:400">'+clipT(r.company,multi?130:170)+'</div>':'')+'</td>'
-        +(multi?'<td>'+esc(locName(r.loc))+'</td>':'')+'<td>'+(r.d?fdate(r.d)+', '+r.d.slice(0,4):'—')+'</td><td class="r">'+fn(r.guests)+'</td>'
-        +'<td style="white-space:nowrap">'+clipT(shown,multi?118:190)+tip+'</td><td>'+fdt(r.created)+'</td>'
-        +'<td'+(r.form?' title="'+esc(r.form)+'"':'')+'>'+clipT(r.src,120)+'</td>'
-        +'<td>'+(r.status?'<span class="pill" style="background:'+EV_STATUS_COLORS[k]+'22;color:'+EV_STATUS_COLORS[k]+'">'+esc(evStatus(r.status))+'</span>':'<span class="tg">—</span>')+(r.converted?'<div class="tg">booked '+fdate(r.converted)+'</div>':'')+'</td></tr>'; }).join('')
+      if(oneSrc&&r.form) tp.push(['Lead form',r.form]);
+      /* The company rides under the name only when there is one; the converted and turned-down dates moved off
+         the status cell onto the pill, so every row is one line unless the lead has a company. */
+      return '<tr><td class="n">'+clipT(r.name||'\u2014',multi?130:170)+(r.company?'<div class="tg" style="font-weight:400">'+clipT(r.company,multi?130:170)+'</div>':'')+'</td>'
+        +(multi?'<td>'+esc(locName(r.loc))+'</td>':'')+'<td>'+(r.d?fdate(r.d)+', '+r.d.slice(0,4):'\u2014')+'</td><td class="r">'+fn(r.guests)+'</td>'
+        +'<td style="white-space:nowrap">'+clipT(shown,multi?128:200)+infoIcon(tp)+'</td>'
+        +'<td class="tg"'+(r.created?' title="'+esc(fdt(r.created))+'"':'')+'>'+fago(r.created)+'</td>'
+        +(oneSrc?'':'<td'+(r.form?' title="'+esc(r.form)+'"':'')+'>'+clipT(r.src,120)+'</td>')
+        +'<td>'+(r.status?'<span class="pill"'+tipAttr([['Booked',r.converted?fdate(r.converted):''],['Turned down',r.turnedDown?fdate(r.turnedDown):'']])
+          +' style="background:'+EV_STATUS_COLORS[k]+'22;color:'+EV_STATUS_COLORS[k]+'">'+esc(evStatus(r.status))+'</span>':'<span class="tg">\u2014</span>')+'</td></tr>'; }).join('')
     +'</table></div>';
-  // Status roll-up of every lead in the bundle window, not just the fifteen shown.
-  var ld={}; locIds().forEach(function(l){((D.leads_status||{})[l]||[]).forEach(function(r){var o=ld[r[0]]||(ld[r[0]]={n:0,g:0});o.n+=r[1];o.g+=r[2];});});
-  var lk=Object.keys(ld).sort(function(x,y){return ld[y].n-ld[x].n;}), lt=lk.reduce(function(p,c){return p+ld[c].n;},0);
-  var roll=lk.length?'<div class="hint" style="margin-top:8px"><b>All leads by status:</b> '+lk.map(function(x){return esc(x)+' '+fn(ld[x].n)+' ('+fp(ld[x].n/lt,0)+')';}).join(' · ')+'.</div>':'';
-  return panel('New leads','The most recent enquiries, newest first — open the lead in Tripleseat to reach the contact',t+roll,'noprov');
+  var more=all.length>LEADS_SHORT?'<button class="linkb" data-leadsall="'+(full?'0':'1')+'">'
+      +(full?'Show fewer':'Show more')+'</button>':'';
+  // Status roll-up of every lead in the bundle window, not just the ones on screen, folded onto one line.
+  var ld={}; locIds().forEach(function(l){((D.leads_status||{})[l]||[]).forEach(function(r){
+    var g=LEAD_ROLL_LABEL[leadStatusKey(r[0])]||'Other'; ld[g]=(ld[g]||0)+r[1]; });});
+  var lk=Object.keys(ld).sort(function(x,y){return ld[y]-ld[x];}), lt=lk.reduce(function(p,c){return p+ld[c];},0);
+  var roll=lk.length?'<div class="hint rollup"><b>All '+fn(lt)+' leads:</b> '
+      +lk.map(function(x){return esc(x)+' '+fn(ld[x])+' <span class="tg">('+fp(ld[x]/lt,0)+')</span>';}).join(' \u00b7 ')
+      +(more?'<span class="rollmore">'+more+'</span>':'')+'</div>'
+    :(more?'<div class="hint rollup"><span class="rollmore">'+more+'</span></div>':'');
+  var hint='The newest enquiries first'+(oneSrc&&oneSrc!=='\u2014'?' \u2014 all of these came via '+esc(oneSrc):'')
+    +' \u2014 open the lead in Tripleseat to reach the contact';
+  return panel('New leads',hint,t+roll,'noprov foldable');
 }
 function evGoalPanel(all){
   var today=todayStr(), mo=today.slice(0,7), y=+mo.slice(0,4), m=+mo.slice(5,7), dim=new Date(y,m,0).getDate();
@@ -2174,6 +2253,7 @@ function pgEvents(m){
   mk('c_leads',{type:'line',data:{labels:lp.map(function(p){return lab(p,S.evLeadWin||7);}),datasets:[{label:'Leads created',fmt:'int',data:lp.map(function(p){return p.v;}),borderColor:css('s2'),backgroundColor:css('s2')+'55',fill:true,tension:.35,pointRadius:3,pointBackgroundColor:css('s2'),borderWidth:2}]},options:baseOpts({scales:intAxis})});
   mk('c_up',{type:'line',data:{labels:up.map(function(p){return lab(p,S.evUpWin||7);}),datasets:[{label:'Definite / closed events',fmt:'int',data:up.map(function(p){return p.v;}),borderColor:css('s3'),backgroundColor:css('s3')+'55',fill:true,tension:.35,pointRadius:3,pointBackgroundColor:css('s3'),borderWidth:2}]},options:baseOpts({scales:intAxis})});
   m.querySelectorAll('[data-evseg] button').forEach(function(btn){ btn.onclick=function(){ var kind=btn.parentNode.dataset.evseg, v=+btn.dataset.v; if(kind==='lead') S.evLeadWin=v; else S.evUpWin=v; render(true); }; });
+  m.querySelectorAll('[data-leadsall]').forEach(function(btn){ btn.onclick=function(){ S.leadsAll=btn.dataset.leadsall==='1'; render(true); }; });
   m.querySelectorAll('[data-cal]').forEach(function(btn){ btn.onclick=function(){ var mo=S.evCal||todayStr().slice(0,7), y=+mo.slice(0,4), mm=+mo.slice(5,7)+(+btn.dataset.cal); var d=new Date(y,mm-1,1); S.evCal=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); render(true); }; });
   m.querySelectorAll('[data-day]').forEach(function(c){ c.onclick=function(){ S.evPreset='custom'; S.evD0=S.evD1=c.dataset.day; render(); var t=$('evWin'); if(t) t.scrollIntoView({behavior:'smooth',block:'start'}); }; });
   // Twelve months or more around the window, whatever the data holds: three months before it starts, at least
