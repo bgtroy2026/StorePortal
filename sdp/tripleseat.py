@@ -19,8 +19,11 @@ THREE ROUTES, in the order they became available (2026-09-21)
    booking object to a URL whenever one is created, changed or deleted. The portal's Apps Script receives them
    into a "Tripleseat" tab of the roster workbook and this pipeline collects that tab nightly on proof of
    PORTAL_SECRET, the same route the scorecard and depletions already travel (sdp/scorecard.py). Only objects
-   touched AFTER the webhook exists arrive this way, so the calendar fills in as the events team works; a
-   historical seed needs route 3 or a report export.
+   touched AFTER the webhook exists arrive this way, so the calendar fills in as the events team works. The
+   history behind it was SEEDED once (2026-09-22) from a Tripleseat "Event Details" report export, reshaped
+   into webhook-style rows in the browser and posted to the same Apps Script (`tools/tripleseat_seed.js`,
+   action SEED_EVENT, source='seed' in the warehouse until a live delivery replaces the row). The same tool
+   re-seeds if the tab is ever lost or a gap opens.
 
 3. OAUTH 2.0  (TRIPLESEAT_CLIENT_ID / _SECRET / _REFRESH_TOKEN). The full read API, pulled as a window every
    night. Blocked as of 2026-09-21: creating the client application in Tripleseat fails on their side, and the
@@ -371,18 +374,24 @@ def _cursor() -> int:
         return 0
 
 
-def pull_webhooks() -> dict:
+def pull_webhooks(from_start: bool = False) -> dict:
     """Collect the rows Tripleseat has posted to the Apps Script since the warehouse last absorbed any.
 
     The tab is append-only and the warehouse persists between runs, so only the tail is fetched: `since` is the
     number of data rows already loaded (kept in warehouse meta by transform, AFTER a successful load, so a run
     that dies between pull and transform simply fetches the same rows again next time). The Apps Script pages
-    the answer; each page is written to raw/ and transform reads them in order."""
+    the answer; each page is written to raw/ and transform reads them in order.
+
+    `from_start` (the workflow's `backfill` input) re-reads the whole tab — it is the complete record of the
+    route, so transform rebuilds every webhook/seed row from it (newest state per object wins, whatever the
+    order on the tab). A few thousand rows is a dozen calls."""
     url = env("APPS_SCRIPT_URL", required=True)
     secret = env("PORTAL_SECRET", required=True)
     key = base64.b64encode(hmac.new(secret.encode("utf-8"), b"tripleseat", hashlib.sha256).digest()).decode()
     http = Http(url, headers={"Content-Type": "application/json"}, rps=2)
-    since = _cursor()
+    since = 0 if from_start else _cursor()
+    if from_start:
+        log.info("Tripleseat webhooks: re-reading the whole tab (backfill) — the warehouse had absorbed %d rows", _cursor())
     start, total, page, got = since, None, 0, 0
     while True:
         j = _script_json(http, url, {"a": "tripleseat", "k": key, "since": since, "limit": HOOK_PAGE})
@@ -408,9 +417,9 @@ def pull_webhooks() -> dict:
 
 # ---- all three, each on its own ---------------------------------------------------------------
 
-def pull_all(locations_cfg: list[dict], days_back: int, days_forward: int = 180) -> dict:
+def pull_all(locations_cfg: list[dict], days_back: int, days_forward: int = 180, backfill: bool = False) -> dict:
     """Run every configured route. A failure in one is logged and the others still run; the caller decides
-    whether 'nothing configured' is a warning (it is)."""
+    whether 'nothing configured' is a warning (it is). `backfill` makes the webhook route re-read its whole tab."""
     out, ran = {}, []
     if env("TRIPLESEAT_PUBLIC_KEY"):
         ran.append("catalog")
@@ -422,7 +431,7 @@ def pull_all(locations_cfg: list[dict], days_back: int, days_forward: int = 180)
     if env("APPS_SCRIPT_URL") and env("PORTAL_SECRET"):
         ran.append("webhooks")
         try:
-            out["webhooks"] = pull_webhooks()
+            out["webhooks"] = pull_webhooks(from_start=backfill)
         except Exception as e:
             log.error("Tripleseat webhook collection failed (%s: %s)", type(e).__name__, e)
             out["webhooks"] = {"error": str(e)}

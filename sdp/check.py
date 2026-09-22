@@ -297,8 +297,9 @@ def run(db=None) -> int:
         ts_ev = _rows(con, "SELECT COALESCE(source,'api') s, COUNT(*) n FROM ts_events WHERE COALESCE(deleted,0)=0 GROUP BY 1")
         ts_rooms = con.execute("SELECT COUNT(*) FROM ts_rooms WHERE is_unassigned=0").fetchone()[0]
         no_room = _rows(con, "SELECT l.location_id FROM locations l WHERE NOT EXISTS (SELECT 1 FROM ts_rooms r WHERE r.location_id=l.location_id)")
-        log.info("tripleseat: events %s; catalog %s (%d rooms, refreshed %s); webhook rows absorbed %s (last %s)%s",
+        log.info("tripleseat: events %s%s; catalog %s (%d rooms, refreshed %s); webhook rows absorbed %s (last %s)%s",
                  ", ".join(f"{x['n']} via {x['s']}" for x in ts_ev) or "none",
+                 f" (seeded from a report export as of {meta['tripleseat_seeded_at'][:10]})" if meta.get("tripleseat_seeded_at") else "",
                  "loaded" if ts_rooms else "not loaded", ts_rooms, meta.get("tripleseat_catalog_at", "never"),
                  meta.get("tripleseat_webhook_cursor", "0"), meta.get("tripleseat_webhook_at", "never"),
                  ("; taprooms with no Tripleseat room: " + ", ".join(x["location_id"] for x in no_room)) if ts_rooms and no_room else "")

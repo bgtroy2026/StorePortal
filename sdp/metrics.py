@@ -1046,12 +1046,14 @@ def _price_tracking(con, lid: str, through: date, days: int = 180) -> dict:
 def tripleseat_section(con, slugs: list[str]) -> dict:
     """Connection status plus the catalog, so the Events page can say what it has before a single event exists.
 
-    status: 'events' once webhook or API rows have produced events, 'catalog' when only the public key has
-    spoken, 'none' otherwise. rooms/fees are per taproom (sliced into a director's bundle); event types and lead
-    sources are company-wide picklists."""
+    status: 'events' once webhook, seed or API rows have produced events, 'catalog' when only the public key
+    has spoken, 'none' otherwise. seed_events are still in the state a report export gave them (seeded_at);
+    webhook_events have since arrived live. rooms/fees are per taproom (sliced into a director's bundle);
+    event types and lead sources are company-wide picklists."""
     meta = {r[0]: r[1] for r in con.execute("SELECT key, value FROM meta WHERE key LIKE 'tripleseat_%'")}
     n_ev = con.execute("SELECT COUNT(*) FROM ts_events WHERE COALESCE(deleted,0)=0").fetchone()[0]
     n_hook = con.execute("SELECT COUNT(*) FROM ts_events WHERE source='webhook' AND COALESCE(deleted,0)=0").fetchone()[0]
+    n_seed = con.execute("SELECT COUNT(*) FROM ts_events WHERE source='seed' AND COALESCE(deleted,0)=0").fetchone()[0]
     n_api = con.execute("SELECT COUNT(*) FROM ts_events WHERE COALESCE(source,'api')='api' AND COALESCE(deleted,0)=0").fetchone()[0]
     n_ld = con.execute("SELECT COUNT(*) FROM ts_leads").fetchone()[0]
     first_hook = meta.get("tripleseat_webhook_first") or con.execute("SELECT MIN(seen_at) FROM ts_events WHERE source='webhook'").fetchone()[0]
@@ -1075,6 +1077,7 @@ def tripleseat_section(con, slugs: list[str]) -> dict:
     status = "events" if n_ev else ("catalog" if has_catalog else "none")
     return {"status": status, "catalog_at": meta.get("tripleseat_catalog_at"), "webhook_at": meta.get("tripleseat_webhook_at"),
             "webhook_rows": int(meta.get("tripleseat_webhook_cursor") or 0), "webhook_events": n_hook, "api_events": n_api, "webhook_since": first_hook,
+            "seed_events": n_seed, "seeded_at": meta.get("tripleseat_seeded_at"),
             "events": n_ev, "leads": n_ld, "tenant": (settings().get("tripleseat") or {}).get("tenant"), **cat}
 
 

@@ -866,25 +866,66 @@ def _unwrap_hook(payload: dict) -> tuple[str, dict]:
     return kind, payload
 
 
+def _hook_effective(action: str, wrapper: dict, when: str | None) -> str | None:
+    """When the state a tab row carries was true, as an ISO UTC string.
+
+    A live delivery is true the moment it arrives (`when`). A seeded row (action SEED_*, see
+    tools/tripleseat_seed.js) carries a snapshot from a report export, true when the report was exported — the
+    payload says so in `exported_at`, or the message names the day ("... export of 2026-09-21"), which is taken
+    as the end of that day in UTC. Rows are applied newest-state-first regardless of their order on the tab,
+    so a seed appended after the live deliveries of the same night cannot roll an event back to the export."""
+    if action.startswith("SEED") and isinstance(wrapper, dict):
+        v = wrapper.get("exported_at")
+        if v:
+            sv = str(v).strip()
+            if re.match(r"^\d{4}-\d{2}-\d{2}$", sv):
+                return sv + "T23:59:59Z"
+            return sv
+        m = re.search(r"(\d{4}-\d{2}-\d{2})", str(wrapper.get("message") or ""))
+        if m:
+            return m.group(1) + "T23:59:59Z"
+    return when
+
+
+def _hook_newer_exists(con, table: str, key: str, ident: str, eff: str | None) -> bool:
+    """True when the warehouse already holds a state of this object that is newer than `eff` (the row would
+    roll it back). Equal times apply again, so a run that re-reads the whole tab is idempotent."""
+    if not eff:
+        return False
+    prev = con.execute(f"SELECT MAX(seen_at) FROM {table} WHERE {key}=?", (ident,)).fetchone()[0]
+    return bool(prev) and str(prev)[:19] > str(eff)[:19]
+
+
 def load_tripleseat_webhooks(con) -> dict:
-    """Route 2: rows the Apps Script collected. Each row is one notification; the LAST notification per object
-    is its current state, and the warehouse keeps that state between runs. Nothing is deleted from the
-    warehouse here: a DELETE notification (or deleted_at) marks the row deleted, so a late re-send of an
-    older UPDATE cannot bring it back — rows are applied in the order received."""
+    """Route 2: rows the Apps Script collected. Each row is one notification; the NEWEST state per object wins
+    (by the time it was true, see _hook_effective — for live deliveries that is the order they arrived), and
+    the warehouse keeps that state between runs. Nothing is deleted from the warehouse here: a DELETE
+    notification (or deleted_at) marks the row deleted, so a late re-send of an older UPDATE cannot bring it
+    back. Rows seeded from a report export (action SEED_*) load like deliveries but are labelled source='seed'
+    until a live delivery replaces them."""
     by_loc, by_room = _ts_mapping()
     room_names, type_names = _ts_lookups(con)
     files = sorted(iter_raw("tripleseat", location_id="_all", dataset="webhook"), key=lambda t: t[2].name)
     if not files:
         return {"rows": 0}
-    n_rows = n_ev = n_ld = n_bk = n_unmapped = 0
-    cursor, first_seen = None, None
+    n_rows = n_ev = n_ld = n_bk = n_unmapped = n_seed = n_stale = 0
+    cursor, first_seen, seeded_at = None, None, None
+    # A pull that started from row 0 (`--backfill`, or a first run) re-reads the whole tab, which is the complete
+    # record of everything this route ever delivered: rebuild its rows from scratch rather than merging, so the
+    # newest-state rule below sees the tab alone and not what an earlier reading of it left behind.
+    rebuild = int(files[0][3].get("since") or 0) == 0
+    if rebuild:
+        n_old = con.execute("SELECT COUNT(*) FROM ts_events WHERE source IN ('webhook','seed')").fetchone()[0]
+        con.execute("DELETE FROM ts_events WHERE source IN ('webhook','seed')")
+        con.execute("DELETE FROM ts_leads WHERE origin IN ('webhook','seed')")
+        con.execute("DELETE FROM meta WHERE key IN ('tripleseat_webhook_first','tripleseat_seeded_at','tripleseat_seed_rows')")
+        if n_old:
+            log.info("Tripleseat webhooks: the pull re-read the whole tab — rebuilding %d webhook/seed events from it", n_old)
     for slug_, ds, p, j in files:
         hdr = j.get("header") or HOOK_HEADER
         idx = {h: i for i, h in enumerate(hdr)}
         for r in j.get("rows") or []:
             n_rows += 1
-            if first_seen is None and "when" in idx and r[idx["when"]]:
-                first_seen = r[idx["when"]]
             try:
                 raw = r[idx["json"]] if "json" in idx else r[-1]
                 obj = json.loads(raw) if isinstance(raw, str) and raw.strip() else {}
@@ -893,16 +934,27 @@ def load_tripleseat_webhooks(con) -> dict:
             action = str(r[idx["action"]] if "action" in idx else "").upper()
             if not action and isinstance(obj, dict):
                 action = str(obj.get("webhook_trigger_type") or obj.get("action") or obj.get("trigger") or "").upper()
+            seeded = action.startswith("SEED")
+            if seeded:
+                n_seed += 1
+            elif first_seen is None and "when" in idx and r[idx["when"]]:
+                first_seen = r[idx["when"]]                 # the first LIVE delivery — when the webhook started
             kind, o = _unwrap_hook(obj)
             kind = (str(r[idx["kind"]]).lower() if "kind" in idx and r[idx["kind"]] else kind) or kind
             seen = str(r[idx["when"]]) if "when" in idx else None
+            eff = _hook_effective(action, obj, seen)
+            if seeded and eff and (seeded_at is None or eff > seeded_at):
+                seeded_at = eff
+            origin = "seed" if seeded else "webhook"
             deleted = "DELETE" in action or bool(o.get("deleted_at"))
             if kind == "event" and o.get("id") is not None:
                 slug = _ts_slug(_ts_loc_id(o) or (r[idx["ts_location_id"]] if "ts_location_id" in idx else None),
                                 _ts_ids(o.get("room_ids") if o.get("room_ids") is not None else o.get("rooms")), by_loc, by_room)
                 if not slug:
                     n_unmapped += 1; continue
-                row = _ts_event_row(o, slug, room_names, type_names, "webhook", seen)
+                if _hook_newer_exists(con, "ts_events", "event_id", str(o.get("id")), eff):
+                    n_stale += 1; continue
+                row = _ts_event_row(o, slug, room_names, type_names, origin, eff)
                 row["deleted"] = 1 if deleted else 0
                 con.execute("DELETE FROM ts_events WHERE event_id=? AND location_id<>?", (row["event_id"], slug))   # moved between taprooms
                 _upsert(con, "ts_events", [row]); n_ev += 1
@@ -911,7 +963,9 @@ def load_tripleseat_webhooks(con) -> dict:
                 slug = _ts_slug(tid, [], by_loc, by_room)
                 if not slug:
                     n_unmapped += 1; continue
-                row = _ts_lead_row(o, slug, "webhook", seen)
+                if _hook_newer_exists(con, "ts_leads", "lead_id", str(o.get("id")), eff):
+                    n_stale += 1; continue
+                row = _ts_lead_row(o, slug, origin, eff)
                 if "CONVERT" in action:
                     row["status"] = "Converted"
                 elif "TURNED_DOWN" in action or "TURN_DOWN" in action:
@@ -928,9 +982,15 @@ def load_tripleseat_webhooks(con) -> dict:
         con.execute("INSERT OR REPLACE INTO meta VALUES ('tripleseat_webhook_at', ?)", (datetime.utcnow().isoformat(timespec="seconds") + "Z",))
         if first_seen and not con.execute("SELECT 1 FROM meta WHERE key='tripleseat_webhook_first'").fetchone():
             con.execute("INSERT INTO meta VALUES ('tripleseat_webhook_first', ?)", (str(first_seen),))
+        if seeded_at:
+            con.execute("INSERT OR REPLACE INTO meta VALUES ('tripleseat_seeded_at', ?)", (str(seeded_at),))
+            con.execute("INSERT OR REPLACE INTO meta VALUES ('tripleseat_seed_rows', ?)", (str(n_seed),))
     if n_unmapped:
         log.warning("Tripleseat webhooks: %d notifications for a location that is no taproom of ours (BlackStone?) — ignored", n_unmapped)
-    return {"rows": n_rows, "events": n_ev, "leads": n_ld, "bookings": n_bk, "cursor": cursor}
+    if n_seed or n_stale:
+        log.info("Tripleseat webhooks: %d of %d rows were seeded from a report export (state as of %s); %d row(s) skipped because the warehouse already held a newer state",
+                 n_seed, n_rows, seeded_at, n_stale)
+    return {"rows": n_rows, "events": n_ev, "leads": n_ld, "bookings": n_bk, "seeded": n_seed, "stale": n_stale, "cursor": cursor}
 
 
 def load_tripleseat(con) -> dict:

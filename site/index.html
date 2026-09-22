@@ -1744,6 +1744,7 @@ function evStatus(s){ s=String(s||''); return s.length>1&&s===s.toUpperCase()?s[
 function tsInfo(){ return (D&&D.tripleseat)||null; }
 function tsHasCatalog(){ var t=tsInfo(); return !!(t&&((t.event_types||[]).length||locIds().some(function(l){return ((t.rooms||{})[l]||[]).length;}))); }
 function fdt(s){ if(!s) return '—'; var d=new Date(s); return isNaN(d)?esc(s):d.toLocaleDateString(undefined,{month:'short',day:'numeric'})+' '+d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'}); }
+function fdd(s){ if(!s) return '—'; var d=new Date(s); return isNaN(d)?esc(s):d.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}); }
 
 /* What is connected, in words a director can act on. The three routes are described in sdp/tripleseat.py:
    the public key (catalog only), webhooks (events as they change), the OAuth API (not yet available). */
@@ -1752,9 +1753,13 @@ function tsStatusPanel(){
   var link=t.tenant?' <a href="https://'+esc(t.tenant)+'.tripleseat.com/events" target="_blank" rel="noopener">Open Tripleseat ↗</a>':'';
   var line;
   if(t.status==='events'){
-    line='<b>Tripleseat is connected.</b> '+fn(t.events)+' events'+(t.webhook_events?', '+fn(t.webhook_events)+' of them arriving live as they are created or edited (since '+fdt(t.webhook_since)+')':'')
-        +(t.catalog_at?'; rooms and fees refreshed '+fdt(t.catalog_at):'')+'.'
-        +(t.webhook_events&&!t.api_events?' Events only reach the portal once someone touches them in Tripleseat, so older bookings that have not been edited since the connection are not here yet.':'');
+    var parts=[];
+    if(t.seed_events) parts.push(fn(t.seed_events)+' as of the Tripleseat report export'+(t.seeded_at?' of '+fdd(t.seeded_at):'')+' that seeded the history');
+    if(t.webhook_events) parts.push(fn(t.webhook_events)+' updated live as they are created or edited (webhook since '+fdt(t.webhook_since)+')');
+    line='<b>Tripleseat is connected.</b> '+fn(t.events)+' events'+(parts.length?': '+parts.join('; '):'')
+        +(t.catalog_at?'. Rooms and fees refreshed '+fdt(t.catalog_at):'')+'.'
+        +(t.webhook_events&&!t.api_events&&!t.seed_events?' Events only reach the portal once someone touches them in Tripleseat, so older bookings that have not been edited since the connection are not here yet.':'')
+        +(t.seed_events?' Every change in Tripleseat from here on arrives on its own by the next refresh.':'');
   } else if(t.status==='catalog'){
     line='<b>Tripleseat is partly connected.</b> The portal can read the account’s rooms, event types, lead sources and fee rules (refreshed '+fdt(t.catalog_at)+'), but no events have arrived yet. '
         +(t.webhook_rows?'The webhook is delivering ('+fn(t.webhook_rows)+' notifications so far) — events appear after the next refresh.':'Events start flowing once the Tripleseat webhook is switched on (Settings → Tripleseat API &amp; Webhooks).');

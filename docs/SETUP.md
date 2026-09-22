@@ -42,7 +42,7 @@ each in `sdp/tripleseat.py`, and the nightly pull runs whichever are configured:
 | Route | What it gives | Needs | State |
 |---|---|---|---|
 | **Public key** | The catalog: every location and its rooms (with capacities), the site's event types, lead sources, referral sources, billing rules per location (gratuity, taxes, fees) and lead forms. Feeds the "Rooms and capacities" and "Event charges" panels and resolves room and event-type names on events. | `TRIPLESEAT_PUBLIC_KEY` | **Working.** Probed on 2026-09-21: reads `/locations`, `/sites`, `/lead_forms` only. `/events`, `/leads`, `/bookings`, `/rooms`, `/users`, `/accounts` all answer "You don't have permission". |
-| **Webhooks** | Events, leads and bookings as they are created, edited or deleted. Tripleseat POSTs the object to the Apps Script, which files it on a "Tripleseat" tab of the roster workbook; the pipeline collects the tail nightly (`{"a":"tripleseat"}`, HMAC of `PORTAL_SECRET`, like the scorecard). | The webhook added in Tripleseat (below) and a redeployed Apps Script | Built; switched on by the steps below. Only objects touched after the webhook exists arrive — history fills in as the team works. |
+| **Webhooks** | Events, leads and bookings as they are created, edited or deleted. Tripleseat POSTs the object to the Apps Script, which files it on a "Tripleseat" tab of the roster workbook; the pipeline collects the tail nightly (`{"a":"tripleseat"}`, HMAC of `PORTAL_SECRET`, like the scorecard). | The webhook added in Tripleseat (below) and a redeployed Apps Script | **Live since 2026-09-21** (proof below). Only objects touched after the webhook exists arrive on their own; the history behind it was seeded once from a report export (next section). |
 | **OAuth API** | The full read API as a nightly window (`/events/search`, `/leads/search`). | `TRIPLESEAT_CLIENT_ID` / `_SECRET` / `_REFRESH_TOKEN`, `TRIPLESEAT_REDIRECT_URI` | **Blocked.** Creating the client application under Settings → Tripleseat API & Webhooks fails on Tripleseat's side; needs their support. Note the token endpoint offers only `authorization_code` (one browser consent by a Tripleseat admin) and `oauth1_exchange` — no machine-to-machine grant. |
 
 **Location mapping** is in `config/locations.json` (`tripleseat_location_id`). Print the account's locations and rooms
@@ -76,6 +76,21 @@ trip Tripleseat's failure limit (its UI shows no counter, so "still enabled" is 
 payload is `{"webhook_trigger_type": "...", "message": "...", "event" | "booking" | "lead": {...}}` with the full
 object: status upper-case (`DEFINITE`), money as strings, `created_at` as `7/27/2026 11:08 PM`, `rooms` as objects
 with names, `status_changes` and `selected_lead_sources` included, `event_type_id` null.
+
+**History seeded 2026-09-22** from a Tripleseat *Event Details* report export (`tools/tripleseat_seed.js`, run in
+the browser console on Reports → History; instructions at the top of the file). The export — all locations,
+statuses Prospect / Tentative / Definite / Closed, 8/1/2025 through 12/31/2027, Lost left out on purpose — held
+2,956 events (Cedar Rapids 810, Des Moines 753, Omaha 589, Iowa City 584, Prairie Village 220; none in the
+"Solon" room). The tool reshapes each report line into the object the webhook would have delivered (rooms and
+event types resolved to ids through the public-key catalog, money as strings, `status_changes` from the
+Definite/Tentative/Lost/Closed dates, the lead form and lead source, `created_at`) wrapped as action
+`SEED_EVENT` with `exported_at`, and POSTs them to the same Apps Script URL with `&seed=1`
+(`doTripleseatSeed`, up to 500 rows a call, same token, same PII scrub, plain append). The next refresh loads them
+through the webhook code path with `source = 'seed'`; a row keeps that label until a live delivery replaces it.
+Rows apply newest-state-first — a delivery's time, or the export time for a seeded row — so re-running the tool
+later (a gap while the webhook was off, an older year, a lost tab) can never roll a live update back. To rebuild
+the whole feed from the tab, run the workflow with `source = tripleseat` and `backfill` ticked. The report does
+not carry `updated_at`, contacts, or line items, so those stay empty on seeded rows.
 
 The receiver cannot verify Tripleseat's `X-Signature` header — Apps Script never sees request headers — so the
 random token in the URL is what stands between the tab and the internet. The tab is append-only, the pipeline

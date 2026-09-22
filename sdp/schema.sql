@@ -267,9 +267,9 @@ CREATE TABLE IF NOT EXISTS ts_events (                  -- grain: one Tripleseat
   room_ids TEXT,                                        -- Tripleseat room ids, comma-separated (Solon is a ROOM of the Iowa City location)
   rooms TEXT,                                           -- their names, resolved from ts_rooms at load
   event_type_name TEXT,                                 -- resolved from the site's event_types picklist
-  source TEXT,                                          -- 'api' (nightly window) or 'webhook' (arrived as it changed)
+  source TEXT,                                          -- 'api' (nightly window), 'webhook' (arrived as it changed) or 'seed' (a report export, until a delivery replaces it)
   deleted INTEGER DEFAULT 0,                            -- a webhook said DELETE, or deleted_at is set; kept so a stale re-send cannot resurrect it
-  seen_at TEXT,                                         -- when the row that produced this state was received
+  seen_at TEXT,                                         -- when this state was true: delivery time, or the export time for a seeded row (newest wins)
   lead_source TEXT,                                     -- selected_lead_sources[0] (webhook route): where the booking came from
   definite_at TEXT,                                     -- when the status last became DEFINITE (status_changes) — booked pace later
   PRIMARY KEY (event_id, location_id)
@@ -282,7 +282,7 @@ CREATE TABLE IF NOT EXISTS ts_leads (                   -- grain: one inbound le
   event_date TEXT, guest_count INTEGER, description TEXT, created_at TEXT, updated_at TEXT,
   lead_form TEXT,                                       -- which lead form it came through (webhook route)
   converted_at TEXT, turned_down_at TEXT,
-  origin TEXT,                                          -- 'api' or 'webhook'
+  origin TEXT,                                          -- 'api', 'webhook' or 'seed'
   seen_at TEXT,
   PRIMARY KEY (lead_id, location_id)
 );

@@ -169,7 +169,7 @@ def cmd_pull(a):
             try:
                 from . import tripleseat
                 ts_cfg = cfg.get("tripleseat", {})
-                tripleseat.pull_all(locs, days_back=cfg["backfill_days"], days_forward=int(ts_cfg.get("days_forward", 180)))
+                tripleseat.pull_all(locs, days_back=cfg["backfill_days"], days_forward=int(ts_cfg.get("days_forward", 180)), backfill=bool(a.backfill))
             except Exception as e:
                 failed.append("tripleseat"); log.error("Tripleseat pull failed (%s: %s) — continuing with other sources", type(e).__name__, e)
         else:
