@@ -134,10 +134,12 @@ script hands back (profile, bundle keys, a signed session token) is kept in the 
 last visit, so a returning person opens straight into the portal with no round trip to the script — the slow,
 occasionally hanging part. Every open then asks the script in the background (`{"a":"refresh"}`) what a fresh
 sign-in would return today: a changed role or taproom list shows a "reload to see it" line, and someone taken
-off the roster is signed out on their next visit. The first sign-in is *hedged*: if the script has not
-answered in 2.5 s a second request goes out (and a third at 6 s), the first answer wins — Apps Script
-intermittently hangs one request for ~30 s while a second answers in two. The roster is cached in the script
-for two minutes, and the sign-in is logged by a separate beacon so the answer never waits on the Logins tab.
+off the roster is signed out on their next visit. The first sign-in is *hedged*: more requests go out at 2,
+4.5 and 8 s if none has answered, the first answer wins, and no request is abandoned before 25 s. Measured
+against the script's execution log on 2026-09-22: every request starts within a second and finishes in about
+one, but Apps Script then holds the answer for anywhere from 1 to 15+ s, at random per request — so patience
+with each try and several tries in flight is what gets a person in. The roster is cached in the script for two
+minutes, and the sign-in is logged by a separate beacon so the answer never waits on the Logins tab.
 On a shared computer, **Sign out** forgets the session. To revoke keys already handed out, bump `PORTAL_EPOCH`
 (`sdp/bundle.py`) — a remembered session whose keys no longer open anything falls back to the Google button.
 
