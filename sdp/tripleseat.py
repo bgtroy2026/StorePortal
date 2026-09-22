@@ -322,23 +322,45 @@ def pull_catalog(locations_cfg: list[dict]) -> dict:
 # ---- route 2: webhook rows collected by the Apps Script -------------------------------------
 
 def _script_json(http: Http, url: str, body: dict, tries: int = 3) -> dict:
-    """POST to the Apps Script and insist on a JSON answer.
+    """POST to the Apps Script and insist on a JSON answer, walking the redirect by hand.
 
-    Apps Script answers a POST with a 302 to a one-time googleusercontent URL that serves the output. On the
-    first real run (2026-09-21) that hop came back as HTML instead: the script had run and completed, then a GET
-    reached the script 18 seconds later as doGet (which does not exist) — the echo URL had evidently expired
-    before the runner fetched it and Google sent the client back to the script. The POST is idempotent (it only
-    reads rows), so the honest response is to ask again rather than fail the night's collection."""
+    Apps Script answers a POST with a 302 to a one-time script.googleusercontent.com URL that serves the output.
+    Seen on 2026-09-21 from the GitHub runner, three times out of four: that hop came back as an HTML page or a
+    404 while the script itself had completed — the content was not yet readable where the runner's GET landed,
+    and requests' automatic redirect gives it exactly one immediate try. So: POST without following, then fetch
+    the Location ourselves with a fresh GET (no JSON content-type, a short pause, up to five tries), and only when
+    the key really is dead re-POST. The POST is idempotent (it only reads rows), so asking again costs nothing."""
+    s = http.s
     last = ""
     for attempt in range(tries):
-        r = http.post(url, body)
-        try:
-            return r.json()
-        except ValueError:
-            last = (r.text or "")[:120].replace("\n", " ")
-            log.warning("Apps Script answered %s (not JSON) on attempt %d: %r — retrying", r.status_code, attempt + 1, last)
-            time.sleep(5 * (attempt + 1))
-    raise RuntimeError(f"Apps Script never answered with JSON: {last!r}")
+        if attempt:
+            time.sleep(5 * attempt)
+        r = s.post(url, json=body, timeout=http.timeout, allow_redirects=False)
+        candidates = [r] if r.status_code == 200 else []
+        loc = r.headers.get("Location") if r.status_code in (301, 302, 303, 307, 308) else None
+        if not candidates and not loc:
+            last = f"HTTP {r.status_code} {(r.text or '')[:120]!r}"
+            log.warning("Apps Script: %s on attempt %d — retrying", last, attempt + 1)
+            continue
+        for g in range(5 if loc else 1):
+            if loc:
+                if g:
+                    time.sleep(1.5 * g)
+                r2 = s.get(loc, timeout=http.timeout, headers={"Content-Type": None, "Accept": "application/json,text/plain,*/*"})
+            else:
+                r2 = candidates[0]
+            if r2.status_code == 200:
+                try:
+                    return r2.json()
+                except ValueError:
+                    last = f"200 but not JSON: {(r2.text or '')[:100]!r}"
+            elif r2.status_code == 404:
+                last = "404 from the output URL"
+            else:
+                last = f"HTTP {r2.status_code} from the output URL"
+                break
+            log.warning("Apps Script output not ready (%s), try %d/%d", last, g + 1, 5 if loc else 1)
+    raise RuntimeError(f"Apps Script never answered with JSON: {last}")
 
 
 def _cursor() -> int:
