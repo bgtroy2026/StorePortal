@@ -67,6 +67,7 @@ header .who b{color:#fff}
 .seg{display:inline-flex;border:1px solid var(--border);border-radius:9px;overflow:hidden}
 .seg button{border:0;background:#fff;padding:7px 11px;font-size:12.5px;font-weight:600;color:var(--ink2);cursor:pointer}
 .seg button.on{background:var(--navy);color:#fff}
+.seg button.on.fellback{background:var(--muted)}   /* asked for last year, but there is none: the figures say 'vs prior' */
 .filters select,.filters input[type=date]{border:1px solid var(--border);border-radius:8px;padding:6px 9px;font:inherit;font-size:12.5px;background:#fff}
 .filters .fresh{margin-left:auto;font-size:11.5px;color:var(--muted)}
 main{padding:16px 18px 40px;max-width:1500px;margin:0 auto}
@@ -528,7 +529,7 @@ footer.site div{margin-top:12px;font-size:10.5px;font-weight:700;letter-spacing:
   <div class="seg" id="rangeSeg"></div>
   <input type="date" id="d0"> <span style="color:var(--muted)">to</span> <input type="date" id="d1">
   <label id="cmpLbl">Compare</label>
-  <div class="seg" id="cmpSeg"><button data-c="prior" class="on">Prior period</button><button data-c="ly" title="Same weekdays a year ago (364 days back), with holidays matched to the same holiday">Last year</button></div>
+  <div class="seg" id="cmpSeg"><button data-c="prior">Prior period</button><button data-c="ly" class="on" title="Same weekdays a year ago (364 days back), with holidays matched to the same holiday">Last year</button></div>
   <button id="opBtn" class="ackb" title="A printable one-page week for the selected taproom" style="padding:6px 10px">Weekly one-pager</button>
  </div>
    <div class="fresh" id="fresh"></div>
@@ -820,7 +821,7 @@ window.addEventListener('load',function(){
 /* =========================================================================================
    DASHBOARD APP
    ========================================================================================= */
-var D=null, P=null, S={loc:'all', preset:'l28', d0:null, d1:null, cmp:'prior', page:'overview', actSrc:'all', evPreset:'n30', evD0:null, evD1:null};
+var D=null, P=null, S={loc:'all', preset:'l28', d0:null, d1:null, cmp:'ly', page:'overview', actSrc:'all', evPreset:'n30', evD0:null, evD1:null};
 var K=null; // daily key index
 /* Everything in net sales that no menu category accounts for — service charges, check-level discounts, and
    anything the mapping did not recognise. It is the residual rather than any single field: Toast's
@@ -932,7 +933,23 @@ function rowsIn(lid,a,b,set){ var src=D.daily[lid]||[]; if(!set) return src.filt
 function sumRows(rows){ var s={}; D.meta.daily_keys.forEach(function(k){if(k!=='d')s[k]=0;}); rows.forEach(function(r){D.meta.daily_keys.forEach(function(k,i){if(k!=='d')s[k]+=(r[i]||0);});}); s.days=rows.length; return s; }
 function agg(a,b,set){ var all=[]; locIds().forEach(function(l){all=all.concat(rowsIn(l,a,b,set));}); return sumRows(all); }
 function byDate(a,b,set){ var m={}; locIds().forEach(function(l){rowsIn(l,a,b,set).forEach(function(r){var o=m[r[0]]||(m[r[0]]={});D.meta.daily_keys.forEach(function(k,i){if(k!=='d')o[k]=(o[k]||0)+(r[i]||0);});});}); return Object.keys(m).sort().map(function(d){m[d].d=d;return m[d];}); }
-function cmpWindow(){ var n=(pd(S.d1)-pd(S.d0))/864e5+1; if(S.cmp==='ly'){ var set={}, lo=null, hi=null; rangeDates(S.d0,S.d1).forEach(function(d){ var x=lyDate(d); set[x]=(set[x]||0)+1; if(!lo||x<lo)lo=x; if(!hi||x>hi)hi=x; }); return [lo,hi,set]; } return [addDays(S.d0,-n),addDays(S.d0,-1)]; }
+function lyWindow(){ var set={}, lo=null, hi=null; rangeDates(S.d0,S.d1).forEach(function(d){ var x=lyDate(d); set[x]=(set[x]||0)+1; if(!lo||x<lo)lo=x; if(!hi||x>hi)hi=x; }); return [lo,hi,set]; }
+function priorWindow(){ var n=(pd(S.d1)-pd(S.d0))/864e5+1; return [addDays(S.d0,-n),addDays(S.d0,-1)]; }
+/* Which comparison this view can ACTUALLY make. Last year is the default (2026-09-22), but a taproom that was not
+   open a year ago has nothing to compare against — Omaha and Prairie Village today — and a page of "no comparison"
+   is worse than a prior-period one. So the choice degrades: asked for last year, fall back to the prior period
+   when last year was not traded, and let every label say which one it used. The segment keeps showing what the
+   person picked; only the figures and their labels follow what was possible. Cached per render because it costs a
+   scan of the daily rows and every panel asks. */
+var _cmpEff=null;
+function cmpMode(){
+  if(S.cmp!=='ly') return S.cmp;
+  if(_cmpEff) return _cmpEff;
+  var w=lyWindow();
+  _cmpEff=hasData(w[0],w[1],w[2])?'ly':'prior';
+  return _cmpEff;
+}
+function cmpWindow(){ return cmpMode()==='ly'?lyWindow():priorWindow(); }
 /* For a last-year comparison, "has data" means the WHOLE of last year's window was traded — by every selected
    taproom that has any history that far back. A year-to-date against a warehouse that starts in August would
    otherwise compare nine months with two and call it growth. */
@@ -955,7 +972,7 @@ function hasToast(){ return locIds().some(function(l){var x=(D.sources||{})[l];r
 function needToast(what){ return '<div class="empty">'+what+' needs the Toast API connection (order-level detail). MarginEdge supplies sales by category, labor cost, purchases, P&amp;L and inventory in the meantime.</div>'; }
 function tileNT(label){ return '<div class="tile"><div class="l">'+label+'</div><div class="v" style="font-size:15px;color:var(--muted);margin-top:10px">Needs Toast</div><div class="d"><span class="tg">order-level data</span></div></div>'; }
 function killCharts(){charts.forEach(function(c){try{c.destroy();}catch(e){}});charts=[];}
-function delta(cur,prev,inv){ if(cur==null||prev==null||!prev)return '<span class="tg">no comparison</span>'; var d=(cur-prev)/Math.abs(prev); var up=d>=0; var good=inv?!up:up; return '<span class="'+(good?'up':'dn')+'">'+(up?'▲':'▼')+' '+fp(Math.abs(d),1)+'</span><span class="tg">vs '+(S.cmp==='ly'?'LY':'prior')+'</span>'; }
+function delta(cur,prev,inv){ if(cur==null||prev==null||!prev)return '<span class="tg">no comparison</span>'; var d=(cur-prev)/Math.abs(prev); var up=d>=0; var good=inv?!up:up; return '<span class="'+(good?'up':'dn')+'">'+(up?'▲':'▼')+' '+fp(Math.abs(d),1)+'</span><span class="tg">vs '+(cmpMode()==='ly'?'LY':'prior')+'</span>'; }
 function tile(label,val,dl,extra){ return '<div class="tile"><div class="l">'+label+'</div><div class="v">'+val+'</div><div class="d">'+(dl||'')+(extra||'')+'</div></div>'; }
 /* Every panel gets a CSV button. It reads the table that is actually on screen rather than the underlying
    payload, so what downloads is exactly what the director is looking at — same rows, same filters, same date
@@ -1074,12 +1091,17 @@ function render(noHash){
   $('filters').style.display=sc?'none':'';
   panel._n=0;
   document.body.classList.toggle('sheetmode',sc);
+  _cmpEff=null;                                   // the comparison is re-decided per render: it depends on the taproom and the range
   buildRangeSeg(); syncRangeInputs();
   var ap=activePreset();
   document.querySelectorAll('#rangeSeg button').forEach(function(b){b.classList.toggle('on',b.dataset.p===ap);});
   document.querySelectorAll('#cmpSeg button').forEach(function(b){b.classList.toggle('on',b.dataset.c===S.cmp);});
   // Prior-period / last-year comparisons are about sales; a booked calendar has nothing to compare against.
   var ev=(S.page==='events'); $('cmpSeg').style.display=ev?'none':''; var cl=$('cmpLbl'); if(cl) cl.style.display=ev?'none':'';
+  // Asked for last year but this taproom has none: say so on the button rather than leaving the figures to explain it.
+  var lyb=document.querySelector('#cmpSeg button[data-c="ly"]');
+  if(lyb){ var fell=(S.cmp==='ly'&&cmpMode()!=='ly'); lyb.classList.toggle('fellback',fell);
+    lyb.title=fell?'No last-year history for this taproom and range yet — showing the prior period instead':'Same weekdays a year ago (364 days back), with holidays matched to the same holiday'; }
   document.querySelectorAll('#nav button').forEach(function(b){b.classList.toggle('on',b.dataset.p===S.page);});
   var m=$('main'); m.innerHTML='';
   if(S.page==='scorecard' && !hasScorecard()) S.page='overview';
@@ -1227,7 +1249,7 @@ function pgOverview(m){
   if(kp&&cw[2]){ var pm={}; prev.forEach(function(r){pm[r.d]=r;}); prev=cur.map(function(r){ return pm[lyDate(r.d)]||{net:null}; }); }   // line each day up with ITS last-year twin
   var acts={}; D.activations.forEach(function(x){ if(locIds().indexOf(x.loc)<0)return; var d=x.s; while(d<=(x.e||x.s)){acts[d]=(acts[d]?acts[d]+', ':'')+x.name;d=addDays(d,1);} });
   var sets=[{label:'Net sales',data:cur.map(function(r){return r.net;}),borderColor:css('s1'),pointRadius:cur.map(function(r){return acts[r.d]?5:0;}),pointBackgroundColor:css('s2'),pointBorderColor:'#fff'}];
-  if(prev.length) sets.push({label:S.cmp==='ly'?'Last year':'Prior period',data:prev.map(function(r){return r.net;}),borderColor:css('axis'),borderDash:[4,4]});
+  if(prev.length) sets.push({label:cmpMode()==='ly'?'Last year':'Prior period',data:prev.map(function(r){return r.net;}),borderColor:css('axis'),borderDash:[4,4]});
   var lc=lineCfg(cur.map(function(r){return fdate(r.d);}),sets); lc.options.plugins.legend={display:prev.length>0,position:'bottom'};
   lc.options.plugins.tooltip.callbacks.afterTitle=function(items){var d=cur[items[0].dataIndex]; if(!d) return ''; var out=[], hn=holidays(+d.d.slice(0,4))[d.d]; if(hn) out.push(hn); if(acts[d.d]) out.push('● '+acts[d.d]); if(locIds().length===1){ var wt=wxText(wxFor(locIds()[0],d.d)); if(wt) out.push(wt); } return out.join('\n');};
   mk('c_trend',lc);
@@ -2271,7 +2293,7 @@ function pgLocations(m){
   var rows=D.locations.map(function(l){ var s=sumRows(rowsIn(l.id,a,b)), p=sumRows(rowsIn(l.id,cw[0],cw[1],cw[2]));
     return {l:l,s:s,p:p,partial:(l.first_date&&cw[0]<l.first_date)}; });
   var anyNew=rows.some(function(r){return r.partial;});
-  m.innerHTML='<div class="panel"><h3>Location scorecard</h3><div class="hint">All locations for the selected range; change vs '+(S.cmp==='ly'?'last year':'prior period')+(anyNew?'. Locations marked <span class="pill">new</span> opened partway through this window, so there is no comparable prior period and their change is shown as —.':'')+'</div><div style="overflow-x:auto"><table class="t"><tr><th>Location</th><th class="r">Net sales</th><th class="r">Δ</th><th class="r">Guests</th><th class="r">Avg check</th><th class="r">PPA</th><th class="r">Labor %</th><th class="r">Purch %</th><th class="r">SPLH</th><th class="r">Discounts</th></tr>'
+  m.innerHTML='<div class="panel"><h3>Location scorecard</h3><div class="hint">All locations for the selected range; change vs '+(cmpMode()==='ly'?'last year':'prior period')+(anyNew?'. Locations marked <span class="pill">new</span> opened partway through this window, so there is no comparable prior period and their change is shown as —.':'')+'</div><div style="overflow-x:auto"><table class="t"><tr><th>Location</th><th class="r">Net sales</th><th class="r">Δ</th><th class="r">Guests</th><th class="r">Avg check</th><th class="r">PPA</th><th class="r">Labor %</th><th class="r">Purch %</th><th class="r">SPLH</th><th class="r">Discounts</th></tr>'
     +rows.map(function(r,i){var s=r.s,p=r.p;var d=(p.net&&!r.partial)?(s.net-p.net)/p.net:null;return '<tr><td class="n"><i class="sw" style="background:'+css(LOCCOL[i%8])+'"></i>'+esc(r.l.name)+(r.partial?' <span class="pill" title="Opened '+fdate(r.l.first_date)+' — no comparable prior period">new</span>':'')+'</td><td class="r">'+fm(s.net)+'</td><td class="r" style="color:'+(d>=0?'var(--good)':'var(--bad)')+';font-weight:700">'+(d!=null?(d>=0?'+':'')+fp(d):'—')+'</td><td class="r">'+fn(s.guests)+'</td><td class="r">'+fm(s.checks?s.net/s.checks:null,2)+'</td><td class="r">'+fm(s.guests?s.net/s.guests:null,2)+'</td><td class="r">'+fp(s.net?s.lc/s.net:null)+'</td><td class="r">'+fp(s.net?s.p/s.net:null)+'</td><td class="r">'+fm(s.lh?s.net/s.lh:null,0)+'</td><td class="r">'+fm(s.disc)+'</td></tr>';}).join('')+'</table></div></div>'
     +'<div class="grid" style="margin-top:14px">'+benchmarkPanel(rows)+'</div>'+rampPanel()
     +'<div class="grid cols2" style="margin-top:14px">'+panel('Net sales by week by location','',chartBox('c_locs',true))+panel('Labor % by week by location','',chartBox('c_loclab',true))+'</div>';
@@ -2455,7 +2477,7 @@ function writeHash(){
   var parts=['page='+S.page,'loc='+S.loc,'r='+S.preset];
   if(S.preset==='custom'){ parts.push('d0='+S.d0,'d1='+S.d1); }
   if(S.page==='events'){ parts.push('ev='+S.evPreset); if(S.evPreset==='custom'){ parts.push('e0='+S.evD0,'e1='+S.evD1); } }
-  if(S.cmp!=='prior') parts.push('cmp='+S.cmp);
+  if(S.cmp!=='ly') parts.push('cmp='+S.cmp);      // the link carries the comparison only when it is not the default
   var h='#'+parts.join('&');
   if(h===location.hash){ _hashWritten=h; return; }
   // The first write of a session replaces rather than pushes, or the back button's first press would do nothing.
