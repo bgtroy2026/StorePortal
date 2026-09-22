@@ -2071,10 +2071,16 @@ function evNewLeadsPanel(){
        answer plus the style and the description that used to sit under the lead's name. The clip is tighter
        when the Taproom column is there to be paid for, so the eight columns still fit without scrolling. */
     +rows.map(function(r){ var k=leadStatusKey(r.status);
-      var tip=infoIcon([['Asked for',isLong(r.type)?r.type:''],['Style',r.style],['Description',r.title]]);
+      /* A webhook lead often carries no event type — the enquiry form does not ask for one — but it usually does
+         carry what the person wrote. Show that rather than a dash, and keep the icon for whatever is left over. */
+      var shown=r.type||r.title||r.style||'', tp=[];
+      if(isLong(r.type)) tp.push(['Asked for',r.type]);
+      if(r.title&&(shown!==r.title||isLong(r.title))) tp.push(['Description',r.title]);
+      if(r.style&&shown!==r.style) tp.push(['Style',r.style]);
+      var tip=infoIcon(tp);
       return '<tr><td class="n">'+clipT(r.name||'—',multi?130:170)+(r.company?'<div class="tg" style="font-weight:400">'+clipT(r.company,multi?130:170)+'</div>':'')+'</td>'
         +(multi?'<td>'+esc(locName(r.loc))+'</td>':'')+'<td>'+(r.d?fdate(r.d)+', '+r.d.slice(0,4):'—')+'</td><td class="r">'+fn(r.guests)+'</td>'
-        +'<td style="white-space:nowrap">'+clipT(r.type,multi?118:190)+tip+'</td><td>'+fdt(r.created)+'</td>'
+        +'<td style="white-space:nowrap">'+clipT(shown,multi?118:190)+tip+'</td><td>'+fdt(r.created)+'</td>'
         +'<td'+(r.form?' title="'+esc(r.form)+'"':'')+'>'+clipT(r.src,120)+'</td>'
         +'<td>'+(r.status?'<span class="pill" style="background:'+EV_STATUS_COLORS[k]+'22;color:'+EV_STATUS_COLORS[k]+'">'+esc(evStatus(r.status))+'</span>':'<span class="tg">—</span>')+(r.converted?'<div class="tg">booked '+fdate(r.converted)+'</div>':'')+'</td></tr>'; }).join('')
     +'</table></div>';
