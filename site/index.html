@@ -710,21 +710,24 @@ async function scriptPost(body, onRetry){
   }
   throw last||new Error('sign-in service unreachable');
 }
-/* The sign-in call is HEDGED rather than retried in turn. The hang described above is per request — a second
-   request sent a moment later answers in the usual two seconds while the first is still stuck — so if the first
-   has not answered in 2.5s a second goes out, and at 6s a third; the first real answer wins and the rest are
-   abandoned. Repeating a sign-in is safe: the token is verified again and the roster read again, nothing is
-   written (the sign-in is logged by a separate beacon once it has succeeded). The slow case now costs about four
-   seconds instead of ten, and the worst case (three dead tries) about sixteen instead of twenty-seven. A refusal
-   from the script, or a redirect that lands on a 404, counts as that try failing rather than as the answer. */
+/* The sign-in call is HEDGED rather than retried in turn. Measured against the script's own execution log on
+   2026-09-22: every request STARTS running within a second and finishes in about one, but the answer then takes
+   anywhere from one to fifteen-plus seconds to come back out of Apps Script's front door, at random per request
+   (1.0, 1.1, 4.6, 6.4, 7.4, 8.6, 9.7 and >12 s in one sitting). Two things follow. Nothing in flight is given up
+   early: a request that is going to answer at twelve seconds is worth more than a fresh one that may take just as
+   long, so each try has a 25 s deadline. And more tries go out sooner — at 2, 4.5 and 8 s — because the delays
+   are independent, so the first of four to come back is usually quick. Repeating a sign-in is safe: the token is
+   verified again and the roster read again, nothing is written (the sign-in is logged by a separate beacon once
+   it has succeeded). A refusal from the script, or a redirect that lands on a 404, counts as that try failing
+   rather than as the answer. Only the FIRST sign-in per browser pays any of this; after it the session is kept. */
 function scriptPostHedged(body, onSlow){
   return new Promise(function(resolve,reject){
-    var starts=[0,2500,6000], fired=[], failed=0, done=false, ctls=[], timers=[];
+    var starts=[0,2000,4500,8000], fired=[], failed=0, done=false, ctls=[], timers=[];
     function fire(i){
       if(done||fired[i]) return; fired[i]=true;
       if(i>0&&onSlow) onSlow(i);
       var ctl=new AbortController(); ctls.push(ctl);
-      var t=setTimeout(function(){ctl.abort();},10000);
+      var t=setTimeout(function(){ctl.abort();},25000);
       fetch(CFG.API_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:body,signal:ctl.signal})
         .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
         .then(function(j){ clearTimeout(t); if(done) return; done=true; timers.forEach(clearTimeout); ctls.forEach(function(c){ if(c!==ctl){ try{c.abort();}catch(e){} } }); resolve(j); })
@@ -743,12 +746,12 @@ async function onCred(resp){
   try{
     setStatus('Checking access…'); $('err').textContent='';
     j=await scriptPostHedged(JSON.stringify({a:'signin',t:resp.credential}), function(n){
-      setStatus('Sign-in service is slow — asking again ('+n+' of 2)…');
+      setStatus('Sign-in service is slow — still trying ('+n+' of 3 extra tries sent)…');
     });
     if(!j.ok){ setErr(j.error==='not on the roster'?'Your account is not on the portal roster — ask Troy to add you.':('Sign-in refused: '+(j.error||'unknown'))); return; }
     saveAuth(j);
     try{ navigator.sendBeacon(CFG.API_URL, JSON.stringify({a:'ping',s:j.sid,ev:'signin'})); }catch(e){}
-  }catch(e){ setErr('Could not reach the sign-in service. It is usually back within a minute — press the sign-in button again. ('+(e&&e.name==='AbortError'?'timed out':e.message)+')'); return; }
+  }catch(e){ setErr('The sign-in service did not answer in 30 seconds. Press the sign-in button again — once you are in, this browser stays signed in. ('+(e&&e.name==='AbortError'?'timed out':e.message)+')'); return; }
   try{ await boot(j); }catch(e){ forgetAuth(); setErr('Signed in fine, but the portal data would not load. If the site was being updated just now, wait about a minute and refresh. ('+e.message+')'); }
 }
 var gsiOK=false;
