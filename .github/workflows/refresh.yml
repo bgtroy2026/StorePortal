@@ -75,6 +75,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       PORTAL_SECRET: ${{ secrets.PORTAL_SECRET }}
+      EXEC_SECRET: ${{ secrets.EXEC_SECRET }}
       MARGINEDGE_API_KEY: ${{ secrets.MARGINEDGE_API_KEY }}
       TOAST_CLIENT_ID: ${{ secrets.TOAST_CLIENT_ID }}
       TOAST_CLIENT_SECRET: ${{ secrets.TOAST_CLIENT_SECRET }}
@@ -169,6 +170,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       PORTAL_SECRET: ${{ secrets.PORTAL_SECRET }}
+      EXEC_SECRET: ${{ secrets.EXEC_SECRET }}
       MARGINEDGE_API_KEY: ${{ secrets.MARGINEDGE_API_KEY }}
       TOAST_CLIENT_ID: ${{ secrets.TOAST_CLIENT_ID }}
       TOAST_CLIENT_SECRET: ${{ secrets.TOAST_CLIENT_SECRET }}

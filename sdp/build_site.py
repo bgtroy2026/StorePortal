@@ -57,6 +57,19 @@ def run(secret: str | None = None, dev_json: bool = False) -> dict:
             buf = encrypt(obj, derive_key(secret, label, epoch))
             (data / f"{bid}.bin").write_bytes(buf)
             written[label] = {"file": f"data/{bid}.bin", "bytes": len(buf)}
+        # Executive Scorecard feed: the daily taproom series + the leadership workbook, locked with the SCORECARD's
+        # own secret (EXEC_SECRET), not PORTAL_SECRET. Troy's Mac fetches it, unlocks it with .exec-secret.json and
+        # rolls it up into the exec bundle (ExecScorecard tools/fetch_sdp.py -> build_local.py). Separate secret,
+        # separate label: nobody signed in to this portal can open it, and the scorecard can't open this portal.
+        exec_secret = env("EXEC_SECRET", "")
+        if exec_secret:
+            exec_epoch = env("EXEC_EPOCH", "1")
+            obj = {"meta": payload["meta"], "locations": payload["locations"], "daily": payload.get("daily") or {},
+                   "events": payload.get("events") or {}, "targets": payload.get("targets") or {}, "scorecard": scorecard}
+            bid = bundle_id("exec-sdp", exec_epoch)
+            buf = encrypt(obj, derive_key(exec_secret, "exec-sdp", exec_epoch))
+            (data / f"{bid}.bin").write_bytes(buf)
+            written["exec-sdp"] = {"file": f"data/{bid}.bin", "bytes": len(buf)}
         # The morning email, rendered here and sent by the Apps Script. Built from the same payload the pages
         # use, so the email can never quote a figure the portal does not show.
         try:

@@ -20,12 +20,49 @@ KEYFILE = os.path.join(CFG, "depletions_put.key")
 STATE = os.path.join(CFG, "depletions_last.json")
 
 
+URLCACHE = os.path.join(REPO, "config", "api_url.txt")
+URLPAT = r"API_URL:\s*'(https://script\.google\.com/macros/s/[A-Za-z0-9_-]+/exec)'"
+
+
 def api_url() -> str:
-    html = open(os.path.join(REPO, "site", "index.html"), encoding="utf-8").read()
-    m = re.search(r"API_URL:\s*'(https://script\.google\.com/macros/s/[A-Za-z0-9_-]+/exec)'", html)
-    if not m:
-        raise SystemExit("API_URL not found in site/index.html")
-    return m.group(1)
+    """Endpoint from site/index.html, with config/api_url.txt as a fallback cache.
+
+    site/index.html can be evicted by iCloud ("Optimize Mac Storage"); opening a dataless
+    placeholder raises OSError 11 (EDEADLK on macOS) instead of returning data, which silently
+    broke this upload for 8 deploys in Oct 2026. index.html stays the source of truth and
+    refreshes the cache whenever it is readable; the cache only covers an eviction.
+    """
+    url = None
+    try:
+        html = open(os.path.join(REPO, "site", "index.html"), encoding="utf-8").read()
+        m = re.search(URLPAT, html)
+        if m:
+            url = m.group(1)
+        else:
+            print("depletions: API_URL pattern not found in site/index.html")
+    except OSError as e:
+        extra = ""
+        if e.errno == 11:
+            extra = " - looks like an un-downloaded iCloud placeholder"
+        print(f"depletions: site/index.html unreadable ({e.strerror or e}){extra}; trying cached API_URL")
+    if url:
+        try:
+            cur = open(URLCACHE, encoding="utf-8").read().strip() if os.path.exists(URLCACHE) else None
+            if cur != url:
+                os.makedirs(os.path.dirname(URLCACHE), exist_ok=True)
+                with open(URLCACHE, "w", encoding="utf-8") as fh:
+                    fh.write(url + "\n")
+        except OSError:
+            pass
+        return url
+    try:
+        cached = open(URLCACHE, encoding="utf-8").read().strip()
+        if cached.startswith("https://script.google.com/macros/s/"):
+            print("depletions: using cached API_URL from config/api_url.txt")
+            return cached
+    except OSError:
+        pass
+    raise RuntimeError("API_URL unavailable: site/index.html unreadable and no cache at config/api_url.txt")
 
 
 def main() -> int:
@@ -76,5 +113,14 @@ if __name__ == "__main__":
     try:
         rc = main()
     except Exception as e:  # never break the deploy that called us
-        print("depletions: error:", e); rc = 1
+        import traceback
+        tb = traceback.extract_tb(sys.exc_info()[2])
+        where = f"{os.path.basename(tb[-1].filename)}:{tb[-1].lineno} in {tb[-1].name}()" if tb else "?"
+        hint = ""
+        if isinstance(e, OSError) and e.errno == 11:
+            hint = ("\n  hint: errno 11 is EDEADLK on macOS and here almost always means the file is an"
+                    "\n        iCloud placeholder that is not downloaded. Fix: brctl download <path>,"
+                    "\n        or Finder right-click the folder -> Download Now / Keep Downloaded.")
+        print(f"depletions: error: {type(e).__name__}: {e} (at {where}){hint}")
+        rc = 1
     sys.exit(rc if "--strict" in sys.argv else 0)
