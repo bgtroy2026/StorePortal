@@ -191,6 +191,7 @@ def build_payload(con, through: date | None = None) -> dict:
         payload["beer"][lid] = _safe("beer", insights.beer_volume, through)
         payload["channels"][lid] = _safe("channels", insights.channels, w28, through)
         payload["loyalty"][lid] = _safe("loyalty", insights.loyalty, w28, through)
+        payload.setdefault("exec_weekly", {})[lid] = _safe("exec_weekly", insights.exec_weekly, through)
         payload["menu"][lid] = _safe("menu", insights.menu_analysis, w28, through, first_date)
         payload["beer_mix"][lid] = _safe("beer_mix", insights.beer_mix, w28, through) or []
         payload["compliance"][lid] = _safe("compliance", insights.count_compliance, through)
@@ -308,6 +309,11 @@ def build_payload(con, through: date | None = None) -> dict:
     if payload["scorecard"].get("tabs"):
         n = sum(len(_t["grid"]) for _t in payload["scorecard"]["tabs"])
         log.info("scorecard: %d tabs, %d rows total", len(payload["scorecard"]["tabs"]), n)
+    # Company-wide loyalty for the Executive Scorecard: a member who visits two taprooms counts once.
+    try:
+        payload.setdefault("exec_weekly", {})["_all"] = insights.exec_weekly(con, None, through)
+    except Exception as e:
+        log.error("metrics: exec_weekly (company) failed (%s: %s) — published without it", type(e).__name__, e)
 
     return payload
 

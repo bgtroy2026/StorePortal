@@ -39,6 +39,7 @@ def run(secret: str | None = None, dev_json: bool = False) -> dict:
         # handed them exec compensation and per-manager audit scores. Splitting it into its own label means the
         # data is absent unless the sign-in backend hands out that bundle's key, rather than merely hidden.
         scorecard = payload.pop("scorecard", None)
+        exec_weekly = payload.pop("exec_weekly", None)          # Executive Scorecard only (see below)
         # Detail is published as one bundle PER LOCATION, fetched on demand rather than at sign-in. Keeping it
         # out of "all" is what stops an admin's first paint from carrying every counted line in the company.
         detail = payload.pop("detail", None) or {}
@@ -65,7 +66,8 @@ def run(secret: str | None = None, dev_json: bool = False) -> dict:
         if exec_secret:
             exec_epoch = env("EXEC_EPOCH", "1")
             obj = {"meta": payload["meta"], "locations": payload["locations"], "daily": payload.get("daily") or {},
-                   "events": payload.get("events") or {}, "targets": payload.get("targets") or {}, "scorecard": scorecard}
+                   "events": payload.get("events") or {}, "targets": payload.get("targets") or {}, "scorecard": scorecard,
+                   "exec_weekly": exec_weekly or {}}
             bid = bundle_id("exec-sdp", exec_epoch)
             buf = encrypt(obj, derive_key(exec_secret, "exec-sdp", exec_epoch))
             (data / f"{bid}.bin").write_bytes(buf)

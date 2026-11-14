@@ -620,3 +620,34 @@ def _beer_range(con, lid: str, a: str, b: str, di: dict) -> dict:
             v = unparsed.setdefault((l["d"], l["nm"]), [0.0]); v[0] += q
     return {"beer": pack(sold, 4), "beer_sizes": pack(sizes, 1), "beer_unsized": pack(unsized, 1),
             "beer_rec": pack(rec, 2), "beer_unparsed": pack(unparsed, 1)}
+
+
+# ------------------------------------------------------------------------------------------ executive scorecard (weekly)
+
+def exec_weekly(con, lid: str | None, through: date, weeks: int = 14) -> dict:
+    """Weekly loyalty and discount counts for the Executive Scorecard (exec-sdp bundle only).
+
+    Loyalty is Thanx as Toast sees it: a check on which a member identified themselves (toast_loyalty). Per Mon-Sun
+    week: members who visited that week, identified checks, members active in the 28 days ending that week, of
+    whom "engaged" visited on 2+ days, and members seen for the first time (first identified visit; it counts
+    from when identification capture began, so the earliest weeks run high). lid=None is company-wide, where a
+    member who visits two taprooms counts once. Discounts carry every Toast discount by name per week (Free Pint,
+    sampler cards, Thanx rewards...), so the scorecard can count named promotions without a second integration.
+    """
+    loc_sql, loc_arg = ("location_id=? AND ", (lid,)) if lid else ("", ())
+    end = through - timedelta(days=through.weekday())          # Monday of the week `through` falls in
+    last_ws = end if through.weekday() == 6 else end - timedelta(days=7)
+    first = {r["member"]: r["f"] for r in _rows(con, f"SELECT member, MIN(business_date) f FROM toast_loyalty WHERE {loc_sql}member IS NOT NULL GROUP BY 1", loc_arg)}
+    cap = min(first.values()) if first else None
+    out = {"capture_since": cap, "weeks": [], "discounts": []}
+    for k in range(weeks):
+        ws = last_ws - timedelta(days=7 * k); we = ws + timedelta(days=6); a28 = we - timedelta(days=27)
+        a, b = ws.isoformat(), we.isoformat()
+        wk = con.execute(f"SELECT COUNT(DISTINCT member), COUNT(*) FROM toast_loyalty WHERE {loc_sql}business_date>=? AND business_date<=? AND member IS NOT NULL", loc_arg + (a, b)).fetchone()
+        r28 = _rows(con, f"SELECT member, COUNT(DISTINCT business_date) v FROM toast_loyalty WHERE {loc_sql}business_date>=? AND business_date<=? AND member IS NOT NULL GROUP BY 1", loc_arg + (a28.isoformat(), b))
+        new = sum(1 for f in first.values() if a <= f <= b)
+        out["weeks"].append([a, wk[0], wk[1], len(r28), sum(1 for x in r28 if x["v"] >= 2), new])
+        for r in _rows(con, f"""SELECT COALESCE(name,'(unnamed)') nm, COALESCE(loyalty_vendor,'') v, COUNT(*) n, SUM(amount) amt FROM toast_discounts
+                               WHERE {loc_sql}business_date>=? AND business_date<=? GROUP BY 1,2""", loc_arg + (a, b)):
+            out["discounts"].append([a, r["nm"], r["v"], int(r["n"] or 0), _r(float(r["amt"] or 0))])
+    return out
